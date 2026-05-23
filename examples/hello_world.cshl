@@ -1,0 +1,13 @@
+print : (*i8,...) i32 [[extern]];
+pi : f32 : 3.1415926535;
+counter : u32 = 0;
+
+_alloc :: (n : usize) *void [[allocs]] {
+  return alloc(u8,n) [[life : @return]];
+};
+
+main  := (args : [][]char) void {
+  _alloc(8);
+  counter += 1;
+  hello(); 
+};
