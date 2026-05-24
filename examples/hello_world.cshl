@@ -2,12 +2,13 @@ print : (*i8,...) i32 [[extern]];
 pi : f32 : 3.1415926535;
 counter : u32 = 0;
 
-_alloc :: (n : usize) *void [[allocs]] {
-  return alloc(u8,n) [[life : @return]];
-};
 
-main  := (args : [][]char) void {
+main  := (args : [][]char) (void) {
+  _alloc :: (n : usize) *void [[allocs]] {
+    return alloc(u8,n) ;
+  };
   _alloc(8);
+  x := (5 + 8) * 2 + |> { $ * 6 + 7};
   counter += 1;
   hello(); 
 };

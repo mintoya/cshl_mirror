@@ -21,6 +21,7 @@ pub fn main(init: std.process.Init) !void {
     var res = parseargs: {
         const params = comptime clap.parseParamsComptime(
             \\-h, --help             Display this help and exit.
+            \\-S, --sexp          parse file as s-expressions
             \\<str>...
             \\
         );
@@ -36,12 +37,7 @@ pub fn main(init: std.process.Init) !void {
     };
     defer res.deinit();
 
-    // if (res.args.help != 0)
-    //     std.debug.print("--help\n", .{});
-    // if (res.args.number) |n|
-    //     std.debug.print("--number = {}\n", .{n});
-    // for (res.args.string) |s|
-    //     std.debug.print("--string = {s}\n", .{s});
+    _ = res.args.sexp == 0;
 
     const positionals: []const []const u8 = res.positionals[0];
 
@@ -56,6 +52,7 @@ pub fn main(init: std.process.Init) !void {
 
     var parser = zl.parser.init(init.gpa);
     defer parser.deinit();
+
     const tree = try parser.parse(file);
     print("{f}", .{tree});
 }

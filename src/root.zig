@@ -2,17 +2,11 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const File = std.Io.File;
 const sList = @import("slist").SmallList;
+const common = @import("common.zig");
+const token = common.token;
+const Token = common.Token;
+// const i
 
-pub const itemType = union(enum) {
-    typ: void,
-    snum: usize,
-    unum: usize,
-    // fnum: enum { float, double, longdouble },
-    ptr: *itemType,
-    arr: struct { type: *itemType, len: usize },
-    struc: []struct { type: *itemType, offset: usize },
-    func: []*itemType,
-};
 pub const attribute = union(enum) {
     value: struct {
         connected_lifetimes: ?*std.ArrayListUnmanaged(*void, 5),
@@ -27,138 +21,59 @@ pub const attribute = union(enum) {
 // tokenizer
 //
 
-pub const token = enum {
-    // single char
-    leftbrace,
-    rightbrace,
-    leftparen,
-    rightparen,
-    leftbracket,
-    rightbracket,
-    colon,
-    semi,
-    comma,
-    equals,
-    dot,
-    asterisk,
-    plus,
-    minus,
-    bar,
-    greater,
-    less,
-    dollar,
-    quote,
-    ampersand,
-    hash,
-    slash,
-    bslash,
-
-    // multi char
-    equalequal,
-    andequal,
-    orequal,
-    notequal,
-    lessequal,
-    greaterequal,
-    plusequal,
-    minusequal,
-    pipe, // |>
-    pipeequal, // |>=
-    leftattr, // [[
-    rightattr, // ]]
-    // literal operators
-    and_,
-    band,
-    or_,
-    bor,
-    not,
-    bnot,
-    xor,
-    bxor,
-
-    // keywords
-    kw_if,
-    kw_for,
-    kw_in,
-    kw_to,
-    kw_up,
-    kw_else,
-    kw_return,
-    kw_while,
-    kw_struct,
-    kw_union,
-    kw_enum,
-
-    // literals and identifiers
-    identifier,
-    number,
-    bitnumber,
-    floatnumber,
-    hexnumber,
-    string,
-};
-
-pub const Token = struct {
-    tag: token,
-    loc: struct { col: usize, line: usize },
-    text: []const u8,
-};
-
 const token_map = std.StaticStringMap(token).initComptime(.{
-    .{ "if", .kw_if },
-    .{ "for", .kw_for },
-    .{ "in", .kw_in },
-    .{ "to", .kw_to },
-    .{ "up", .kw_up },
-    .{ "else", .kw_else },
-    .{ "return", .kw_return },
-    .{ "while", .kw_while },
-    .{ "struct", .kw_struct },
-    .{ "union", .kw_union },
-    .{ "enum", .kw_enum },
-
-    .{ "and", .and_ },
-    .{ "band", .band },
-    .{ "or", .or_ },
-    .{ "bor", .bor },
-    .{ "not", .not },
-    .{ "bnot", .bnot },
-    .{ "xor", .xor },
-    .{ "bxor", .bxor },
-    .{ "[[", .leftattr },
-    .{ "]]", .rightattr },
-
-    .{ "{", .leftbrace },
-    .{ "}", .rightbrace },
-    .{ "(", .leftparen },
-    .{ ")", .rightparen },
-    .{ "[", .leftbracket },
-    .{ "]", .rightbracket },
-
-    .{ ":", .colon },
-    .{ ";", .semi },
-    .{ ",", .comma },
-    .{ "=", .equals },
-    .{ ".", .dot },
-    .{ "*", .asterisk },
-    .{ "+", .plus },
-    .{ "-", .minus },
-    .{ "|", .bar },
-    .{ ">", .greater },
-    .{ "<", .less },
-    .{ "$", .dollar },
-    .{ "&", .ampersand },
-    .{ "#", .hash },
-    .{ "==", .equalequal },
-    .{ "!=", .notequal },
-    .{ "<=", .lessequal },
-    .{ ">=", .greaterequal },
-    .{ "+=", .plusequal },
-    .{ "-=", .minusequal },
-    .{ "|>", .pipe },
-    .{ "|>=", .pipeequal },
-    .{ "/", .slash },
-    .{ "\\", .bslash },
+    .{ "for", .kw_for }, // for
+    .{ "if", .kw_if }, // if
+    .{ "in", .kw_in }, // in
+    .{ "return", .kw_return }, // return
+    .{ "struct", .kw_struct }, // struct
+    .{ "to", .kw_to }, // to
+    .{ "union", .kw_union }, // union
+    .{ "up", .kw_up }, // up
+    .{ "while", .kw_while }, // while
+    .{ "==", .equalequal }, // ==
+    .{ "=", .equals }, // =
+    .{ ">=", .greaterequal }, // >=
+    .{ "<=", .lessequal }, // <=
+    .{ "-=", .minusequal }, // -=
+    .{ "!=", .notequal }, // !=
+    .{ "and=", .andequal }, // and=
+    .{ "or=", .orequal }, // or=
+    .{ "|>", .pipe }, // |>
+    .{ "|>=", .pipeequal }, // |>=
+    .{ "+=", .plusequal }, // +=
+    .{ "and", .and_ }, // and
+    .{ "band", .band }, // band
+    .{ "bnot", .bnot }, // bnot
+    .{ "bor", .bor }, // bor
+    .{ "bxor", .bxor }, // bxor
+    .{ "not", .not }, // not
+    .{ "or", .or_ }, // or
+    .{ "xor", .xor }, // xor
+    .{ "*", .asterisk }, // *
+    .{ "|", .bar }, // |
+    .{ ".", .dot }, // .
+    .{ ">", .greater }, // >
+    .{ "<", .less }, // <
+    .{ "-", .minus }, // -
+    .{ "+", .plus }, // +
+    .{ "[[", .leftattr }, // [[
+    .{ "]]", .rightattr }, // ]]
+    .{ "[", .leftbrace }, // [
+    .{ "]", .rightbrace }, // ]
+    .{ "{", .leftbracket }, // {
+    .{ "}", .rightbracket }, // }
+    .{ "(", .leftparen }, // (
+    .{ ")", .rightparen }, // )
+    .{ "&", .ampersand }, // &
+    .{ "\\", .bslash }, // \
+    .{ ":", .colon }, // :
+    .{ ",", .comma }, // ,
+    .{ "$", .dollar }, // $
+    .{ "#", .hash }, // #
+    .{ "'", .quote }, // '
+    .{ ";", .semi }, // ;
+    .{ "", .slash }, // /
 });
 
 pub fn tokenizeFile(alloc: Allocator, file: File) !struct { []Token, []const u8 } {
@@ -296,7 +211,6 @@ pub const astNode = struct {
     next: ?*astNode = null,
 
     token: ?Token,
-    type: ?*itemType = null,
     attributes: ?*attribute = null,
     node: nodeType,
 
@@ -327,12 +241,12 @@ pub const astNode = struct {
         func: struct {
             argslist: *astNode,
             rtype: *astNode,
-            attrs: *astNode,
+            // attrs: ?*astNode,
             body: *astNode,
         },
 
         block: struct {
-            attrs: *astNode,
+            // attrs: *astNode,
             body: *astNode,
         },
     };
@@ -345,9 +259,8 @@ pub const astNode = struct {
             var deapth: usize = depth;
             const pdeapth = bind(.{ .deapth = &deapth, .writer = writer }, struct {
                 fn call(slef: anytype) error{WriteFailed}!void {
-                    for (0..slef.deapth.*) |_| {
+                    for (0..slef.deapth.*) |_|
                         try slef.writer.print("  ", .{});
-                    }
                 }
             });
             switch (self.node) {
@@ -489,9 +402,9 @@ pub const astNode = struct {
                         try formatHelper(in.argslist.*, writer, deapth);
                     }
 
-                    try pdeapth.call(.{});
-                    try writer.print("rtype :\n", .{});
                     {
+                        try pdeapth.call(.{});
+                        try writer.print("rtype :\n", .{});
                         deapth += 1;
                         defer deapth -= 1;
                         try writer.print("\n", .{});
@@ -499,19 +412,9 @@ pub const astNode = struct {
                         try formatHelper(in.rtype.*, writer, deapth);
                     }
 
-                    try pdeapth.call(.{});
-                    try writer.print("attrs :\n", .{});
                     {
-                        deapth += 1;
-                        defer deapth -= 1;
-                        try writer.print("\n", .{});
                         try pdeapth.call(.{});
-                        try formatHelper(in.attrs.*, writer, deapth);
-                    }
-
-                    try pdeapth.call(.{});
-                    try writer.print("body :\n", .{});
-                    {
+                        try writer.print("body :\n", .{});
                         deapth += 1;
                         defer deapth -= 1;
                         try writer.print("\n", .{});
@@ -530,13 +433,6 @@ pub const astNode = struct {
 
                     try pdeapth.call(.{});
                     try writer.print("attrs :\n", .{});
-                    {
-                        deapth += 1;
-                        defer deapth -= 1;
-                        try writer.print("\n", .{});
-                        try pdeapth.call(.{});
-                        try formatHelper(in.attrs.*, writer, deapth);
-                    }
 
                     try pdeapth.call(.{});
                     try writer.print("body :\n", .{});
@@ -569,7 +465,7 @@ pub const parser = struct {
     palloc: Allocator,
     first: ?*astNode = null,
     tokenList: ?[]Token = null,
-    sourceList: ?[]const u8 = null,
+    sourceContent: ?[]const u8 = null,
 
     pub fn init(alloc: Allocator) @This() {
         return .{
@@ -581,7 +477,7 @@ pub const parser = struct {
     pub fn deinit(self: *@This()) void {
         self.alloc.deinit();
         if (self.tokenList) |tl| self.palloc.free(tl);
-        if (self.sourceList) |sl| self.palloc.free(sl);
+        if (self.sourceContent) |sl| self.palloc.free(sl);
     }
 
     fn parseError(T: type) type {
@@ -738,7 +634,7 @@ pub const parser = struct {
         if (tokens.len == 0) return expectResult.noTok(expectResult.errtypeInner.unexpectedToken);
         inline for (toks) |tok| {
             if (tokens[0].tag == tok)
-                expectResult.sucess(.{tokens[1..]});
+                return expectResult.sucess(.{tokens[1..]});
         }
         return expectResult.errOf(expectResult.errtypeInner.unexpectedToken, tokens[0]);
     }
@@ -869,25 +765,25 @@ pub const parser = struct {
     pub fn parse(self: *@This(), file: File) !*astNode {
         const both = try tokenizeFile(self.palloc, file);
         self.tokenList = both.@"0";
-        self.sourceList = both.@"1";
+        self.sourceContent = both.@"1";
 
         var current = self.tokenList.?;
-        var first_node: ?*astNode = null;
-        var last_node: ?*astNode = null;
+        var first_n: ?*astNode = null;
+        var last_n: ?*astNode = null;
 
         while (current.len > 0) {
             const result = try self.parse_initialization(current);
             const init_node = result.@"0";
             current = result.@"1";
 
-            first_node = first_node orelse init_node;
+            first_n = first_n orelse init_node;
 
-            if (last_node) |last|
+            if (last_n) |last|
                 last.next = init_node;
-            last_node = init_node;
+            last_n = init_node;
         }
 
-        self.first = first_node;
-        return first_node orelse error.emptyFile;
+        self.first = first_n;
+        return first_n orelse error.emptyFile;
     }
 };
