@@ -268,7 +268,7 @@ usize getPrec(Token t) {
   );
   return 0;
 }
-ast *astValue(AllocatorV allocator, Token t) {
+ast *astAValue(AllocatorV allocator, Token t) {
   switch (t.kind) {
     case t_identifier:
       return aValue(allocator, (ast)tu_of(astId, t.s));
@@ -278,14 +278,54 @@ ast *astValue(AllocatorV allocator, Token t) {
       return aValue(allocator, (ast)tu_of(astNumber, t.s));
   }
 }
+  #define slice_last(slice) ({var_ _slice = slice ; _slice.ptr[_slice.len-1]; })
+struct left_reduce_result {
+  ast *value;
+  slice(Token) rest;
+};
+struct left_reduce_result left_reduce(AllocatorV allocator, slice(Token) t) {
+  typedef struct left_reduce_result _result_type;
+  assertMessage(t.len);
+  var_ isblock = !!isBlockStart(t.ptr[0]);
+  var_ isvalue = !!isVal(t.ptr[0]);
+  assertMessage(isvalue || isblock);
+  switch (isblock | isvalue << 1) {
+    case 0b01: { // isblock
+      var_ split1 = slice_split(t, (0, 1), (1, -1));
+      var_ next_place = next_tok_balanced(allocator, split1[1], opposite_scope(split1[0].ptr[0]));
+      if (!next_place) error_at(split1[0].ptr[0].s.ptr, snprint(stdAlloc, "unclosed '{c8}'", split1[0].ptr[0].s.ptr[0]));
+      return (_result_type){
+          .value = parseBlock(allocator, slice_split(t, (0, next_place - t.ptr))[0]),
+          .rest = slice_split(t, (next_place - t.ptr + 1, -1))[0],
+      };
+    } break;
+    case 0b10: { // isvalue
+      return (_result_type){
+          .value = astAValue(allocator, t.ptr[0]),
+          .rest = (typeof(t)){t.len - 1, t.ptr + 1},
+      };
+    } break;
+    default:
+      unreachable();
+      break;
+  }
+}
 ast *parseExpr2(AllocatorV allocator, slice(Token) front, ast *_Nullable current, slice(Token) back) {
   if (!back.len && !front.len) return current;
 
+  if (!back.len || !front.len) {
+    if (front.len)
+      switch (slice_last(front).kind) {
+        case t_operator:
+        default: {
+          if (isBlockStart(slice_last(front))) {
+          }
+        } break;
+      }
+  }
   if (!current) {
   }
 
-  if (!back.len) goto cancel;
-  if (!front.len) goto cancel;
   if (Token_equal(front.ptr[0], t_for)) goto cancel;
 
   {cancel : } error_at(

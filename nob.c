@@ -96,7 +96,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  res = system(CC " -o nob nob.c");
+  res = system(CC " -o nob"EXTENSION" nob.c");
   if (res) {
     printf("Failed to recompile self\n");
     return 1;
