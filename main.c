@@ -14,12 +14,15 @@
 #include "wheels/sList.h"
 
 var_ cmd_options = sentList(
-    cmdline_option, {"--help" /*      */, CMDARG_BOOLEAN, "print help message"},
+    cmdline_option,
+    {"--help" /*      */, CMDARG_BOOLEAN, "print help message"},
     {"-h" /*          */, CMDARG_BOOLEAN, "print help message"},
     {"--log-allocations", CMDARG_BOOLEAN, "enable allocation logging"},
-    {"--echo-file" /* */, CMDARG_BOOLEAN, "echo read file"});
+    {"--echo-file" /* */, CMDARG_BOOLEAN, "echo read file"},
+    {"--log-tokens" /* */, CMDARG_BOOLEAN, "emmit list of tokens"}
+);
 fptr *filectx = nullptr;
-void error_at(c8 *location, slice(c8) message) {
+__attribute__((noreturn)) void error_at(c8 *location, slice(c8) message) {
   assertMessage(filectx);
   usize loc = (u8 *)location - filectx->ptr;
   assertMessage(loc <= filectx->len);
@@ -41,8 +44,7 @@ void error_at(c8 *location, slice(c8) message) {
 CMDLINE_GENERATE_MAIN(cmd_options);
 
 void on_allocation(allocationType *t) {
-  println("allocation from {} line {} , {}->{}", t->trace.fn, t->trace.ln,
-          t->insize, t->outsize);
+  println("allocation from {} line {} , {}->{}", t->trace.fn, t->trace.ln, t->insize, t->outsize);
 }
 int cmdline_main(cmdline_args args) {
 
@@ -60,16 +62,16 @@ int cmdline_main(cmdline_args args) {
   }
   var_ log_alloc = cmdline_get(args, "--log-allocations", bool);
   var_ echo_file = cmdline_get(args, "--echo-file", bool);
+  var_ list_tokens = cmdline_get(args, "--log-tokens", bool);
 
   FBA_State s;
-  var_ fbuffer = &aCreate(stdAlloc,u8, 1024 * 1024);
+  var_ fbuffer = &aCreate(stdAlloc, u8, 1024 * 1024);
   FBA_init(*fbuffer, sizeof(*fbuffer), &s);
 
   AllocatorV allocator =
       debugAllocator(.allocator = s.allocator,
                      // .log = stdout,
-                     .on_call =
-                         (log_alloc && *log_alloc) ? on_allocation : nullptr, );
+                     .on_call = (log_alloc && *log_alloc) ? on_allocation : nullptr, );
   defer { debugAllocatorDeInit(allocator); };
 
   fptr buffer = {};
@@ -85,12 +87,11 @@ int cmdline_main(cmdline_args args) {
 
   var_ tokens = tokenize(allocator, buffer);
   defer { msList_deInit(allocator, tokens); };
-  foreach (var_ token, vla(*msList_vla(tokens)))
-    println(" {Token} ", token);
+  if (list_tokens && *list_tokens)
+    foreach (var_ token, vla(*msList_vla(tokens)))
+      println(" {Token} ", token);
 
-  println("{ast}",
-          parseBBlock(allocator,
-                      (slice(Token)){.len = msList_len(tokens), tokens}));
+  println("{ast}", parseBBlock(allocator, (slice(Token)){.len = msList_len(tokens), tokens}));
   println("current place : {}", FBA_current(s.allocator));
   return 0;
 }

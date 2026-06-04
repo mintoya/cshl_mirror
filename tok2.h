@@ -4,6 +4,7 @@
 #include "wheels/sList.h"
 #include "wheels/smallstream.h"
 #include "wheels/tu_macros.h"
+#include <string.h>
 #if !defined(TOKENIZER_H1)
   #define TOKENIZER_H1 (1)
   #include "ast.h"
@@ -98,8 +99,7 @@ bool isVal(Token t) {
 
 ast *parseBlock(AllocatorV allocator, slice(Token) tokens);
 
-// { operations
-static bool isBlockStart(Token t) {
+bool isBlockStart(Token t) {
   return EQUAL_ANY(
       1,
       Token_equal(t, t_lbrace),
@@ -108,7 +108,8 @@ static bool isBlockStart(Token t) {
   );
 }
 
-static Token *find_root_op(AllocatorV allocator, slice(Token) tokens) {
+// { operations
+Token *find_root_op(AllocatorV allocator, slice(Token) tokens) {
   Token *best = NULL;
   int best_prec = ((uint)-1) >> 1;
 
@@ -144,8 +145,7 @@ static Token *find_root_op(AllocatorV allocator, slice(Token) tokens) {
   }
   return best;
 }
-
-static ast *parse_adj_chain(AllocatorV allocator, slice(Token) tokens) {
+ast *parse_adj_chain(AllocatorV allocator, slice(Token) tokens) {
   if (!tokens.len)
     return NULL;
 
@@ -191,8 +191,7 @@ static ast *parse_adj_chain(AllocatorV allocator, slice(Token) tokens) {
     result = aValue(allocator, (ast)tu_of(astOp, {a[k], result, "( )"}));
   return result;
 }
-
-ast *parseExpr(AllocatorV allocator, slice(Token) tokens) {
+ast *parseExpr1(AllocatorV allocator, slice(Token) tokens) {
   if (!tokens.len)
     return NULL;
 
@@ -232,8 +231,8 @@ ast *parseExpr(AllocatorV allocator, slice(Token) tokens) {
     slice(Token) body_slice = {right_slice.len - body_start, right_slice.ptr + body_start};
 
     astOp node = {
-        .left = cond_slice.len ? parseExpr(allocator, cond_slice) : NULL,
-        .right = parseExpr(allocator, body_slice),
+        .left = cond_slice.len ? parseExpr1(allocator, cond_slice) : NULL,
+        .right = parseExpr1(allocator, body_slice),
         .symLiteral = "for",
     };
     return aValue(allocator, (ast)tu_of(astOp, node));
@@ -244,19 +243,62 @@ ast *parseExpr(AllocatorV allocator, slice(Token) tokens) {
       right_slice = {tokens.len - (usize)(op - tokens.ptr) - 1, op + 1};
 
   astOp node = {
-      .left = left_slice.len ? parseExpr(allocator, left_slice) : NULL,
-      .right = right_slice.len ? parseExpr(allocator, right_slice) : NULL,
+      .left = left_slice.len ? parseExpr1(allocator, left_slice) : nullptr,
+      .right = right_slice.len ? parseExpr1(allocator, right_slice) : nullptr,
+      .symLiteral = "",
   };
-  assertMessage(op->s.len <= 7);
-  for (usize i = 0; i < op->s.len; i++)
-    node.symLiteral[i] = (c8)op->s.ptr[i];
+  assertMessage(op->s.len < 8);
+  memcpy(op->s.ptr, node.symLiteral, op->s.len);
 
   return aValue(allocator, (ast)tu_of(astOp, node));
 }
 // }
+// { operations2
 
-ast *parseDecl(AllocatorV allocator,
-               slice(Token) tokens) { // ... : ... (;|= ...)?
+usize getPrec(Token t) {
+  assertMessage(t.kind == t_operator);
+
+  foreach (var_ op, vla(operations))
+    if (fptr_eq(fp(op.name), t.s))
+      return op.prec;
+
+  error_at(
+      t.s.ptr,
+      snprint(stdAlloc, "compiler error : operator not in operator list {slice(c8)}", t.s)
+  );
+  return 0;
+}
+ast *astValue(AllocatorV allocator, Token t) {
+  switch (t.kind) {
+    case t_identifier:
+      return aValue(allocator, (ast)tu_of(astId, t.s));
+    case t_string:
+      return aValue(allocator, (ast)tu_of(astString, t.s));
+    case t_number:
+      return aValue(allocator, (ast)tu_of(astNumber, t.s));
+  }
+}
+ast *parseExpr2(AllocatorV allocator, slice(Token) front, ast *_Nullable current, slice(Token) back) {
+  if (!back.len && !front.len) return current;
+
+  if (!current) {
+  }
+
+  if (!back.len) goto cancel;
+  if (!front.len) goto cancel;
+  if (Token_equal(front.ptr[0], t_for)) goto cancel;
+
+  {cancel : } error_at(
+      front.ptr[0].s.ptr,
+      snprint(stdAlloc, "unhandled parseExpr case :\n{slice : Token}\n{ast}\n{slice : Token}", front, current, back)
+  );
+}
+// }
+
+// ast *parseExpr(AllocatorV allocator, slice(Token) tokens) { return parseExpr1(allocator, tokens); }
+ast *parseExpr(AllocatorV allocator, slice(Token) tokens) { return parseExpr2(allocator, tokens, nullptr, (slice(Token)){}); }
+
+ast *parseDecl(AllocatorV allocator, slice(Token) tokens) { // ... : ... (;|= ...)?
   var_ decl = (astDecl){0};
   decl.name = aValue(allocator, (ast)tu_of(astId, tokens.ptr[0].s));
 
