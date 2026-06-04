@@ -14,12 +14,10 @@
 #include "wheels/sList.h"
 
 var_ cmd_options = sentList(
-    cmdline_option,
-    {"--help" /*      */, CMDARG_BOOLEAN, "print help message"},
+    cmdline_option, {"--help" /*      */, CMDARG_BOOLEAN, "print help message"},
     {"-h" /*          */, CMDARG_BOOLEAN, "print help message"},
     {"--log-allocations", CMDARG_BOOLEAN, "enable allocation logging"},
-    {"--echo-file" /* */, CMDARG_BOOLEAN, "echo read file"}
-);
+    {"--echo-file" /* */, CMDARG_BOOLEAN, "echo read file"});
 fptr *filectx = nullptr;
 void error_at(c8 *location, slice(c8) message) {
   assertMessage(filectx);
@@ -43,19 +41,15 @@ void error_at(c8 *location, slice(c8) message) {
 CMDLINE_GENERATE_MAIN(cmd_options);
 
 void on_allocation(allocationType *t) {
-  println(
-      "allocation from {} line {} , {}->{}",
-      t->trace.fn,
-      t->trace.ln,
-      t->insize,
-      t->outsize
-  );
+  println("allocation from {} line {} , {}->{}", t->trace.fn, t->trace.ln,
+          t->insize, t->outsize);
 }
 int cmdline_main(cmdline_args args) {
 
   msList(char *) positionals = cmdLine_positionals(args);
 
-  var_ help = cmdline_get(args, "--help", bool) ?: cmdline_get(args, "-h", bool);
+  var_ help =
+      cmdline_get(args, "--help", bool) ?: cmdline_get(args, "-h", bool);
   if (help && *help) {
     cmdLine_printUsage("cshl", cmd_options);
     return 0;
@@ -68,19 +62,20 @@ int cmdline_main(cmdline_args args) {
   var_ echo_file = cmdline_get(args, "--echo-file", bool);
 
   FBA_State s;
-  u8 fbuffer[1024 * 1024];
-  FBA_init(fbuffer, sizeof(fbuffer), &s);
+  var_ fbuffer = &aCreate(stdAlloc,u8, 1024 * 1024);
+  FBA_init(*fbuffer, sizeof(*fbuffer), &s);
 
-  AllocatorV allocator = debugAllocator(
-          .allocator = s.allocator,
-          // .log = stdout,
-          .on_call = (log_alloc && *log_alloc) ? on_allocation : nullptr,
-  );
+  AllocatorV allocator =
+      debugAllocator(.allocator = s.allocator,
+                     // .log = stdout,
+                     .on_call =
+                         (log_alloc && *log_alloc) ? on_allocation : nullptr, );
   defer { debugAllocatorDeInit(allocator); };
 
   fptr buffer = {};
   defer {
-    if (buffer.len && buffer.ptr) slice_free(allocator, buffer);
+    if (buffer.len && buffer.ptr)
+      slice_free(allocator, buffer);
   };
 
   buffer = readFileAlloc(allocator, positionals[1]);
@@ -93,7 +88,9 @@ int cmdline_main(cmdline_args args) {
   foreach (var_ token, vla(*msList_vla(tokens)))
     println(" {Token} ", token);
 
-  println("{ast}", parseBBlock(allocator, (slice(Token)){.len = msList_len(tokens), tokens}));
+  println("{ast}",
+          parseBBlock(allocator,
+                      (slice(Token)){.len = msList_len(tokens), tokens}));
   println("current place : {}", FBA_current(s.allocator));
   return 0;
 }

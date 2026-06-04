@@ -1,14 +1,25 @@
 #define NOB_IMPLEMENTATION
+#if defined(_WIN32)
+#define EXTENSION ".exe"
+#else
+#define EXTENSION ""
+#endif
 #if __has_include("deps/nob.h/nob.h")
 // {compilation
 #include "deps/nob.h/nob.h"
+
+#if defined (_WIN32)
+// #define COMMON_CFLAGS "-std=c2y", "-fdefer-ts" , "-ldbghelp"
+#define COMMON_CFLAGS "-std=c2y", "-fdefer-ts" , "-DnoAssertMessage"
+#else
 #define COMMON_CFLAGS "-std=c2y", "-fdefer-ts"
+#endif
 
 bool build_main(Cmd *cmd, Procs *procs) {
   if (!mkdir_if_not_exists("build"))
     return false;
-  cmd_append(cmd, "clang", COMMON_CFLAGS, "-o", "build/compiler", "main.c",
-             "-I", "deps", "-w", "-g", );
+  cmd_append(cmd, "clang", COMMON_CFLAGS, "-o", "build/compiler" EXTENSION,
+             "main.c", "-I", "deps", "-w", "-g", );
   if (!cmd_run(cmd, .async = procs))
     return false;
   return true;
@@ -50,7 +61,7 @@ int main(int argc, char **argv) {
     if (!nob_procs_wait(procs))
       return 1;
     cmd.count = 0;
-    cmd_append(&cmd, "./build/compiler");
+    cmd_append(&cmd, "./build/compiler"EXTENSION);
     for (int i = 0; i < argc; ++i)
       cmd_append(&cmd, argv[i]);
     if (!cmd_run_sync(cmd))
@@ -69,7 +80,7 @@ int main(int argc, char **argv) {
 #include <stdlib.h>
 #include <string.h>
 #if !defined CC
-#define CC "cc"
+#define CC "clang"
 #endif
 
 int main(int argc, char **argv) {
@@ -90,7 +101,7 @@ int main(int argc, char **argv) {
     printf("Failed to recompile self\n");
     return 1;
   }
-  char cmd[1024] = "./nob";
+  char cmd[1024] = "./nob"EXTENSION;
   for (int i = 1; i < argc; ++i) {
     strcat(cmd, " ");
     strcat(cmd, argv[i]);
