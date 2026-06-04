@@ -1,0 +1,11 @@
+main : fn((args : [][]c8),result : i32 = 0) : {
+  for arg in args {
+    println(arg);
+  };
+  slice : fn((type),type) : {
+    return struct {
+      length : i32; 
+      ptr    : type; 
+    };
+  };
+};
