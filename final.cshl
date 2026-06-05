@@ -14,7 +14,7 @@ main : fn((args : [][]c8),result : i32 = 0) : {
       ptr : [*]t = nullptr;
       len : u32  = 0;
 
-      literal : fn((block : ast) , ast){
+      literal :: fn((block : ast) , ast){
         if a b;
         for a b;
       };

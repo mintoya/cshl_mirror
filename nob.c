@@ -1,7 +1,7 @@
 #define NOB_IMPLEMENTATION
 
 #if !defined CC
-  #define CC "zcc"
+  #define CC "clang"
 #endif
 #if defined(_WIN32)
   #define EXTENSION ".exe"
@@ -16,7 +16,7 @@
     // #define COMMON_CFLAGS "-std=c2y", "-fdefer-ts" , "-ldbghelp"
     #define COMMON_CFLAGS "-std=c2y", "-fdefer-ts", "-DnoAssertMessage"
   #else
-    #define COMMON_CFLAGS "-std=c2y", "-fdefer-ts"
+    #define COMMON_CFLAGS "-std=c2y", "-fdefer-ts" , "-fsanitize=address"
   #endif
 
 bool build_main(Cmd *cmd, Procs *procs) {

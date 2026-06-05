@@ -95,7 +95,16 @@ usize balanced_count(AllocatorV allocator, slice(Token) tokens, Token t) {
   return count;
 }
 bool isVal(Token t) {
-  return EQUAL_ANY(t.kind, t_identifier, t_number, t_string);
+  switch (t.kind) {
+    case t_identifier:
+      return true;
+    case t_string:
+      return true;
+    case t_number:
+      return true;
+    default:
+      return false;
+  }
 }
 usize getPrec(Token t) {
   assertMessage(t.kind == t_operator);
