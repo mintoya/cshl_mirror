@@ -15,6 +15,8 @@ tu_def(
     // Identifier
     //  string, u8* ptr & usize len
     (astId, fptr),
+    // empty statement
+    (astEmptyStatement, nothing_t),
     // Numbers
     //  0-9*
     //  x0-9 + a-f*
@@ -93,11 +95,11 @@ typedef enum token token;
 REGISTER_PRINTER(Token, {
   switch (in.kind) {
       // clang-format off
-    case t_operator    :PUTS("op ");break;
-    case t_punctuation :PUTS("pun");break;
-    case t_number      :PUTS("num");break;
-    case t_string      :PUTS("str");break;
-    case t_identifier  :PUTS("id ");break;
+case t_operator    :PUTS("op ");break;
+case t_punctuation :PUTS("pun");break;
+case t_number      :PUTS("num");break;
+case t_string      :PUTS("str");break;
+case t_identifier  :PUTS("id ");break;
       // clang-format on
   }
   PUTS("'");
@@ -187,6 +189,7 @@ static void print_ast_recursive(ast *node, int indent, outputFunction put, void 
                print_ast_recursive(*item, indent + 1, put, _arb);
              }
            }),
+           case (astEmptyStatement, _, {}),
            default({
              unreachable();
            }));
@@ -226,13 +229,18 @@ struct {
     {"<=", 3},
     {">=", 3},
     {"==", 3},
+    {"!=", 3},
 
     {".", 4},
-    {"|>", 4},
-    {"=", 4},
 
-    {"in", 5},
-    {"up", 5},
+    {"=", 5},
+
+    {"in", 6},
+    {"up", 6},
+
+    {"|>", 7},
+
+    {"if", 0},
     {"for", 0},
 
 };

@@ -1,11 +1,23 @@
 main : fn((args : [][]c8),result : i32 = 0) : {
-  for arg in args {
-    println(arg);
-  };
-  slice : fn((type),type) : {
+
+  /*
+  return will emmit a compiler error,
+  because this says that this function will return result
+  'result' is an i32 in this scope 
+  */
+
+  for arg in args  arg.println;
+  for arg in args  println(arg);
+
+  slice :: fn((t:type),type){
     return struct {
-      length : i32; 
-      ptr    : type; 
+      ptr : [*]t = nullptr;
+      len : u32  = 0;
+
+      literal : fn((block : ast) , ast){
+        if a b;
+        for a b;
+      };
     };
   };
 };

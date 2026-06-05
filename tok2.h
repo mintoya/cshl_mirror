@@ -9,14 +9,15 @@
   #define TOKENIZER_H1 (1)
   #include "ast.h"
 
-// a file is a list of declarations
-
+  // a file is a list of declarations
+  #define __musttail___ __attribute__((musttail))
 CONST_EXPR Token t_comma = (Token){(fptr){1, (u8[]){','}}, t_punctuation};
 CONST_EXPR Token t_semi = (Token){(fptr){1, (u8[]){';'}}, t_punctuation};
 CONST_EXPR Token t_colon = (Token){(fptr){1, (u8[]){':'}}, t_punctuation};
 CONST_EXPR Token t_equals = (Token){(fptr){1, (u8[]){'='}}, t_operator};
 
 CONST_EXPR Token t_for = (Token){(fptr){3, (u8[]){"for"}}, t_operator};
+CONST_EXPR Token t_if = (Token){(fptr){2, (u8[]){"if"}}, t_operator};
 CONST_EXPR Token t_dot = (Token){(fptr){1, (u8[]){'.'}}, t_operator};
 
 CONST_EXPR Token t_lparen = (Token){(fptr){1, (u8[]){'('}}, t_punctuation};
@@ -96,165 +97,6 @@ usize balanced_count(AllocatorV allocator, slice(Token) tokens, Token t) {
 bool isVal(Token t) {
   return EQUAL_ANY(t.kind, t_identifier, t_number, t_string);
 }
-
-ast *parseBlock(AllocatorV allocator, slice(Token) tokens);
-
-bool isBlockStart(Token t) {
-  return EQUAL_ANY(
-      1,
-      Token_equal(t, t_lbrace),
-      Token_equal(t, t_lbracket),
-      Token_equal(t, t_lparen),
-  );
-}
-
-// { operations
-Token *find_root_op(AllocatorV allocator, slice(Token) tokens) {
-  Token *best = NULL;
-  int best_prec = ((uint)-1) >> 1;
-
-  var_ sb = msList_stackBuffer(Token[32]);
-  var_ ts = msList_initBuffer(sb);
-  defer { msList_deInit(allocator, ts); };
-
-  foreach (var_ tp, span(tokens.ptr, tokens.len)) {
-    if (msList_len(ts)) {
-      if (isScope(tp[0]))
-        if (Token_equal(tp[0], opposite_scope(msList_last(ts))))
-          msList_pop(ts);
-        else
-          msList_push(allocator, ts, tp[0]);
-      continue;
-    }
-    if (isBlockStart(tp[0])) {
-      msList_push(allocator, ts, tp[0]);
-      continue;
-    }
-    if (tp[0].kind != t_operator)
-      continue;
-
-    for (usize j = 0; j < countof(operations); j++) {
-      if (fptr_eq(tp[0].s, fp(operations[j].name))) {
-        if ((int)operations[j].prec < best_prec) {
-          best_prec = (int)operations[j].prec;
-          best = tp;
-        }
-        break;
-      }
-    }
-  }
-  return best;
-}
-ast *parse_adj_chain(AllocatorV allocator, slice(Token) tokens) {
-  if (!tokens.len)
-    return NULL;
-
-  var_ sb = msList_stackBuffer(ast *[32]);
-  var_ atoms = msList_initBuffer(sb);
-  defer { msList_deInit(allocator, atoms); };
-
-  usize i = 0;
-  while (i < tokens.len) {
-    Token t = tokens.ptr[i];
-    if (isBlockStart(t)) {
-      Token close = opposite_scope(t);
-      usize depth = 1, j = i + 1;
-      for (; j < tokens.len && depth; j++) {
-        if (isBlockStart(tokens.ptr[j]))
-          depth++;
-        else if (Token_equal(tokens.ptr[j], close))
-          depth--;
-      }
-      msList_push(
-          allocator, atoms, parseBlock(allocator, ((slice(Token)){j - i, tokens.ptr + i}))
-      );
-      i = j;
-    } else if (isVal(t)) {
-      ast *node =
-          t.kind == t_identifier ? aValue(allocator, (ast)tu_of(astId, t.s))
-          : t.kind == t_number   ? aValue(allocator, (ast)tu_of(astNumber, t.s))
-                                 : aValue(allocator, (ast)tu_of(astString, t.s));
-      msList_push(allocator, atoms, node);
-      i++;
-    } else {
-      error_at(t.s.ptr, snprint(stdAlloc, "unexpected token in expression"));
-      i++;
-    }
-  }
-
-  usize n = msList_len(atoms);
-  if (!n)
-    return NULL;
-  ast **a = (ast **)atoms;
-  ast *result = a[n - 1];
-  for (usize k = n - 1; k-- > 0;)
-    result = aValue(allocator, (ast)tu_of(astOp, {a[k], result, "( )"}));
-  return result;
-}
-ast *parseExpr1(AllocatorV allocator, slice(Token) tokens) {
-  if (!tokens.len)
-    return NULL;
-
-  Token *op = find_root_op(allocator, tokens);
-  if (!op)
-    return parse_adj_chain(allocator, tokens);
-
-  // special case: for <cond> <body>
-  // right side is parsed as adjacency chain, last atom = body, rest = cond
-  if (Token_equal(*op, t_for)) {
-    slice(Token)
-        right_slice = {tokens.len - (usize)(op - tokens.ptr) - 1, op + 1};
-    if (!right_slice.len)
-      error_at(op->s.ptr, snprint(stdAlloc, "for needs a body"));
-
-    // find start of last top-level atom — that's the body
-    usize body_start = 0, i = 0;
-    while (i < right_slice.len) {
-      body_start = i;
-      Token t = right_slice.ptr[i];
-      if (isBlockStart(t)) {
-        Token close = opposite_scope(t);
-        usize depth = 1;
-        i++;
-        for (; i < right_slice.len && depth; i++) {
-          if (isBlockStart(right_slice.ptr[i]))
-            depth++;
-          else if (Token_equal(right_slice.ptr[i], close))
-            depth--;
-        }
-      } else {
-        i++;
-      }
-    }
-
-    slice(Token) cond_slice = {body_start, right_slice.ptr};
-    slice(Token) body_slice = {right_slice.len - body_start, right_slice.ptr + body_start};
-
-    astOp node = {
-        .left = cond_slice.len ? parseExpr1(allocator, cond_slice) : NULL,
-        .right = parseExpr1(allocator, body_slice),
-        .symLiteral = "for",
-    };
-    return aValue(allocator, (ast)tu_of(astOp, node));
-  }
-
-  slice(Token) left_slice = {(usize)(op - tokens.ptr), tokens.ptr};
-  slice(Token)
-      right_slice = {tokens.len - (usize)(op - tokens.ptr) - 1, op + 1};
-
-  astOp node = {
-      .left = left_slice.len ? parseExpr1(allocator, left_slice) : nullptr,
-      .right = right_slice.len ? parseExpr1(allocator, right_slice) : nullptr,
-      .symLiteral = "",
-  };
-  assertMessage(op->s.len < 8);
-  memcpy(op->s.ptr, node.symLiteral, op->s.len);
-
-  return aValue(allocator, (ast)tu_of(astOp, node));
-}
-// }
-// { operations2
-
 usize getPrec(Token t) {
   assertMessage(t.kind == t_operator);
 
@@ -268,7 +110,10 @@ usize getPrec(Token t) {
   );
   return 0;
 }
+
+ast *parseBlock(AllocatorV allocator, slice(Token) tokens);
 ast *astAValue(AllocatorV allocator, Token t) {
+  assertMessage(isVal(t));
   switch (t.kind) {
     case t_identifier:
       return aValue(allocator, (ast)tu_of(astId, t.s));
@@ -276,66 +121,342 @@ ast *astAValue(AllocatorV allocator, Token t) {
       return aValue(allocator, (ast)tu_of(astString, t.s));
     case t_number:
       return aValue(allocator, (ast)tu_of(astNumber, t.s));
-  }
-}
-  #define slice_last(slice) ({var_ _slice = slice ; _slice.ptr[_slice.len-1]; })
-struct left_reduce_result {
-  ast *value;
-  slice(Token) rest;
-};
-struct left_reduce_result left_reduce(AllocatorV allocator, slice(Token) t) {
-  typedef struct left_reduce_result _result_type;
-  assertMessage(t.len);
-  var_ isblock = !!isBlockStart(t.ptr[0]);
-  var_ isvalue = !!isVal(t.ptr[0]);
-  assertMessage(isvalue || isblock);
-  switch (isblock | isvalue << 1) {
-    case 0b01: { // isblock
-      var_ split1 = slice_split(t, (0, 1), (1, -1));
-      var_ next_place = next_tok_balanced(allocator, split1[1], opposite_scope(split1[0].ptr[0]));
-      if (!next_place) error_at(split1[0].ptr[0].s.ptr, snprint(stdAlloc, "unclosed '{c8}'", split1[0].ptr[0].s.ptr[0]));
-      return (_result_type){
-          .value = parseBlock(allocator, slice_split(t, (0, next_place - t.ptr))[0]),
-          .rest = slice_split(t, (next_place - t.ptr + 1, -1))[0],
-      };
-    } break;
-    case 0b10: { // isvalue
-      return (_result_type){
-          .value = astAValue(allocator, t.ptr[0]),
-          .rest = (typeof(t)){t.len - 1, t.ptr + 1},
-      };
-    } break;
     default:
       unreachable();
-      break;
   }
 }
-ast *parseExpr2(AllocatorV allocator, slice(Token) front, ast *_Nullable current, slice(Token) back) {
-  if (!back.len && !front.len) return current;
+bool isBlockStart(Token t) {
+  return EQUAL_ANY(
+      1,
+      Token_equal(t, t_lbrace),
+      Token_equal(t, t_lbracket),
+      Token_equal(t, t_lparen),
+  );
+}
 
-  if (!back.len || !front.len) {
-    if (front.len)
-      switch (slice_last(front).kind) {
-        case t_operator:
-        default: {
-          if (isBlockStart(slice_last(front))) {
-          }
-        } break;
-      }
+// { operations
+  #define slice_last(slice) ({var_ _slice = slice ; _slice.ptr[_slice.len-1]; })
+  #define slice_first(slice) ({var_ _slice = slice ; _slice.ptr[0]; })
+
+ast *reduce_front(AllocatorV allocator, slice(Token) * front) {
+  if (!front->len) return nullptr;
+  Token last = front->ptr[front->len - 1];
+
+  if (isVal(last)) {
+    front->len--;
+    return astAValue(allocator, last);
   }
+
+  if (!isScope(last)) {
+    error_at(last.s.ptr, snprint(stdAlloc, "expected value or block end, got '{slice(c8)}'", last.s));
+    return nullptr;
+  }
+
+  var_ sb = msList_stackBuffer(Token[32]);
+  var_ ts = msList_initBuffer(sb);
+  defer { msList_deInit(allocator, ts); };
+
+  msList_push(allocator, ts, last);
+
+  usize i = front->len - 1;
+  while (i > 0 && msList_len(ts)) {
+    i--;
+    Token t = front->ptr[i];
+    if (isScope(t)) {
+      if (Token_equal(t, opposite_scope(msList_last(ts))))
+        msList_pop(ts);
+      else
+        msList_push(allocator, ts, t);
+    }
+  }
+
+  if (msList_len(ts))
+    error_at(msList_last(ts).s.ptr, snprint(stdAlloc, "unclosed {c8}", (char)msList_last(ts).s.ptr[0]));
+
+  slice(Token) block_slice = {front->len - i, front->ptr + i};
+  front->len = i;
+
+  return parseBlock(allocator, block_slice);
+}
+
+ast *reduce_back(AllocatorV allocator, slice(Token) * back) {
+  if (!back->len) return nullptr;
+  Token first = back->ptr[0];
+
+  if (isVal(first)) {
+    back->ptr++;
+    back->len--;
+    return astAValue(allocator, first);
+  }
+
+  if (!isBlockStart(first)) {
+    error_at(first.s.ptr, snprint(stdAlloc, "expected value or block start, got '{slice(c8)}'", first.s));
+    return nullptr;
+  }
+
+  var_ sb = msList_stackBuffer(Token[32]);
+  var_ ts = msList_initBuffer(sb);
+  defer { msList_deInit(allocator, ts); };
+
+  msList_push(allocator, ts, first);
+
+  usize i = 1;
+  for (; i < back->len && msList_len(ts); i++) {
+    Token t = back->ptr[i];
+    if (isScope(t)) {
+      if (Token_equal(t, opposite_scope(msList_last(ts))))
+        msList_pop(ts);
+      else
+        msList_push(allocator, ts, t);
+    }
+  }
+
+  if (msList_len(ts))
+    error_at(msList_last(ts).s.ptr, snprint(stdAlloc, "unclosed {c8}", (char)msList_last(ts).s.ptr[0]));
+
+  slice(Token) block_slice = {i, back->ptr};
+  back->ptr += i;
+  back->len -= i;
+
+  return parseBlock(allocator, block_slice);
+}
+
+ast *parseExpr_front(AllocatorV allocator, slice(Token) front, ast *_Nullable current, slice(Token) back) {
+  assertMessage(back.len == 0);
+
   if (!current) {
+    if (front.len && Token_equal(front.ptr[0], t_dot)) {
+      current = nullptr; // Explicitly allow prefix dot operations
+    } else {
+      current = reduce_back(allocator, &front);
+      if (!current) return nullptr;
+    }
   }
 
-  if (Token_equal(front.ptr[0], t_for)) goto cancel;
+  if (!front.len) return current;
 
+  var_ t = front.ptr[0];
+  switch (t.kind) {
+    case t_operator: {
+      if (Token_equal(t, t_dot)) {
+      }
+      front.ptr++;
+      front.len--;
+
+      if (!front.len) {
+        error_at(t.s.ptr, snprint(stdAlloc, "expected expression after '{slice(c8)}'", t.s));
+        return nullptr;
+      }
+
+      ast *right = reduce_back(allocator, &front);
+      if (!right) return nullptr;
+
+      ast *new_current = aValue(
+          allocator,
+          (ast)tu_of(astOp, {
+                                .left = current,
+                                .right = right,
+                            })
+      );
+      assertMessage(t.s.len < sizeof(new_current->astOp.symLiteral));
+      memcpy(new_current->astOp.symLiteral, t.s.ptr, t.s.len);
+      __musttail___ return parseExpr_front(allocator, front, new_current, back);
+    } break;
+    case t_punctuation: {
+      if (isBlockStart(t)) {
+        ast *right = reduce_back(allocator, &front);
+        if (!right) return nullptr;
+        ast *new_current = aValue(
+            allocator,
+            (ast)tu_of(astOp, {.left = current, .right = right, .symLiteral = "( )"})
+        );
+        __musttail___ return parseExpr_front(allocator, front, new_current, back);
+      }
+      error_at(t.s.ptr, snprint(stdAlloc, "punctuation means nothing here"));
+      return nullptr;
+    } break;
+    default: {
+      ast *right = reduce_back(allocator, &front);
+      if (!right) return nullptr;
+      ast *new_current = aValue(
+          allocator,
+          (ast)tu_of(astOp, {.left = current, .right = right, .symLiteral = "( )"})
+      );
+      __musttail___ return parseExpr_front(allocator, front, new_current, back);
+    } break;
+  }
+}
+
+ast *parseExpr_back(AllocatorV allocator, slice(Token) front, ast *_Nullable current, slice(Token) back) {
+  assertMessage(front.len == 0);
+
+  if (!current) {
+    current = reduce_front(allocator, &back);
+    if (!current) return nullptr;
+  }
+
+  if (!back.len) return current;
+
+  var_ t = back.ptr[back.len - 1];
+  switch (t.kind) {
+    case t_operator: {
+      if (Token_equal(t, t_dot)) {
+      }
+      back.len--;
+
+      if (!back.len) {
+        error_at(t.s.ptr, snprint(stdAlloc, "expected expression before '{slice(c8)}'", t.s));
+        return nullptr;
+      }
+
+      ast *left = reduce_front(allocator, &back);
+      if (!left) return nullptr;
+
+      ast *new_current = aValue(
+          allocator,
+          (ast)tu_of(astOp, {
+                                .left = left,
+                                .right = current,
+                            })
+      );
+      assertMessage(t.s.len < sizeof(new_current->astOp.symLiteral));
+      memcpy(new_current->astOp.symLiteral, t.s.ptr, t.s.len);
+      __musttail___ return parseExpr_back(allocator, front, new_current, back);
+    } break;
+    case t_punctuation: {
+      if (isScope(t)) {
+        ast *left = reduce_front(allocator, &back);
+        if (!left) return nullptr;
+        ast *new_current = aValue(
+            allocator,
+            (ast)tu_of(astOp, {.left = left, .right = current, .symLiteral = "( )"})
+        );
+        __musttail___ return parseExpr_back(allocator, front, new_current, back);
+      }
+      error_at(t.s.ptr, snprint(stdAlloc, "punctuation means nothing here"));
+      return nullptr;
+    } break;
+    default: {
+      ast *left = reduce_front(allocator, &back);
+      if (!left) return nullptr;
+      ast *new_current = aValue(
+          allocator,
+          (ast)tu_of(astOp, {.left = left, .right = current, .symLiteral = "( )"})
+      );
+      __musttail___ return parseExpr_back(allocator, front, new_current, back);
+    } break;
+  }
+}
+
+ast *parseExpr_Ops(AllocatorV allocator, slice(Token) front, ast *_Nullable current, slice(Token) back) {
+  assertMessage(front.len && back.len);
+  assertMessage(
+      EQUAL_ALL(
+          t_operator,
+          front.ptr[front.len - 1].kind,
+          back.ptr[0].kind
+      )
+  );
+  if (!current) goto double_operator;
+  // ---------
+  //
+  //
+  var_ front_prec = getPrec(slice_last(front));
+  var_ back_prec = getPrec(slice_first(back));
+
+  if (front_prec <= back_prec)
+    return aValue(
+        allocator,
+        (ast)tu_of(astOp, {})
+    );
+  else
+    return aValue(
+        allocator,
+        (ast)tu_of(astOp, {})
+    );
+
+  //
+  //
+  // ---------
   {cancel : } error_at(
       front.ptr[0].s.ptr,
       snprint(stdAlloc, "unhandled parseExpr case :\n{slice : Token}\n{ast}\n{slice : Token}", front, current, back)
   );
+
+  {double_operator : } error_at(
+      front.ptr[front.len].s.ptr,
+      snprint(stdAlloc, "compound operators not supported yet")
+  );
+}
+
+ast *parseExpr2(AllocatorV allocator, slice(Token) front, ast *_Nullable current, slice(Token) back) {
+  if (!back.len && !front.len) {
+    if (!current)
+      return aValue(allocator, (ast)tu_of(astEmptyStatement, {}));
+    return current;
+  }
+
+  if (front.len && (Token_equal(front.ptr[0], t_for) || Token_equal(front.ptr[0], t_if))) {
+
+    slice(Token) rem = {front.len - 1, front.ptr + 1};
+    if (!rem.len) error_at(front.ptr[0].s.ptr, snprint(stdAlloc, "if/for needs a body"));
+
+    usize split_idx = 0;
+    if (Token_equal(rem.ptr[0], t_lparen)) {
+      slice(Token) temp = rem;
+      reduce_back(allocator, &temp);
+      split_idx = rem.len - temp.len;
+    } else {
+      slice(Token) temp = rem;
+      reduce_back(allocator, &temp);
+
+      while (temp.len && (Token_equal(temp.ptr[0], t_lparen) || Token_equal(temp.ptr[0], t_lbracket))) {
+        reduce_back(allocator, &temp);
+      }
+
+      while (temp.len && temp.ptr[0].kind == t_operator) {
+        temp.ptr++;
+        temp.len--;
+        reduce_back(allocator, &temp);
+
+        while (temp.len && (Token_equal(temp.ptr[0], t_lparen) || Token_equal(temp.ptr[0], t_lbracket))) {
+          reduce_back(allocator, &temp);
+        }
+      }
+      split_idx = rem.len - temp.len;
+    }
+
+    slice(Token) cond_slice = {split_idx, rem.ptr};
+    slice(Token) body_slice = {rem.len - split_idx, rem.ptr + split_idx};
+
+    ast *cond = cond_slice.len ? parseExpr2(allocator, cond_slice, nullptr, (slice(Token)){}) : nullptr;
+    ast *body = body_slice.len ? parseExpr2(allocator, body_slice, nullptr, (slice(Token)){}) : nullptr;
+
+    var_ res = aValue(
+        allocator,
+        (ast)tu_of(
+            astOp,
+            {
+                .left = cond,
+                .right = body,
+            }
+        )
+    );
+    (Token_equal(front.ptr[0], t_for))
+        ? memcpy(res->astOp.symLiteral, "for", 3)
+        : memcpy(res->astOp.symLiteral, "if", 2);
+    return res;
+  }
+
+  if (!back.len)
+    __musttail___ return parseExpr_front(allocator, front, current, back);
+  if (!front.len)
+    __musttail___ return parseExpr_back(allocator, front, current, back);
+
+  return parseExpr_Ops(allocator, front, current, back);
 }
 // }
 
-// ast *parseExpr(AllocatorV allocator, slice(Token) tokens) { return parseExpr1(allocator, tokens); }
 ast *parseExpr(AllocatorV allocator, slice(Token) tokens) { return parseExpr2(allocator, tokens, nullptr, (slice(Token)){}); }
 
 ast *parseDecl(AllocatorV allocator, slice(Token) tokens) { // ... : ... (;|= ...)?

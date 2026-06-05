@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <wheels/allocators/arenaAllocator.h>
 #include <wheels/allocators/debugallocator.h>
 #include <wheels/allocators/fbaAllocator.h>
 #include <wheels/cmdline_parser.h>
@@ -69,10 +70,16 @@ int cmdline_main(cmdline_args args) {
   FBA_init(*fbuffer, sizeof(*fbuffer), &s);
 
   AllocatorV allocator =
-      debugAllocator(.allocator = s.allocator,
-                     // .log = stdout,
-                     .on_call = (log_alloc && *log_alloc) ? on_allocation : nullptr, );
-  defer { debugAllocatorDeInit(allocator); };
+      (log_alloc && *log_alloc)
+          ? debugAllocator(
+                    .allocator = s.allocator,
+                    .log = stdout,
+                    .on_call = on_allocation,
+            )
+          : s.allocator;
+  defer {
+    if (log_alloc && *log_alloc) debugAllocatorDeInit(allocator);
+  };
 
   fptr buffer = {};
   defer {
@@ -91,7 +98,9 @@ int cmdline_main(cmdline_args args) {
     foreach (var_ token, vla(*msList_vla(tokens)))
       println(" {Token} ", token);
 
-  println("{ast}", parseBBlock(allocator, (slice(Token)){.len = msList_len(tokens), tokens}));
+  AllocatorV arena = arena_new_ext(allocator, 48 * 255);
+  defer { arena_cleanup(arena); };
+  println("{ast}", parseBBlock(arena, (slice(Token)){.len = msList_len(tokens), tokens}));
   println("current place : {}", FBA_current(s.allocator));
   return 0;
 }
