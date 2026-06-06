@@ -7,15 +7,19 @@
   #include <wheels/sList.h>
   #include <wheels/tu_macros.h>
 
-  // a file is a list of declarations
   #define __musttail___ __attribute__((musttail))
+
+  #if defined(_WIN32) && defined(__clang__)
+    #define TCO_ABI __attribute__((sysv_abi))
+  #else
+    #define TCO_ABI
+  #endif
+
 CONST_EXPR Token t_comma = (Token){(fptr){1, (u8[]){','}}, t_punctuation};
 CONST_EXPR Token t_semi = (Token){(fptr){1, (u8[]){';'}}, t_punctuation};
 CONST_EXPR Token t_colon = (Token){(fptr){1, (u8[]){':'}}, t_punctuation};
 CONST_EXPR Token t_equals = (Token){(fptr){1, (u8[]){'='}}, t_operator};
 
-// CONST_EXPR Token t_for = (Token){(fptr){3, (u8[]){"for"}}, t_operator};
-// CONST_EXPR Token t_if = (Token){(fptr){2, (u8[]){"if"}}, t_operator};
 CONST_EXPR Token t_dot = (Token){(fptr){1, (u8[]){'.'}}, t_operator};
 
 CONST_EXPR Token t_lparen = (Token){(fptr){1, (u8[]){'('}}, t_punctuation};
@@ -190,9 +194,9 @@ ast *popVal(AllocatorV allocator, slice(Token) * backptr) {
     return astAValue(allocator, back.ptr[0]);
   }
 }
-ast *parseExprPartial(AllocatorV allocator, ast *_Nullable current, slice(Token) back);
-ast *parseExpr(AllocatorV allocator, slice(Token) tokens) { return parseExprPartial(allocator, nullptr, tokens); }
-ast *parseTokList(AllocatorV allocator, ast *_Nullable current, slice(Token) back) {
+TCO_ABI ast *parseExprPartial(AllocatorV allocator, ast *_Nullable current, slice(Token) back);
+TCO_ABI ast *parseExpr(AllocatorV allocator, slice(Token) tokens) { return parseExprPartial(allocator, nullptr, tokens); }
+TCO_ABI ast *parseTokList(AllocatorV allocator, ast *_Nullable current, slice(Token) back) {
   assertMessage(!current);
   if (back.len == 0) return aValue(allocator, (ast)tu_of(astEmptyStatement, {}));
   if (back.len == 1) return (assertMessage(isVal(slice_last(back))), astAValue(allocator, slice_last(back)));
@@ -220,7 +224,7 @@ ast *parseTokList(AllocatorV allocator, ast *_Nullable current, slice(Token) bac
 
   assertMessage(false, "%s", snprint(stdAlloc, "tlist : items fell through : {slice : Token}", back).ptr);
 }
-ast *parseExprPartial(AllocatorV allocator, ast *_Nullable current, slice(Token) back) {
+TCO_ABI ast *parseExprPartial(AllocatorV allocator, ast *_Nullable current, slice(Token) back) {
   if (back.len == 0) return current ?: aValue(allocator, (ast)tu_of(astEmptyStatement, {}));
   if (!current) __musttail___ return parseTokList(allocator, nullptr, back);
 
