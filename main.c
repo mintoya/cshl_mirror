@@ -23,7 +23,7 @@ var_ cmd_options = sentList(
     {"--log-tokens" /* */, CMDARG_BOOLEAN, "emmit list of tokens"}
 );
 fptr *filectx = nullptr;
-__attribute__((noreturn)) void error_at(c8 *location, slice(c8) message) {
+__attribute__((noreturn)) void error_at(u8 *location, slice(c8) message) {
   assertMessage(filectx);
   usize loc = (u8 *)location - filectx->ptr;
   assertMessage(loc <= filectx->len);

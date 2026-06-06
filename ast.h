@@ -161,11 +161,11 @@ static void print_ast_recursive(ast *node, int indent, outputFunction put, void 
              PUTS("'\n");
 
              print_ast_indent(indent + 1, put, _arb);
-             PUTS("left: ");
+             PUTS("l: ");
              print_ast_recursive(op.left, indent + 1, put, _arb);
 
              print_ast_indent(indent + 1, put, _arb);
-             PUTS("right: ");
+             PUTS("r: ");
              print_ast_recursive(op.right, indent + 1, put, _arb);
            }),
            case (astPBlock, block, {
@@ -211,37 +211,38 @@ struct {
   c8 *name;
   usize prec
 } operations[] = {
-    {"+", 1},
-    {"-", 1},
     {"*", 1},
     {"/", 1},
     {"%", 1},
 
-    {"and", 2},
-    {"not", 2},
-    {"or", 2},
-    {"band", 2},
-    {"bnot", 2},
-    {"bor", 2},
+    {"+", 2},
+    {"-", 2},
 
-    {"<", 3},
-    {">", 3},
-    {"<=", 3},
-    {">=", 3},
-    {"==", 3},
-    {"!=", 3},
+    {"and", 3},
+    {"not", 3},
+    {"or", 3},
+    {"band", 3},
+    {"bnot", 3},
+    {"bor", 3},
 
-    {".", 4},
+    {"<", 4},
+    {">", 4},
+    {"<=", 4},
+    {">=", 4},
+    {"==", 4},
+    {"!=", 4},
 
-    {"=", 5},
+    {".", 5},
 
-    {"in", 6},
-    {"up", 6},
+    {"=", 6},
 
-    {"|>", 7},
+    {"in", 7},
+    {"up", 7},
 
-    {"if", 0},
-    {"for", 0},
+    {"|>", 8},
+
+    // {"if", 0},
+    // {"for", 0},
 
 };
 

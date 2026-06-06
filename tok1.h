@@ -1,3 +1,4 @@
+#include <malloc.h>
 #if !defined(TOKENIZER_H)
   #define TOKENIZER_H (1)
   #include "ast.h"
@@ -7,7 +8,7 @@
   #include <wheels/print.h>
   #include <wheels/sList.h>
 
-void error_at(c8 *location, slice(c8) message);
+void error_at(u8 *location, slice(c8) message);
 
 static inline bool isNum(u8 i) { return i >= '0' && i <= '9'; };
 static inline bool isAlphaNum(u8 i) {
