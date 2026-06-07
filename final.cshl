@@ -1,7 +1,3 @@
-main : fn((args : [][]c8),result : i32 = 0) : {
-  for arg in args  print(arg);
-};
-i : i32;
-i = main(["hello","world"]) |> eval;
-i = main(["hello","world"]) |> eval;
-
+1 * 2 + 3 * 4;
+1 + 2 + 3 * 4;
+a + b * c . d;

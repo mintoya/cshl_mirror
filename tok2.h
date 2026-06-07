@@ -56,9 +56,7 @@ Token opposite_scope(Token t) {
 bool isVal(Token t) {
   switch (t.kind) {
     case t_identifier:
-      return true;
     case t_string:
-      return true;
     case t_number:
       return true;
     default:
@@ -179,10 +177,11 @@ bool isBlockStart(Token t) {
 
 ast *popVal(AllocatorV allocator, slice(Token) * backptr) {
   var_ back = *backptr;
+  assertMessage(back.len);
 
   bool isblockStart = isBlockStart(back.ptr[0]);
   bool isValue = isVal(back.ptr[0]);
-  assertMessage(isValue || isblockStart);
+
   if (isblockStart) {
     Token *end = next_tok_balanced(allocator, slice_split(back, (1, -1))[0], opposite_scope(back.ptr[0]));
     if (!end)
@@ -190,10 +189,10 @@ ast *popVal(AllocatorV allocator, slice(Token) * backptr) {
     var_ slices = slice_split(back, (0, end - back.ptr + 1), (end - back.ptr + 1, -1));
     *backptr = slices[1];
     return parseBlock(allocator, slices[0]);
-  } else {
-    var_ in = back.ptr[0].s.ptr + back.ptr[0].s.len == back.ptr[1].s.ptr;
+  } else if (isValue) {
     var_ isc = back.len > 1 && isBlockStart(back.ptr[1]);
-    if (isc && in) {
+    var_ inx = isc ? back.ptr[0].s.ptr + back.ptr[0].s.len == back.ptr[1].s.ptr : 0;
+    if (isc && inx) {
       var_ a = astAValue(allocator, back.ptr[0]);
       var_ nh = slice_split(back, (1, -1));
       var_ parens = popVal(allocator, nh);
@@ -209,14 +208,20 @@ ast *popVal(AllocatorV allocator, slice(Token) * backptr) {
       *backptr = slice_split(back, (1, -1))[0];
       return astAValue(allocator, back.ptr[0]);
     }
-  }
+  } else
+    error_at(back.ptr[0].s.ptr, snprint(stdAlloc, "compiler expected value here"));
 }
 TCO_ABI ast *parseExprPartial(AllocatorV allocator, ast *_Nullable current, slice(Token) back);
 TCO_ABI ast *parseExpr(AllocatorV allocator, slice(Token) tokens) { return parseExprPartial(allocator, nullptr, tokens); }
 TCO_ABI ast *parseTokList(AllocatorV allocator, ast *_Nullable current, slice(Token) back) {
   assertMessage(!current);
   if (back.len == 0) return aValue(allocator, (ast)tu_of(astEmptyStatement, {}));
-  if (back.len == 1) return (assertMessage(isVal(slice_last(back))), astAValue(allocator, slice_last(back)));
+  if (Token_equal(back.ptr[0], t_colon)) error_at(back.ptr[0].s.ptr, snprint(stdAlloc, "exected value here"));
+  if (back.len == 1) {
+    if (isVal(slice_last(back)))
+      return astAValue(allocator, slice_last(back));
+    else error_at(back.ptr[0].s.ptr, snprint(stdAlloc, "expected value"));
+  }
 
   if (isVal(back.ptr[0])) {
     ast *head = astAValue(allocator, back.ptr[0]);
@@ -243,6 +248,7 @@ TCO_ABI ast *parseTokList(AllocatorV allocator, ast *_Nullable current, slice(To
 TCO_ABI ast *parseExprPartial(AllocatorV allocator, ast *_Nullable current, slice(Token) back) {
   if (back.len == 0) return current ?: aValue(allocator, (ast)tu_of(astEmptyStatement, {}));
   if (!current) __musttail___ return parseTokList(allocator, nullptr, back);
+  if (Token_equal(back.ptr[0], t_colon)) error_at(back.ptr[0].s.ptr, snprint(stdAlloc, "exected value here"));
 
   if (back.ptr[0].kind == t_operator) {
     var_ after = slice_split(back, (1, -1))[0];
@@ -250,33 +256,36 @@ TCO_ABI ast *parseExprPartial(AllocatorV allocator, ast *_Nullable current, slic
     var_ prec = getPrec(back.ptr[0]);
     var_ nextPrec = no.t ? getPrec(no.t[0]) : prec - 1;
     if (no.t && no.skipped_values < 2 && nextPrec < prec) {
-      var_ working = slice_split(back, (1, -1))[0];
-      ast *left = current, *right = popVal(allocator, &working);
       var_ op = back.ptr[0];
 
-      while (
-          // clang-format off
-          working.len 
-          && working.ptr[0].kind == t_operator 
-          && getPrec(working.ptr[0]) < prec
-          // clang-format on
-      ) {
-        var_ op2 = working.ptr[0];
-        var_ working2 = slice_split(working, (1, -1))[0];
-        ast *rhs2 = popVal(allocator, &working2);
-        right = aValue(allocator, (ast)tu_of(astOp, {right, rhs2, ""}));
-        memcpy(right->astOp.symLiteral, op2.s.ptr, op2.s.len);
-        working = working2;
+      usize bound_idx = 0;
+      for (; bound_idx < after.len; bound_idx++) {
+        var_ t = after.ptr[bound_idx];
+        if (isScope(t)) {
+          Token *end = next_tok_balanced(allocator, (slice(Token)){after.len - bound_idx, after.ptr + bound_idx}, opposite_scope(t));
+          if (end) bound_idx = end - after.ptr;
+        } else if (t.kind == t_operator) {
+          var_ p = getPrec(t);
+          if (p >= prec && !(p == prec))
+            break;
+        }
       }
+
+      var_ splits = slice_split(after, (0, bound_idx), (bound_idx, -1));
+      var_ tighter_slice = splits[0];
+      var_ working = splits[1];
+
+      ast *right = parseExpr(allocator, tighter_slice);
 
       var_ nc = aValue(
           allocator,
           (ast)tu_of(
               astOp,
-              {left, right, ""}
+              {current, right, ""}
           )
       );
       memcpy(nc->astOp.symLiteral, op.s.ptr, op.s.len);
+
       __musttail___ return parseExprPartial(allocator, nc, working);
     } else {
       var_ nextVal = (ast)tu_of(
@@ -288,7 +297,9 @@ TCO_ABI ast *parseExprPartial(AllocatorV allocator, ast *_Nullable current, slic
           }
       );
       var_ slicew = slice_split(back, (1, -1))[0];
-      nextVal.astOp.right = popVal(allocator, &slicew);
+      if (slicew.len)
+        nextVal.astOp.right = popVal(allocator, &slicew);
+      else error_at(back.ptr->s.ptr, snprint(stdAlloc, "expected value here"));
       memcpy(nextVal.astOp.symLiteral, back.ptr[0].s.ptr, back.ptr[0].s.len);
       __musttail___ return parseExprPartial(allocator, aValue(allocator, nextVal), slicew);
     }
@@ -382,8 +393,7 @@ ast *parseBBlock(AllocatorV allocator, slice(Token) tokens) { // {...}
   var_ rp = aCreate(allocator, ast *, count + 3);
   rp[0] = aValue(allocator, (ast)tu_of(astBBlock, ((astBBlock){rp + 1})));
   foreach (var_ item, span(rp + 1, count)) {
-    Token *nplace;
-    nplace = next_tok_balanced(allocator, tokens, t_semi);
+    Token *nplace = next_tok_balanced(allocator, tokens, t_semi);
     var_ slice = (slice(Token)){nplace - tokens.ptr, tokens.ptr};
     tokens = (slice(Token)){tokens.len - (nplace - tokens.ptr) - 1, nplace + 1};
 
@@ -434,8 +444,8 @@ ast *parsePBlock(AllocatorV allocator, slice(Token) tokens) { // (...)
   var_ rp = aCreate(allocator, ast *, count + 3);
   rp[0] = aValue(allocator, (ast)tu_of(astPBlock, {rp + 1}));
   foreach (var_ item, span(rp + 1, count)) {
-    Token *nplace;
-    nplace = next_tok_balanced(allocator, tokens, t_comma);
+    Token *nplace = next_tok_balanced(allocator, tokens, t_comma);
+    assertMessage(nplace);
     var_ slice = (slice(Token)){nplace - tokens.ptr, tokens.ptr};
     tokens = (slice(Token)){tokens.len - (nplace - tokens.ptr) - 1, nplace + 1};
 

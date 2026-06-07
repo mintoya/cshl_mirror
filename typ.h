@@ -10,7 +10,7 @@ tu_def(
     (it_void, nothing_t),
     (it_uint, u16),
     (it_sint, u16),
-    // (it_fnum, typeof(enum {FNUM_SMALL, FNUM_MEDIUM, FNUM_LARGE})),
+    // (it_fnum, typeof(enum floatKind{FNUM_SMALL, FNUM_MEDIUM, FNUM_LARGE})),
     (it_ptr, itype_t *),
     (it_arr, struct { itype_t * type ; usize length; }),
     (it_fun, sentList_t(itype_t *)),
