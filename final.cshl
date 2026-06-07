@@ -1,28 +1,7 @@
-i := callSomething() + 5;
-i := 1 + 5 * 2;
-i := 1 * 5 + 2;
 main : fn((args : [][]c8),result : i32 = 0) : {
-
-  
-
-  /*
-  return will emmit a compiler error,
-  because this says that this function will return result
-  'result' is an i32 in this scope 
-  */
-
-  for arg in args  println(arg);
-  for arg in args  {println(arg);};
-  for (arg in args)  {println(arg);};
-  for (arg in args)  println(arg);
-
-  slice :: fn((t:type),type){
-    return struct {
-      ptr : [*]t = nullptr;
-      len : u32  = 0;
-
-      literal :: fn((block : ast) , ast){
-      };
-    };
-  };
+  for arg in args  print(arg);
 };
+i : i32;
+i = main(["hello","world"]) |> eval;
+i = main(["hello","world"]) |> eval;
+

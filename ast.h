@@ -7,6 +7,9 @@
   #include <wheels/print.h>
   #include <wheels/smallstreams/smallfiles.h>
   #include <wheels/tu_macros.h>
+  #if !defined(_Nullable)
+    #define _Nullable
+  #endif
 
 typedef struct ast ast;
 
@@ -207,10 +210,12 @@ c8 *punctuations[] = {
     {"["},
     {"]"},
 };
+
 struct {
   c8 *name;
-  usize prec
+  usize prec;
 } operations[] = {
+
     {"*", 1},
     {"/", 1},
     {"%", 1},
@@ -224,6 +229,8 @@ struct {
     {"band", 3},
     {"bnot", 3},
     {"bor", 3},
+    {"shr", 3},
+    {"shl", 3},
 
     {"<", 4},
     {">", 4},
@@ -234,15 +241,14 @@ struct {
 
     {".", 5},
 
-    {"=", 6},
+    {"|>", 6},
 
     {"in", 7},
     {"up", 7},
 
-    {"|>", 8},
 
-    // {"if", 0},
-    // {"for", 0},
+    {"=", 8},
+
 
 };
 

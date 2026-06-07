@@ -1,4 +1,3 @@
-#include <malloc.h>
 #if !defined(TOKENIZER_H)
   #define TOKENIZER_H (1)
   #include "ast.h"
@@ -14,21 +13,19 @@ static inline bool isNum(u8 i) { return i >= '0' && i <= '9'; };
 static inline bool isAlphaNum(u8 i) {
   switch (i) {
     case '0' ... '9':
-      return true;
     case 'a' ... 'z':
-      return true;
     case 'A' ... 'Z':
-      return true;
     case '@':
-      return true;
     case '_':
+    case '$':
+    case '?':
       return true;
     default:
       return false;
   }
 };
 
-static inline msList(Token) tokenize(AllocatorV allocator, fptr input) {
+static msList(Token) tokenize(AllocatorV allocator, fptr input) {
   var_ res = msList_init(allocator, Token);
 
   var_ tmap = msHmap_init(allocator, token);

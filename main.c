@@ -67,6 +67,7 @@ int cmdline_main(cmdline_args args) {
 
   FBA_State s;
   var_ fbuffer = &aCreate(stdAlloc, u8, 1024 * 1024);
+  defer { aFree(stdAlloc, *fbuffer, sizeof(*fbuffer)); };
   FBA_init(*fbuffer, sizeof(*fbuffer), &s);
 
   AllocatorV allocator =

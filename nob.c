@@ -1,7 +1,7 @@
 #define NOB_IMPLEMENTATION
 
 #if !defined CC
-  #define CC "clang"
+  #define CC "scc"
 #endif
 #if defined(_WIN32)
   #define EXTENSION ".exe"
@@ -13,10 +13,10 @@
   #include "deps/nob.h/nob.h"
 
   #if defined(_WIN32)
-    // #define COMMON_CFLAGS "-std=c2y", "-fdefer-ts" , "-ldbghelp"
-    #define COMMON_CFLAGS "-std=c2y", "-fdefer-ts", "-DnoAssertMessage"
+    // #define COMMON_CFLAGS "-std=c23", "-fdefer-ts" , "-ldbghelp"
+    #define COMMON_CFLAGS "-std=c23", "-fdefer-ts", "-DnoAssertMessage"
   #else
-    #define COMMON_CFLAGS "-std=c2y", "-fdefer-ts" , "-fsanitize=address"
+    #define COMMON_CFLAGS "-std=c23", "-fdefer-ts" , "-D__PRETTY_FUNCTION__=__FUNCTION__"
   #endif
 
 bool build_main(Cmd *cmd, Procs *procs) {
