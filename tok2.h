@@ -44,14 +44,21 @@ bool isScope(Token t) {
       Token_equal(t, t_rparen)
   );
 }
-Token opposite_scope(Token t) {
-  if (Token_equal(t, t_lbrace)) return t_rbrace;
-  if (Token_equal(t, t_rbrace)) return t_lbrace;
-  if (Token_equal(t, t_lbracket)) return t_rbracket;
-  if (Token_equal(t, t_rbracket)) return t_lbracket;
-  if (Token_equal(t, t_lparen)) return t_rparen;
-  if (Token_equal(t, t_rparen)) return t_lparen;
-  assertMessage(false, "item isnt scope marker");
+bool isBlockStart(Token t) {
+  return EQUAL_ANY(
+      1,
+      Token_equal(t, t_lbrace),
+      Token_equal(t, t_lbracket),
+      Token_equal(t, t_lparen),
+  );
+}
+bool isBlockEnd(Token t) {
+  return EQUAL_ANY(
+      1,
+      Token_equal(t, t_rbrace),
+      Token_equal(t, t_rbracket),
+      Token_equal(t, t_rparen),
+  );
 }
 bool isVal(Token t) {
   switch (t.kind) {
@@ -63,6 +70,16 @@ bool isVal(Token t) {
       return false;
   }
 }
+Token opposite_end_scope(Token t) { // TODO something about this
+  if (Token_equal(t, t_lbrace)) return t_rbrace;
+  if (Token_equal(t, t_rbrace)) error_at(t.s.ptr, snprint(stdAlloc, "unexpected '{c8}'", (c8)t.s.ptr[0]));
+  if (Token_equal(t, t_lbracket)) return t_rbracket;
+  if (Token_equal(t, t_rbracket)) error_at(t.s.ptr, snprint(stdAlloc, "unexpected '{c8}'", (c8)t.s.ptr[0]));
+  if (Token_equal(t, t_lparen)) return t_rparen;
+  if (Token_equal(t, t_rparen)) error_at(t.s.ptr, snprint(stdAlloc, "unexpected '{c8}'", (c8)t.s.ptr[0]));
+  assertMessage(false, "item isnt scope marker");
+}
+
 Token *next_tok_balanced(AllocatorV allocator, slice(Token) tokens, Token t) {
   var_ sb = msList_stackBuffer(Token[32]);
   var_ ts = msList_initBuffer(sb);
@@ -71,10 +88,9 @@ Token *next_tok_balanced(AllocatorV allocator, slice(Token) tokens, Token t) {
   foreach (var_ tp, span(tokens.ptr, tokens.len))
     if (msList_len(ts)) {
       if (isScope(tp[0]))
-        if (Token_equal(tp[0], opposite_scope(msList_last(ts))))
+        if (Token_equal(tp[0], opposite_end_scope(msList_last(ts))))
           msList_pop(ts);
-        else
-          msList_push(allocator, ts, tp[0]);
+        else msList_push(allocator, ts, tp[0]);
     } else if (Token_equal(tp[0], t))
       return tp;
     else if (isScope(tp[0])) msList_push(allocator, ts, tp[0]);
@@ -98,7 +114,7 @@ struct next_op_result next_op_balanced(AllocatorV allocator, slice(Token) tokens
   for (var_ tp = tokens.ptr; tp < tokens.ptr + tokens.len; tp++)
     if (msList_len(ts)) {
       if (isScope(tp[0]))
-        if (Token_equal(tp[0], opposite_scope(msList_last(ts))))
+        if (Token_equal(tp[0], opposite_end_scope(msList_last(ts))))
           msList_pop(ts);
         else msList_push(allocator, ts, tp[0]);
     } else if (tp->kind == t_operator) return (struct next_op_result){tp, skipped};
@@ -115,6 +131,7 @@ struct next_op_result next_op_balanced(AllocatorV allocator, slice(Token) tokens
 
   return (struct next_op_result){nullptr, skipped};
 }
+
 usize balanced_count(AllocatorV allocator, slice(Token) tokens, Token t) {
   usize count = 0;
   var_ sb = msList_stackBuffer(Token[32]);
@@ -124,7 +141,7 @@ usize balanced_count(AllocatorV allocator, slice(Token) tokens, Token t) {
   foreach (var_ tp, span(tokens.ptr, tokens.len))
     if (msList_len(ts)) {
       if (isScope(tp[0]))
-        if (Token_equal(tp[0], opposite_scope(msList_last(ts))))
+        if (Token_equal(tp[0], opposite_end_scope(msList_last(ts))))
           msList_pop(ts);
         else msList_push(allocator, ts, tp[0]);
     } else if (Token_equal(tp[0], t))
@@ -164,14 +181,6 @@ ast *astAValue(AllocatorV allocator, Token t) {
       unreachable();
   }
 }
-bool isBlockStart(Token t) {
-  return EQUAL_ANY(
-      1,
-      Token_equal(t, t_lbrace),
-      Token_equal(t, t_lbracket),
-      Token_equal(t, t_lparen),
-  );
-}
 
   // { operations
   #define slice_first(slice) ({var_ _slice = slice ; _slice.ptr[0]; })
@@ -184,7 +193,7 @@ ast *popVal(AllocatorV allocator, slice(Token) * backptr) {
   bool isValue = isVal(back.ptr[0]);
 
   if (isblockStart) {
-    Token *end = next_tok_balanced(allocator, slice_split(back, (1, -1))[0], opposite_scope(back.ptr[0]));
+    Token *end = next_tok_balanced(allocator, slice_split(back, (1, -1))[0], opposite_end_scope(back.ptr[0]));
     if (!end)
       error_at(back.ptr->s.ptr, snprint(stdAlloc, "unclosed '{c8}'", back.ptr[0].s.ptr[0]));
     var_ slices = slice_split(back, (0, end - back.ptr + 1), (end - back.ptr + 1, -1));
@@ -222,7 +231,7 @@ TCO_ABI ast *parseTokList(AllocatorV allocator, ast *_Nullable current, slice(To
     __musttail___ return parseExprPartial(allocator, head, rest);
   }
   if (isBlockStart(back.ptr[0])) {
-    Token *end = next_tok_balanced(allocator, slice_split(back, (1, -1))[0], opposite_scope(back.ptr[0]));
+    Token *end = next_tok_balanced(allocator, slice_split(back, (1, -1))[0], opposite_end_scope(back.ptr[0]));
     if (!end)
       error_at(back.ptr->s.ptr, snprint(stdAlloc, "unclosed '{c8}'", back.ptr[0].s.ptr[0]));
     var_ block_slice = slice_split(back, (0, end - back.ptr + 1), (end - back.ptr + 1, -1));
@@ -271,8 +280,8 @@ ast *parseOperations(AllocatorV allocator, ast *current, slice(Token) * backp) {
     usize mp = -1;
     foreach (var_ op, pair(i, *msList_vla(opsList))) {
       usize p = getPrec(op);
-      min = mp > p ? i : min;
-      mp = mp > p ? p : mp;
+      min = mp >= p ? i : min;
+      mp = mp >= p ? p : mp;
     }
 
     var_ opNode = aValue(

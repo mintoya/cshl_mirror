@@ -2,8 +2,6 @@ int : type : @sint(32);
 str : type : []@sint(8);
 
 main : fn(( []str ),int);
-
 main = fn(( arg : []str ),r : int = 0){
   for arg in args print(arg);
-  for(arg in args) { print(arg) ;};
 };
