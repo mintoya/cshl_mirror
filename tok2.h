@@ -191,24 +191,16 @@ ast *popVal(AllocatorV allocator, slice(Token) * backptr) {
     *backptr = slices[1];
     return parseBlock(allocator, slices[0]);
   } else if (isValue) {
-    var_ isc = back.len > 1 && isBlockStart(back.ptr[1]);
-    var_ inx = isc ? back.ptr[0].s.ptr + back.ptr[0].s.len == back.ptr[1].s.ptr : 0;
-    if (isc && inx) {
-      var_ a = astAValue(allocator, back.ptr[0]);
-      var_ nh = slice_split(back, (1, -1));
-      var_ parens = popVal(allocator, nh);
-      *backptr = *nh;
-      return aValue(
-          allocator,
-          (ast)tu_of(
-              astOp,
-              {.left = a, .right = parens, .symLiteral = "()"}
-          )
-      );
-    } else {
-      *backptr = slice_split(back, (1, -1))[0];
-      return astAValue(allocator, back.ptr[0]);
+    var_ a = astAValue(allocator, back.ptr[0]);
+    var_ nh = slice_split(back, (1, -1))[0];
+
+    while (nh.len && isBlockStart(nh.ptr[0])) {
+      var_ parens = popVal(allocator, &nh);
+      a = aValue(allocator, (ast)tu_of(astOp, {a, parens, "()"}));
     }
+
+    *backptr = nh;
+    return a;
   } else
     error_at(back.ptr[0].s.ptr, snprint(stdAlloc, "compiler expected value here"));
 }
@@ -313,30 +305,10 @@ TCO_ABI ast *parseExprPartial(AllocatorV allocator, ast *_Nullable current, slic
     __musttail___ return parseExprPartial(allocator, nc, back);
   }
 
-  if (isVal(back.ptr[0])) {
+  if (isVal(back.ptr[0]) || isBlockStart(back.ptr[0])) {
     var_ ops = popVal(allocator, &back);
     ast *r = parseExprPartial(allocator, ops, back);
-    return aValue(
-        allocator,
-        (ast)tu_of(
-            astOp,
-            {
-                .left = current,
-                .right = r,
-                .symLiteral = "( )",
-            }
-        )
-    );
-  }
-
-  if (isBlockStart(back.ptr[0])) {
-    Token *end = next_tok_balanced(allocator, slice_split(back, (1, -1))[0], opposite_scope(back.ptr[0]));
-    if (!end)
-      error_at(back.ptr->s.ptr, snprint(stdAlloc, "unclosed '{c8}'", back.ptr[0].s.ptr[0]));
-    var_ block_slice = slice_split(back, (0, end - back.ptr + 1), (end - back.ptr + 1, -1));
-    ast *block = parseBlock(allocator, block_slice[0]);
-    ast *new_current = aValue(allocator, (ast)tu_of(astOp, {.left = current, .right = block, .symLiteral = "( )"}));
-    __musttail___ return parseExprPartial(allocator, new_current, block_slice[1]);
+    return aValue(allocator, (ast)tu_of(astOp, {current, r, "( )"}));
   }
 
   assertMessage(false, "%s", snprint(stdAlloc, "expr : items fell through : {slice : Token}", back).ptr);

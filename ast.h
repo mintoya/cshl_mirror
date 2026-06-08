@@ -69,7 +69,7 @@ static inline slice(u8) readFileAlloc(AllocatorV allocator, const char *filename
   assertMessage(fileptr->tell_max);
   usize len = *fileptr->tell_max;
 
-  var_ resp = &aCreate(allocator, u8, len);
+  var_ resp = &aCreate(allocator, u8, len ?: 1);
   usize len2 = sGetsf(fileptr, ((fptr){sizeof(*resp), *resp}));
   assertMessage(len2 == len);
   return (slice(u8)){len, resp[0]};
@@ -240,15 +240,12 @@ struct {
     {"==", 4},
     {"!=", 4},
 
-
     {"|>", 5},
 
     {"up", 6},
     {"in", 7},
 
-
     {"=", 8},
-
 
 };
 

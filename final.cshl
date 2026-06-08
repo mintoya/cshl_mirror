@@ -1,5 +1,9 @@
-1 * 2 + 3 * 4;
-1 + 2 + 3 * 4;
-a + b * c . d;
+int : type : @sint(32);
+str : type : []@sint(8);
 
-a = b = c = 0;
+main : fn(( []str ),int);
+
+main = fn(( arg : []str ),r : int = 0){
+  for arg in args print(arg);
+  for(arg in args) { print(arg) ;};
+};
