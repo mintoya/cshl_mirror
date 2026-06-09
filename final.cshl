@@ -1,7 +1,18 @@
+for :fn((cnd : iter), fn((ast) , ast)):{
+  cnd.init;
+  return fn((body : ast) , ast){
+    return 
+      @noExpand{@while(cnd.continue  , {
+          cnd.decl; body;
+      });};
+  };
+};
+
+
 int : type : @sint(32);
 str : type : []@sint(8);
 
 main : fn(( []str ),int);
 main = fn(( arg : []str ),r : int = 0){
-  for arg in args print(arg);
+  for each(arg,args) print(arg);
 };

@@ -2,6 +2,8 @@
 #include "tok1.h"
 #include "typ.h"
 #include "wheels/macros.h"
+#include "wheels/mytypes.h"
+#include "wheels/tu_macros.h"
 #include <stdalign.h>
 #include <string.h>
 #include <wheels/hhmap.h>
@@ -44,8 +46,6 @@ var_ moqOp = /* */ (astOp_union){">="};
 var_ eqOp = /*  */ (astOp_union){"=="};
 var_ neqOp = /* */ (astOp_union){"!="};
 var_ pipeOp = /**/ (astOp_union){"|>"};
-var_ upOp = /*  */ (astOp_union){"up"};
-var_ inOp = /*  */ (astOp_union){"in"};
 var_ setOp = /* */ (astOp_union){"="};
 i64 parse_number(fptr str_number) {
   u8 *ptr = str_number.ptr;
@@ -67,11 +67,11 @@ i64 parse_number(fptr str_number) {
       val = val * 10 + (ptr[i] - '0');
   return neg ? -val : val;
 }
+
 rtval eval(mList(scope) scope_list, rtval *expected_value, ast *ast_part) {
   assertMessage(scope_list && mList_len(scope_list));
   var_ thisAllocator = msHmap_allocator(mList_last(scope_list));
   rtval result = nullptr;
-
   tu_match(
       (ast_part[0]),
       case (astEmptyStatement, _, {}),
