@@ -200,15 +200,15 @@ static void print_ast_recursive(ast *node, int indent, outputFunction put, void 
 REGISTER_SPECIAL_PRINTER("ast", ast *, { print_ast_recursive(in, 0, put, _arb); });
 
 c8 *punctuations[] = {
-    {":"},
-    {";"},
-    {","},
-    {"("},
-    {")"},
-    {"{"},
-    {"}"},
-    {"["},
-    {"]"},
+    ":",
+    ";",
+    ",",
+    "(",
+    ")",
+    "{",
+    "}",
+    "[",
+    "]",
 };
 
 struct {

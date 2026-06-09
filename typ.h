@@ -22,12 +22,12 @@ tu_def(
 
 typedef struct itype {
   usize alignment;
-  itype_t type;
+  itype_t *type;
 } itype;
 static usize itype_alignment(const itype *t) {
   if (t->alignment) return t->alignment;
   tu_match(
-      t->type,
+      t->type[0],
 
       case (it_void, _, { return 0; }),
       case (it_fun, _, { return 0; }),
@@ -37,18 +37,19 @@ static usize itype_alignment(const itype *t) {
       case (it_sint, bits, { return (bits + 7) / 8; }),
 
       case (it_ptr, _, {
-        itype temp = (itype){.type = (itype_t)tu_of(it_uint, 64)};
+        var_ t = (itype_t)tu_of(it_uint, 64);
+        itype temp = (itype){.type = &t};
         return itype_alignment(&temp);
       }),
       case (it_arr, arry, {
-        itype temp = (itype){.type = *arry.type};
+        itype temp = (itype){.type = arry.type};
         return itype_alignment(&temp);
       }),
       case (it_struct, bits, {
         usize max = 1;
         var_ vla = sentList_vla(bits);
         foreach (var_ t, vla(*vla)) {
-          itype temp = (itype){.type = *t.type};
+          itype temp = (itype){.type = t.type};
           usize alig = itype_alignment(&temp);
           max = max > alig ? max : alig;
         }
@@ -59,7 +60,7 @@ static usize itype_alignment(const itype *t) {
 }
 static usize itype_size(const itype *t) {
   tu_match(
-      t->type,
+      t->type[0],
 
       case (it_void, _, { return 0; }),
       case (it_fun, _, { return 0; }),
@@ -69,11 +70,12 @@ static usize itype_size(const itype *t) {
       case (it_sint, bits, { return (bits + 7) / 8; }),
 
       case (it_ptr, _, {
-        itype temp = (itype){.type = (itype_t)tu_of(it_uint, 64)};
+        var_ t = (itype_t)tu_of(it_uint, 64);
+        itype temp = (itype){.type = &t};
         return itype_size(&temp);
       }),
       case (it_arr, arry, {
-        itype temp = (itype){.type = *arry.type};
+        itype temp = (itype){.type = arry.type};
         return itype_size(&temp) * arry.length;
       }),
       case (it_struct, bits, {
@@ -82,7 +84,7 @@ static usize itype_size(const itype *t) {
 
         var_ vla = sentList_vla(bits);
         foreach (var_ t, vla(*vla)) {
-          itype temp = (itype){.type = *t.type};
+          itype temp = (itype){.type = t.type};
           usize size = itype_size(&temp);
           max = max > size + t.offset ? max : size + t.offset;
         }

@@ -87,10 +87,11 @@ Token *next_tok_balanced(AllocatorV allocator, slice(Token) tokens, Token t) {
 
   foreach (var_ tp, span(tokens.ptr, tokens.len))
     if (msList_len(ts)) {
-      if (isScope(tp[0]))
+      if (isScope(tp[0])) {
         if (Token_equal(tp[0], opposite_end_scope(msList_last(ts))))
           msList_pop(ts);
         else msList_push(allocator, ts, tp[0]);
+      }
     } else if (Token_equal(tp[0], t))
       return tp;
     else if (isScope(tp[0])) msList_push(allocator, ts, tp[0]);
@@ -113,10 +114,11 @@ struct next_op_result next_op_balanced(AllocatorV allocator, slice(Token) tokens
 
   for (var_ tp = tokens.ptr; tp < tokens.ptr + tokens.len; tp++)
     if (msList_len(ts)) {
-      if (isScope(tp[0]))
+      if (isScope(tp[0])) {
         if (Token_equal(tp[0], opposite_end_scope(msList_last(ts))))
           msList_pop(ts);
         else msList_push(allocator, ts, tp[0]);
+      }
     } else if (tp->kind == t_operator) return (struct next_op_result){tp, skipped};
     else if (isScope(tp[0])) {
       msList_push(allocator, ts, tp[0]);
@@ -140,10 +142,11 @@ usize balanced_count(AllocatorV allocator, slice(Token) tokens, Token t) {
 
   foreach (var_ tp, span(tokens.ptr, tokens.len))
     if (msList_len(ts)) {
-      if (isScope(tp[0]))
+      if (isScope(tp[0])) {
         if (Token_equal(tp[0], opposite_end_scope(msList_last(ts))))
           msList_pop(ts);
         else msList_push(allocator, ts, tp[0]);
+      }
     } else if (Token_equal(tp[0], t))
       count++;
     else if (isScope(tp[0]))
@@ -212,6 +215,7 @@ ast *popVal(AllocatorV allocator, slice(Token) * backptr) {
     return a;
   } else
     error_at(back.ptr[0].s.ptr, snprint(stdAlloc, "compiler expected value here"));
+  return nullptr;
 }
 TCO_ABI ast *parseExprPartial(AllocatorV allocator, ast *_Nullable current, slice(Token) back);
 TCO_ABI ast *parseExpr(AllocatorV allocator, slice(Token) tokens) { return parseExprPartial(allocator, nullptr, tokens); }
@@ -241,7 +245,7 @@ TCO_ABI ast *parseTokList(AllocatorV allocator, ast *_Nullable current, slice(To
 
   if (back.ptr[0].kind == t_operator && Token_equal(back.ptr[0], t_dot)) {
     ast *rhs = parseExpr(allocator, slice_split(back, (1, -1))[0]);
-    return aValue(allocator, (ast)tu_of(astOp, {.left = nullptr, .right = rhs, .symLiteral = "."}));
+    return aValue(allocator, (ast)tu_of(astOp, {nullptr, rhs, "."}));
   } else if (back.ptr[0].kind == t_operator)
     error_at(back.ptr[0].s.ptr, snprint(stdAlloc, "{c8} needs operator to the left", back.ptr->s.ptr[0]));
 
@@ -286,13 +290,7 @@ ast *parseOperations(AllocatorV allocator, ast *current, slice(Token) * backp) {
 
     var_ opNode = aValue(
         allocator,
-        (ast)tu_of(
-            astOp,
-            {
-                .left = astList[min],
-                .right = astList[min + 1],
-            }
-        )
+        (ast)tu_of(astOp, {astList[min], astList[min + 1]})
     );
     memcpy(opNode->astOp.symLiteral, opsList[min].s.ptr, opsList[min].s.len);
 

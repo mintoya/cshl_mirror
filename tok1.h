@@ -75,8 +75,7 @@ static msList(Token) tokenize(AllocatorV allocator, fptr input) {
       case '0': {
         if (i + 1 < input.len && input.ptr[i + 1] == 'x') {
           usize j = i + 2;
-          while (j < input.len && ((input.ptr[j] >= '0' && input.ptr[j] <= '9') ||
-                                   (input.ptr[j] >= 'a' && input.ptr[j] <= 'f')))
+          while (j < input.len && (isNum(input.ptr[j]) || (input.ptr[j] >= 'a' && input.ptr[j] <= 'f')))
             j++;
           if (isAlphaNum(input.ptr[j])) error_at(input.ptr + j, snprint(stdAlloc, " {c8} is not part of hex", input.ptr[j]));
           msList_push(allocator, res, ((Token){.kind = t_number, .s = {j - i, input.ptr + i}}));
@@ -105,6 +104,20 @@ static msList(Token) tokenize(AllocatorV allocator, fptr input) {
         i++;
         continue;
 
+      case '-': {
+        if (i + 1 < input.len && isNum(input.ptr[i + 1])) {
+          var_ ress = (fptr){1, input.ptr + i};
+          while (ress.ptr + ress.len < input.ptr + input.len && isNum(ress.ptr[ress.len]))
+            ress.len++;
+          if (ress.ptr + ress.len + 1 < input.ptr + input.len && isAlphaNum(input.ptr[ress.ptr[ress.len]]))
+            error_at(ress.ptr + ress.len, snprint(stdAlloc, " {c8} is not part of number", ress.ptr[ress.len]));
+          if (ress.len > 1) {
+            msList_push(allocator, res, ((Token){.kind = t_number, .s = ress}));
+            i += ress.len;
+            continue;
+          }
+        }
+      };
       default: {
 
         if (isAlphaNum(input.ptr[i])) {
