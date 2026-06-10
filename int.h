@@ -12,12 +12,6 @@
 #include <wheels/sList.h>
 #include <wheels/shmap.h>
 
-typedef struct rtval {
-  itype type;
-  alignas(myAlign) u8 value[];
-} *value;
-
-typedef msHmap(value) scope;
 typedef itypeof(astOp, symLiteral) astOp_sym;
 typedef itypeof(astOp, number_rep) astOp_num;
 typedef union astOp_union {
@@ -130,14 +124,23 @@ i64 parse_number(fptr str_number) {
   return neg ? -val : val;
 }
 
-value eval_call(mList(scope) scope_list, ast *ast_part) {
-  assertMessage(tu_is(astOp, ast_part[0]));
-  assertMessage(EQUAL_ANY(ast_part->astOp.number_rep, callOp.num, acallOp.num));
-  var_ operation = ast_part->astOp;
-  var_ left = operation.left;
-  var_ right = operation.right;
-  return nullptr;
-}
+typedef struct rtval {
+  itype type;
+  union {
+    void *runtime_value;
+    struct {
+      // same functions
+      fptr *names;
+      void *values;
+      ast *ast;
+    } function_value;
+    itype_t *type_value;
+    ast *ast_value;
+  } cvalue;
+  alignas(myAlign) u8 rvalue[];
+} *value;
+typedef msHmap(value) scope;
+
 
 value eval(mList(scope) scope_list, value *expected_value, ast *ast_part) {
   assertMessage(scope_list && mList_len(scope_list));
@@ -146,28 +149,9 @@ value eval(mList(scope) scope_list, value *expected_value, ast *ast_part) {
   tu_match(
       (ast_part[0]),
       case (astEmptyStatement, _, {}),
-      case (astString, str, {
-        var_ res = (value)aAlloc(thisAllocator, sizeof(struct rtval) + str.len + 1);
-        memcpy(res->value, str.ptr, str.len);
-        res->value[str.len] = 0;
-        result = res;
-      }),
-      case (astNumber, str_number, {
-        var_ res = (value)aAlloc(thisAllocator, sizeof(struct rtval) + sizeof(i64));
-        *(i64 *)res->value = (i64)parse_number(str_number);
-        res->type = (itype){.type = aValue(thisAllocator, (itype_t)tu_of(it_sint, 64))};
-        result = res;
-      }),
-      case (astId, id, {
-        foreach (var_ i, range(msList_len(scope_list), 0)) {
-          var_ s = msHmap_get(mList_arr(scope_list)[i - 1], id);
-          if (s) {
-            result = *s;
-            break;
-          }
-        }
-        if (!result) error_at(id.ptr, snprint(stdAlloc, "couldnt find symbol {slice(c8)}", id));
-      }),
+      case (astString, str, {}),
+      case (astNumber, str_number, {}),
+      case (astId, id, {}),
   );
   return result;
 }
