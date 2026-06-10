@@ -1,5 +1,6 @@
 #if !defined(ITEM_TYPES_H)
   #define ITEM_TYPES_H (1)
+  #include "ast.h"
   #include <wheels/allocator.h>
   #include <wheels/assertMessage.h>
   #include <wheels/fptr.h>
@@ -17,11 +18,14 @@ tu_def(
     (it_arr, struct { itype_t * type ; usize length; }),
     (it_fun, sentList_t(itype_t *)),
     (it_struct, sentList_t(struct {itype_t * type; usize offset ; })),
+
     (it_type, itype_t *),
+    (it_ast, nothing_t),
 );
 
 typedef struct itype {
   usize alignment;
+  bool constness;
   itype_t *type;
 } itype;
 static usize itype_alignment(const itype *t) {
@@ -32,6 +36,7 @@ static usize itype_alignment(const itype *t) {
       case (it_void, _, { return 0; }),
       case (it_fun, _, { return 0; }),
       case (it_type, _, { return 0; }),
+      case (it_ast, _, { return 0; }),
 
       case (it_uint, bits, { return (bits + 7) / 8; }),
       case (it_sint, bits, { return (bits + 7) / 8; }),
@@ -65,6 +70,7 @@ static usize itype_size(const itype *t) {
       case (it_void, _, { return 0; }),
       case (it_fun, _, { return 0; }),
       case (it_type, _, { return 0; }),
+      case (it_ast, _, { return 0; }),
 
       case (it_uint, bits, { return (bits + 7) / 8; }),
       case (it_sint, bits, { return (bits + 7) / 8; }),
