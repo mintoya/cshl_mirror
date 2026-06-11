@@ -156,11 +156,8 @@ static void print_ast_recursive(ast *node, int indent, outputFunction put, void 
            }),
            case (astOp, op, {
              PUTS("Op '");
-             usize sym_len = 0;
-             while (sym_len < 8 && op.symLiteral[sym_len]) {
-               sym_len++;
-             }
-             put((const char *)op.symLiteral, _arb, sym_len, 0);
+             PUTS(op.symLiteral);
+             // USETYPEPRINTER(usize, op.number_rep);
              PUTS("'\n");
 
              print_ast_indent(indent + 1, put, _arb);
@@ -241,7 +238,6 @@ struct {
     {"!=", 4},
 
     {"|>", 5},
-
 
     {"=", 8},
 

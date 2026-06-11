@@ -1,3 +1,4 @@
+#include <string.h>
 #if !defined(TOKENIZER_H1)
   #define TOKENIZER_H1 (1)
   #include "ast.h"
@@ -21,6 +22,8 @@ CONST_EXPR Token t_colon = (Token){(fptr){1, (u8[]){':'}}, t_punctuation};
 CONST_EXPR Token t_equals = (Token){(fptr){1, (u8[]){'='}}, t_operator};
 
 CONST_EXPR Token t_dot = (Token){(fptr){1, (u8[]){'.'}}, t_operator};
+CONST_EXPR Token t_not = (Token){(fptr){3, (u8[]){"not"}}, t_operator};
+CONST_EXPR Token t_bnot = (Token){(fptr){4, (u8[]){"bnot"}}, t_operator};
 
 CONST_EXPR Token t_lparen = (Token){(fptr){1, (u8[]){'('}}, t_punctuation};
 CONST_EXPR Token t_rparen = (Token){(fptr){1, (u8[]){')'}}, t_punctuation};
@@ -58,6 +61,14 @@ bool isBlockEnd(Token t) {
       Token_equal(t, t_rbrace),
       Token_equal(t, t_rbracket),
       Token_equal(t, t_rparen),
+  );
+}
+bool Token_nullable_left(Token t) {
+  return EQUAL_ANY(
+      1,
+      Token_equal(t, t_dot),
+      Token_equal(t, t_not),
+      Token_equal(t, t_bnot),
   );
 }
 bool isVal(Token t) {
@@ -243,11 +254,13 @@ TCO_ABI ast *parseTokList(AllocatorV allocator, ast *_Nullable current, slice(To
     __musttail___ return parseExprPartial(allocator, block, block_slice[1]);
   }
 
-  if (back.ptr[0].kind == t_operator && Token_equal(back.ptr[0], t_dot)) {
+  if (back.ptr[0].kind == t_operator && Token_nullable_left(back.ptr[0])) {
     ast *rhs = parseExpr(allocator, slice_split(back, (1, -1))[0]);
-    return aValue(allocator, (ast)tu_of(astOp, {nullptr, rhs, "."}));
+    var_ r = aValue(allocator, (ast)tu_of(astOp, {nullptr, rhs}));
+    memcpy(r->astOp.symLiteral, back.ptr->s.ptr, back.ptr->s.len);
+    return r;
   } else if (back.ptr[0].kind == t_operator)
-    error_at(back.ptr[0].s.ptr, snprint(stdAlloc, "{c8} needs operator to the left", back.ptr->s.ptr[0]));
+    error_at(back.ptr[0].s.ptr, snprint(stdAlloc, "{slice(c8)} needs operator to the left", back.ptr->s));
 
   assertMessage(false, "%s", snprint(stdAlloc, "tlist : items fell through : {slice : Token}", back).ptr);
 }
@@ -315,7 +328,7 @@ TCO_ABI ast *parseExprPartial(AllocatorV allocator, ast *_Nullable current, slic
   if (isVal(back.ptr[0]) || isBlockStart(back.ptr[0])) {
     var_ ops = popVal(allocator, &back);
     ast *r = parseExprPartial(allocator, ops, back);
-    return aValue(allocator, (ast)tu_of(astOp, {current, r, "( )"}));
+    return aValue(allocator, (ast)tu_of(astOp, {current, r, "()"}));
   }
 
   assertMessage(false, "%s", snprint(stdAlloc, "expr : items fell through : {slice : Token}", back).ptr);

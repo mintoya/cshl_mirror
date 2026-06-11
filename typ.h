@@ -10,22 +10,23 @@
 typedef struct itype_t itype_t;
 tu_def(
     (itype_t, u8),
+
     (it_void, nothing_t),
+    (it_type, nothing_t),
+    (it_ast, nothing_t),
+
     (it_uint, u16),
     (it_sint, u16),
     // (it_fnum, typeof(enum floatKind{FNUM_SMALL, FNUM_MEDIUM, FNUM_LARGE})),
     (it_ptr, itype_t *),
+
     (it_arr, struct { itype_t * type ; usize length; }),
     (it_fun, sentList_t(itype_t *)),
     (it_struct, sentList_t(struct {itype_t * type; usize offset ; })),
-
-    (it_type, itype_t *),
-    (it_ast, nothing_t),
 );
 
 typedef struct itype {
   usize alignment;
-  bool constness;
   itype_t *type;
 } itype;
 static usize itype_alignment(const itype *t) {
@@ -103,4 +104,59 @@ static usize itype_alignment_cache(itype *t) {
   if (!t->alignment) t->alignment = itype_alignment(t);
   return t->alignment;
 }
+REGISTER_PRINTER(itype_t, {
+  tu_match(
+      in,
+      case (it_void, _, {
+        PUTS("void");
+      }),
+      case (it_ast, _, {
+        PUTS("ast");
+      }),
+      case (it_type, _, {
+        PUTS("type");
+      }),
+      case (it_uint, u, {
+        PUTS("u");
+        USETYPEPRINTER(usize, (usize)u);
+      }),
+      case (it_sint, s, {
+        PUTS("s");
+        USETYPEPRINTER(usize, (usize)s);
+      }),
+      case (it_ptr, ptr, {
+        PUTS("*");
+        USETYPEPRINTER(itype_t, *ptr);
+      }),
+      case (it_arr, arr, {
+        PUTS("[");
+        USETYPEPRINTER(usize, arr.length);
+        PUTS("]");
+        USETYPEPRINTER(itype_t, *arr.type);
+      }),
+      case (it_fun, fields, {
+        PUTS("fn((");
+        usize len = sentList_length(fields, sizeof(*fields));
+        foreach (var_ f, span(fields, len - 1)) {
+          if (f != fields) PUTS(",");
+          USETYPEPRINTER(itype_t, **f);
+        }
+        PUTS(")");
+        USETYPEPRINTER(itype_t, fields[len - 1][0]);
+        PUTS(")");
+      }),
+      case (it_struct, fields, {
+        PUTS("{");
+        usize len = sentList_length(fields, sizeof(*fields));
+        foreach (var_ f, span(fields, len)) {
+          if (f != fields) PUTS(",");
+          USETYPEPRINTER(itype_t, *f->type);
+          PUTS("@");
+          USETYPEPRINTER(usize, f->offset);
+        }
+        PUTS("}");
+      }),
+  );
+});
+
 #endif

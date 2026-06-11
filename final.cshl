@@ -1,3 +1,6 @@
+ast :: @ast();
+type :: @type();
+
 int : type : @sint(32);
 
 iter :: struct{ 
@@ -5,21 +8,24 @@ iter :: struct{
   cont :ast;
   init :ast;
 };
-each ::fn((name:ast , array : []t) , result : iter){
-  result = [ 
-    .decl = @noExpand{ name := array[_i]; _i = _i + 1; } , 
-    .cont = @noExpand{ _i < array.len; } , 
-    .init = @noExpand{ _i : int = 0; } , 
+each ::fn((name:ast , array : []t) , iter){
+  // noExpand will ignore first level of scope punctuation
+  id : ast : name.id;
+  return [ 
+    .init = @noExpand{ i : @uint(64) = 0; } , 
+    .cont = @noExpand{ i < array.len; } , 
+    .decl = @noExpand{ id := array[i]; i = i + 1; } , 
   ];
 };
 for :fn((cnd : iter), fn((ast) , ast)):{
   return fn((body : ast) , ast){
     return 
       @noExpand(
-        {
-          cnd.init;
-          @while(cnd.cont  , {
-            cnd.decl; body;
+        { // these brackcets will also be insserted
+          @expand(cnd.init);
+          @while(@expand(cnd.cont),{
+            @expand(cnd.decl);
+            body;
           });
         }
       );
@@ -33,3 +39,4 @@ main : fn(( []str ),int);
 main = fn(( arg : []str ),r : int = 0){
   for each(arg,args) print(arg);
 };
+
