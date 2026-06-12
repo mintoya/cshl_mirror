@@ -22,7 +22,7 @@ tu_def(
 
     (it_arr, struct { itype_t * type ; usize length; }),
     (it_fun, sentList_t(itype_t *)),
-    (it_struct, sentList_t(struct {itype_t * type; usize offset ; })),
+    (it_struct, sentList_t(struct { itype_t * type; bool isconst :  1; usize offset : 63; })),
 );
 
 typedef struct itype {
@@ -55,6 +55,7 @@ static usize itype_alignment(const itype *t) {
         usize max = 1;
         var_ vla = sentList_vla(bits);
         foreach (var_ t, vla(*vla)) {
+          if (t.isconst) continue;
           itype temp = (itype){.type = t.type};
           usize alig = itype_alignment(&temp);
           max = max > alig ? max : alig;
@@ -91,6 +92,7 @@ static usize itype_size(const itype *t) {
 
         var_ vla = sentList_vla(bits);
         foreach (var_ t, vla(*vla)) {
+          if (t.isconst) continue;
           itype temp = (itype){.type = t.type};
           usize size = itype_size(&temp);
           max = max > size + t.offset ? max : size + t.offset;

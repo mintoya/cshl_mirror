@@ -182,10 +182,11 @@ itype_t *getType(itype_t t) {
  */
 typedef struct rtval *value;
 typedef struct {
-  itype_t *type;     // type
-  fptr *structNames; // array of struct member names
+  itype_t *type; // type
+  fptr *names;   // array of member names , fun | struct
+  value *values; // array of initial values , fun | struct
   enum : u8 {
-    builtin_none, //
+    builtin_none,
 
     builtin_$sint,
     builtin_$uint,
@@ -201,79 +202,79 @@ typedef struct {
   } builtin_id;
 } type_value;
 typedef struct rtval {
-  type_value *type;
+  type_value type;
   union {
     /*
       main = fn(( arg : []str ),r : int = 0) : { };
       names will be "arg" , "r" ; nullablity in the ptr field
       values will have to store int for r as 0, others null
 
-      none null terminated, same length as the function's signature
+      not null terminated, same length as the function's signature
     */
-    struct {
-      fptr *names;
-      value *rvalue_init;
-      ast *fnblock; /*    */ // pointer to block containing function
-    } function_value; /*  */ // active for it_fun
-    type_value type_value;   // active for it_type *and
-    ast *ast_value;          // active for it_ast
-    iptr runtime_value;      // active for everything else
+
+    ast *function_value;   // active for it_fun
+    type_value type_value; // active for it_type
+    ast *ast_value;        // active for it_ast
+    iptr runtime_value;    // active for everything else
   };
 } *value;
 _Static_assert(!builtin_none, "");
 
-itype_t *value_Typeof(const value v) { return v->type->type; }
+itype_t *value_Typeof(const value v) {
+  if (v->type.builtin_id) return nullptr;
+  return v->type.type;
+}
 itype_t *value_isInt(const value v) {
   var_ type = value_Typeof(v);
-  if (EQUAL_ANY(1, tu_is(it_sint, type[0]), tu_is(it_uint, type[0]))) {
+  if (type && EQUAL_ANY(1, tu_is(it_sint, type[0]), tu_is(it_uint, type[0]))) {
     return type;
   } else return nullptr;
 }
 itype_t *value_isSInt(const value v) {
   var_ type = value_Typeof(v);
-  if (tu_is(it_sint, type[0])) {
+  if (type && tu_is(it_sint, type[0])) {
     return type;
   } else return nullptr;
 }
 itype_t *value_isUInt(const value v) {
   var_ type = value_Typeof(v);
-  if (tu_is(it_uint, type[0])) {
+  if (type && tu_is(it_uint, type[0])) {
     return type;
   } else return nullptr;
 }
 itype_t *value_isStruct(const value v) {
   var_ type = value_Typeof(v);
-  if (tu_is(it_struct, type[0])) {
+  if (type && tu_is(it_struct, type[0])) {
     return type;
   } else return nullptr;
 }
 itype_t *value_isFn(const value v) {
   var_ type = value_Typeof(v);
-  if (tu_is(it_fun, type[0])) {
+  if (type && tu_is(it_fun, type[0])) {
     return type;
   } else return nullptr;
 }
 itype_t *value_isArr(const value v) {
   var_ type = value_Typeof(v);
-  if (tu_is(it_arr, type[0])) {
+  if (type && tu_is(it_arr, type[0])) {
     return type;
   } else return nullptr;
 }
 itype_t *value_isPtr(const value v) {
   var_ type = value_Typeof(v);
-  if (tu_is(it_ptr, type[0])) {
+  if (type && tu_is(it_ptr, type[0])) {
     return type;
   } else return nullptr;
 }
 itype_t *value_isAst(const value v) {
   var_ type = value_Typeof(v);
-  if (tu_is(it_ast, type[0])) {
+  if (type && tu_is(it_ast, type[0])) {
     return type;
   } else return nullptr;
 }
 itype_t *value_isType(const value v) {
   var_ type = value_Typeof(v);
-  if (tu_is(it_type, type[0])) {
+  if (type && tu_is(it_type, type[0])) {
     return type;
   } else return nullptr;
 }
@@ -307,7 +308,7 @@ iptr state_stack_push(state *s, usize size) {
   msList_pushArr(
       mList_allocator(s->scopes),
       s->stack,
-      *VLAP((u8 *)0, lineup(size, alignof(usize)))
+      *VLAP((u8 *)0, size)
   );
   return res + alignof(myAlign);
 }
@@ -377,9 +378,9 @@ u8 *state_fromV(state *s, iptr place) {
   place -= alignof(myAlign);
   return a + place;
 }
-
-value state_create(AllocatorV allocator, state *s, type_value *type, bool isHeap) {
-  usize size = lineup(itype_size(REF(itype, {0, type->type})), alignof(myAlign));
+value state_create(AllocatorV allocator, state *s, type_value type, bool isHeap) {
+  assertMessage(type.type && !type.builtin_id);
+  usize size = lineup(itype_size(REF(itype, {0, type.type})), alignof(myAlign));
   var_ res = aCreate(allocator, ptrstype(value));
   res->type = type;
   if (size)
@@ -390,13 +391,14 @@ value state_create(AllocatorV allocator, state *s, type_value *type, bool isHeap
   return res;
 }
 void state_destroy(AllocatorV allocator, state *s, value v) {
-  var_ tyep = v->type->type;
+  var_ tyep = v->type.type;
   usize size = lineup(itype_size(REF(itype, {0, tyep})), alignof(myAlign));
   defer { aFree(allocator, v, sizeof(*v)); };
 
   if (size)
     if (v->runtime_value < 0) state_heap_free(s, -v->runtime_value);
 }
+
 // }
 
 // {literal conversion
@@ -490,7 +492,7 @@ void eval_coerce(
 
   // structs must also have same feilds
   if (tu_is(it_struct, to_type_full.type[0])) {
-    if (to_type_full.type == value_Typeof(*v) && to_type_full.structNames == (v[0])->type_value.structNames) return;
+    if (to_type_full.type == value_Typeof(*v) && to_type_full.names == (v[0])->type_value.names) return;
     else assertMessage(false);
   }
 
@@ -516,7 +518,7 @@ void eval_coerce(
 
     if (to_bits < from_bits) assertMessage(false);
     // set some bits;
-    v[0]->type = expected;
+    v[0]->type = expected[0];
   } else assertMessage(false);
 }
 
@@ -534,11 +536,12 @@ value eval_symbol(
 
   // {builtin resolution
 
-#define STATIC_BUILTIN(id)                        \
-  ({                                              \
-    static type_value _tv = {.builtin_id = (id)}; \
-    static ptrstype(value) _v = {.type = &_tv};   \
-    &_v;                                          \
+#define STATIC_BUILTIN(id)           \
+  ({                                 \
+    static ptrstype(value) _v = {    \
+        .type = {.builtin_id = (id)} \
+    };                               \
+    &_v;                             \
   })
 
   // Usage in eval_symbol becomes:
