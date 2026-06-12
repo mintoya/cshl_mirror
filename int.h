@@ -44,7 +44,7 @@ var_ pipeOp = /* */ (astOp_union){"|>"};
 var_ setOp = /*  */ (astOp_union){"="};
 // }
 
-// {type intern
+// {type
 int buffer_cmp(const void *a, const void *b) {
   var_ ap = (fptr *)a;
   var_ bp = (fptr *)b;
@@ -185,19 +185,19 @@ typedef struct {
   itype_t *type;     // type
   fptr *structNames; // array of struct member names
   enum : u8 {
-    builtin_none = 0, //
+    builtin_none, //
 
-    builtin_$sint = 1,
-    builtin_$uint = 2,
-    builtin_$noExpand = 3,
-    builtin_$expand = 4,
-    builtin_$while = 5,
-    builtin_$type = 6,
-    builtin_$void = 7,
-    builtin_$ast = 8,
+    builtin_$sint,
+    builtin_$uint,
+    builtin_$noExpand,
+    builtin_$expand,
+    builtin_$while,
+    builtin_$type,
+    builtin_$void,
+    builtin_$ast,
 
-    builtin_return = 9,
-    builtin_struct = 10,
+    builtin_return,
+    builtin_struct,
   } builtin_id;
 } type_value;
 typedef struct rtval {
@@ -220,13 +220,67 @@ typedef struct rtval {
     iptr runtime_value;      // active for everything else
   };
 } *value;
+_Static_assert(!builtin_none, "");
 
-itype_t *value_type(const value v) { return v->type->type; }
-
-typedef msHmap(value) scope;
+itype_t *value_Typeof(const value v) { return v->type->type; }
+itype_t *value_isInt(const value v) {
+  var_ type = value_Typeof(v);
+  if (EQUAL_ANY(1, tu_is(it_sint, type[0]), tu_is(it_uint, type[0]))) {
+    return type;
+  } else return nullptr;
+}
+itype_t *value_isSInt(const value v) {
+  var_ type = value_Typeof(v);
+  if (tu_is(it_sint, type[0])) {
+    return type;
+  } else return nullptr;
+}
+itype_t *value_isUInt(const value v) {
+  var_ type = value_Typeof(v);
+  if (tu_is(it_uint, type[0])) {
+    return type;
+  } else return nullptr;
+}
+itype_t *value_isStruct(const value v) {
+  var_ type = value_Typeof(v);
+  if (tu_is(it_struct, type[0])) {
+    return type;
+  } else return nullptr;
+}
+itype_t *value_isFn(const value v) {
+  var_ type = value_Typeof(v);
+  if (tu_is(it_fun, type[0])) {
+    return type;
+  } else return nullptr;
+}
+itype_t *value_isArr(const value v) {
+  var_ type = value_Typeof(v);
+  if (tu_is(it_arr, type[0])) {
+    return type;
+  } else return nullptr;
+}
+itype_t *value_isPtr(const value v) {
+  var_ type = value_Typeof(v);
+  if (tu_is(it_ptr, type[0])) {
+    return type;
+  } else return nullptr;
+}
+itype_t *value_isAst(const value v) {
+  var_ type = value_Typeof(v);
+  if (tu_is(it_ast, type[0])) {
+    return type;
+  } else return nullptr;
+}
+itype_t *value_isType(const value v) {
+  var_ type = value_Typeof(v);
+  if (tu_is(it_type, type[0])) {
+    return type;
+  } else return nullptr;
+}
 
 // {state
 
+typedef msHmap(value) scope;
 typedef struct eval_state {
   mList(scope) scopes;
   msList(u8) stack, heap;
@@ -425,6 +479,47 @@ void astStr_tom(fptr from, fptr *to) {
 }
 // }
 
+void eval_coerce(
+    state *evalState,
+    type_value *_Nullable expected,
+    value *v
+) {
+  if (!expected) return;
+  var_ to_type_full = expected[0];
+  if (to_type_full.builtin_id) assertMessage(false, "builtins dont have a type "); // TODO give builtins a type
+
+  // structs must also have same feilds
+  if (tu_is(it_struct, to_type_full.type[0])) {
+    if (to_type_full.type == value_Typeof(*v) && to_type_full.structNames == (v[0])->type_value.structNames) return;
+    else assertMessage(false);
+  }
+
+  var_ to_type = to_type_full.type;
+  if (to_type == value_Typeof(*v)) return;
+
+  if (tu_is(it_uint, to_type[0]) || tu_is(it_sint, to_type[0])) {
+    var_ item_type = value_isInt(*v);
+    if (!item_type) assertMessage(false);
+
+    u16 to_bits = 0;
+    u16 from_bits = 0;
+    if (tu_is(it_uint, to_type[0]))
+      to_bits = tu_assert(it_uint, to_type[0]);
+    else
+      to_bits = tu_assert(it_sint, to_type[0]);
+
+    if_decl (var_ t, value_isSInt(*v))
+      from_bits = tu_assert(it_sint, t[0]);
+    if_decl (var_ t, value_isUInt(*v))
+      from_bits = tu_assert(it_uint, t[0]);
+    assertMessage(from_bits);
+
+    if (to_bits < from_bits) assertMessage(false);
+    // set some bits;
+    v[0]->type = expected;
+  } else assertMessage(false);
+}
+
 value eval(
     state *evalState,
     itype_t *_Nullable expected,
@@ -467,12 +562,6 @@ value eval_symbol(
   assertMessage(false);
 }
 
-void eval_coerce(
-    state *evalState,
-    value *_Nullable expected,
-    value *v
-) {
-}
 value eval_call(
     state *evalState,
     ast *left,
@@ -488,6 +577,8 @@ value eval_call(
           tu_is(astABlock, right[0])  // [...]
       )
   );
+  var_ l = eval(evalState, nullptr, left[0], 0);
+  // var_ r= eval(evalState, nullptr, left[0], 0);
 }
 value eval_op(
     state *evalState,
