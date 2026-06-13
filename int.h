@@ -1,15 +1,13 @@
 #include "ast.h"
 #include "typ.h"
-#include "wheels/funct.h"
-#include "wheels/macros.h"
-#include "wheels/mytypes.h"
-#include "wheels/smallstream.h"
-#include "wheels/tu_macros.h"
 #include <stdalign.h>
 #include <string.h>
-#include <wheels/hhmap.h>
+#include <wheels/funct.h>
+#include <wheels/macros.h>
+#include <wheels/mytypes.h>
 #include <wheels/sList.h>
 #include <wheels/shmap.h>
+#include <wheels/tu_macros.h>
 
 // {operators
 typedef itypeof(astOp, symLiteral) astOp_sym;
@@ -170,6 +168,7 @@ itype_t *getType(itype_t t) {
 
 // }
 
+// {values
 /*
  * layout :
  *  type : type_value
@@ -278,6 +277,7 @@ itype_t *value_isType(const value v) {
     return type;
   } else return nullptr;
 }
+// }
 
 // {state
 
@@ -378,6 +378,10 @@ u8 *state_fromV(state *s, iptr place) {
   place -= alignof(myAlign);
   return a + place;
 }
+
+value state_create(AllocatorV allocator, state *s, type_value type, bool isHeap);
+void state_destroy(AllocatorV allocator, state *s, value v);
+
 value state_create(AllocatorV allocator, state *s, type_value type, bool isHeap) {
   assertMessage(type.type && !type.builtin_id);
   usize size = lineup(itype_size(REF(itype, {0, type.type})), alignof(myAlign));
@@ -490,7 +494,6 @@ void eval_coerce(
   var_ to_type_full = expected[0];
   if (to_type_full.builtin_id) assertMessage(false, "builtins dont have a type "); // TODO give builtins a type
 
-  // structs must also have same feilds
   if (tu_is(it_struct, to_type_full.type[0])) {
     if (to_type_full.type == value_Typeof(*v) && to_type_full.names == (v[0])->type_value.names) return;
     else assertMessage(false);
@@ -536,6 +539,7 @@ value eval_symbol(
 
   // {builtin resolution
 
+#pragma push_macro("STATIC_BUILTIN")
 #define STATIC_BUILTIN(id)           \
   ({                                 \
     static ptrstype(value) _v = {    \
@@ -543,8 +547,6 @@ value eval_symbol(
     };                               \
     &_v;                             \
   })
-
-  // Usage in eval_symbol becomes:
   if /**/ (fptr_eq(name, "@sint" /*    */)) return STATIC_BUILTIN(builtin_$sint);
   else if (fptr_eq(name, "@uint" /*    */)) return STATIC_BUILTIN(builtin_$uint);
   else if (fptr_eq(name, "@noExpand" /**/)) return STATIC_BUILTIN(builtin_$noExpand);
@@ -556,6 +558,7 @@ value eval_symbol(
   else if (fptr_eq(name, "return" /*   */)) return STATIC_BUILTIN(builtin_return);
   else if (fptr_eq(name, "struct" /*   */)) return STATIC_BUILTIN(builtin_struct);
   // }
+#pragma pop_macro("STATIC_BUILTIN")
 
   foreach (var_ i, range(mList_len(evalState->scopes), 0)) {
     var_ s = mList_arr(evalState->scopes)[i - 1];

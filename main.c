@@ -1,4 +1,5 @@
 #include "int.h"
+#include <stddefer.h>
 #include <stdlib.h>
 #include <wheels/allocators/arenaAllocator.h>
 #include <wheels/allocators/debugallocator.h>
@@ -66,19 +67,17 @@ int cmdline_main(cmdline_args args) {
   var_ echo_file = cmdline_get(args, "--echo-file", bool);
   var_ list_tokens = cmdline_get(args, "--log-tokens", bool);
 
-  FBA_State s;
-  var_ fbuffer = &aCreate(stdAlloc, u8, 1024 * 1024);
-  defer { aFree(stdAlloc, *fbuffer, sizeof(*fbuffer)); };
-  FBA_init(*fbuffer, sizeof(*fbuffer), &s);
+  var_ s = fba_new(stdAlloc, 1024 * 1024);
+  defer { fba_del(stdAlloc, s); };
 
   AllocatorV allocator =
       (log_alloc && *log_alloc)
           ? debugAllocator(
-                    .allocator = s.allocator,
+                    .allocator = s,
                     .log = stdout,
                     .on_call = on_allocation,
             )
-          : s.allocator;
+          : s;
   defer {
     if (log_alloc && *log_alloc) debugAllocatorDeInit(allocator);
   };
@@ -103,7 +102,7 @@ int cmdline_main(cmdline_args args) {
   AllocatorV arena = arena_new_ext(allocator, 48 * 255);
   defer { arena_cleanup(arena); };
   println("{ast}", parseBBlock(arena, (slice(Token)){.len = msList_len(tokens), tokens}));
-  println("current place : {}", FBA_current(s.allocator));
+  println("current place : {}", FBA_current(s));
   return 0;
 }
 
