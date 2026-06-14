@@ -190,7 +190,7 @@ static void print_ast_recursive(ast *node, int indent, outputFunction put, void 
                print_ast_recursive(*item, indent + 1, put, _arb);
              }
            }),
-           case (astEmptyStatement, _, {}),
+           case (astEmptyStatement, _, { PUTS("Empty"); }),
            default({
              unreachable();
            }));

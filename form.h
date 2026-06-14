@@ -24,7 +24,7 @@ static bool ast_match_internal(AllocatorV alloc, const ast *const node, u8 **fmt
   char type = '?';
   tu_match(*node, case (astId, id, { type = 'i'; }), case (astNumber, num, { type = 'n'; }), case (astString, str, { type = 's'; }), case (astDecl, decl, { type = 'd'; }), case (astOp, op, { type = 'o'; }), case (astPBlock, block, { type = 'P'; }), case (astBBlock, block, { type = 'B'; }), case (astABlock, block, { type = 'A'; }), case (astEmptyStatement, empty, { type = 'e'; }), default({ type = '?'; }));
 
-  if (c != '.' && c != type)
+  if (c != '.' && c != 'a' && c != type)
     return false;
 
   // Flattening magic: Only push value/operation nodes.
@@ -95,6 +95,7 @@ static bool ast_match_internal(AllocatorV alloc, const ast *const node, u8 **fmt
  * Pattern Matching Key:
  * ---------------------
  * Lowercase (Captures node into the returned list):
+ * a : Matches exactly one statement of any type AND captures it
  * i : astId
  * n : astNumber
  * s : astString
@@ -144,9 +145,10 @@ static msList(ast *) ast_match(AllocatorV alloc, ast a, fptr fp) {
     fmt_ptr++;
 
   // STRICT ARITY MIN: Fail if there are unconsumed format characters (e.g., fewer arguments than expected)
-  if (!ok || fmt_ptr < fmt_end)
-    while (msList_len(list))
-      msList_pop(list);
+  if (!ok || fmt_ptr < fmt_end) {
+    msList_deInit(alloc, list);
+    return nullptr;
+  }
 
   return list;
 }

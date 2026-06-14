@@ -12,6 +12,7 @@
 #include <wheels/sList.h>
 #include <wheels/shmap.h>
 #include <wheels/tu_macros.h>
+#define log(msg, ...) println("(log:\t{cstr})" msg, (char *)__FUNCTION__ __VA_OPT__(, __VA_ARGS__))
 
 __attribute__((noreturn)) void error_ast(ast a, slice(c8) message) {
   tu_match(
@@ -74,7 +75,8 @@ static var_ t_type = (itype_t)tu_of(it_type, {});
 static var_ t_void = (itype_t)tu_of(it_void, {});
 
 itype_t *getType(itype_t t) {
-  println("interning : {itype_t}", t);
+  log("{itype_t}", t);
+
 #define mHmap_setorgetinitmanaged(map, key, value)                                \
   ({                                                                              \
     map = map ?: mHmap_init(stdAlloc, typeof(key), typeof((*map)(nullptr, key))); \
@@ -204,6 +206,7 @@ typedef struct {
   itype_t *type; // type
   fptr *names;   // array of member names , fun | struct
   rtval *values; // array of initial values , fun | struct
+  bool isconst;
   enum : u8 {
     builtin_none,
 
@@ -238,6 +241,12 @@ typedef struct rtval {
   };
 } value;
 _Static_assert(!builtin_none, "");
+#define ty_ptr(itype_ptr) ((type_value){.type = (itype_ptr)})
+#define ty_get(struct) ty_ptr(getType((itype_t) struct))
+
+static var_ ty_ast = (value){.type = &t_type, .type_value = &t_ast};
+static var_ ty_type = (value){.type = &t_type, .type_value = &t_type};
+static var_ ty_void = (value){.type = &t_type, .type_value = &t_void};
 
 itype_t *value_Typeof(const value v) {
   if (v.type.builtin_id) return nullptr;
@@ -544,7 +553,7 @@ void eval_coerce(
 
 value eval(
     state *evalState,
-    itype_t *_Nullable expected,
+    type_value *_Nullable expected,
     ast astv,
     bool *retflag
 );
@@ -599,20 +608,29 @@ value *eval_symbol(
 
 value eval_builtin(
     state *evalState,
-    itypeof(itypeof(value, type), builtin_id) left,
+    itypeof(itypeof(value, type), builtin_id) builtin,
     ast right,
-    itype_t *expected,
+    type_value *_Nullable expected,
     bool retflag[1]
 ) {
-  assertMessage(left);
-  switch (left) {
+  assertMessage(builtin);
+  switch (builtin) {
     case builtin_return: {
       retflag[0] = 1;
       return eval(evalState, expected, right, REF(bool, {}));
     } break;
+    case builtin_$type:
+    case builtin_$void:
+    case builtin_$ast: {
+      log("{ast}", right);
+      return builtin == builtin_$ast
+                 ? ty_ast
+             : builtin == builtin_$type
+                 ? ty_type
+                 : ty_void;
+    } break;
     case builtin_$uint:
     case builtin_$sint: {
-      // "Pn" -> Expect a PBlock containing exactly one Number. Capture the Number.
       var_ match = ast_match(stdAlloc, right, fp("Pn"));
 
       if (!msList_len(match))
@@ -622,7 +640,7 @@ value eval_builtin(
       if (n < 1 || n > UINT16_MAX)
         error_ast(right, snprint(stdAlloc, "expected positive number within bounds"));
 
-      bool isSigned = left == builtin_$sint;
+      bool isSigned = builtin == builtin_$sint;
 
       itype_t *resolved_type = getType(isSigned ? (itype_t)tu_of(it_sint, (u16)n) : (itype_t)tu_of(it_uint, (u16)n));
 
@@ -638,7 +656,7 @@ value eval_call(
     state *evalState,
     value left,
     ast right,
-    itype_t *expected,
+    type_value *_Nullable expected,
     bool retflag[1]
 ) {
   if (left.type.builtin_id)
@@ -666,10 +684,95 @@ value eval_op(
 
 value eval(
     state *evalState,
-    itype_t *_Nullable expected,
+    type_value *_Nullable expected,
     ast astv,
     bool *retflag
 ) {
   assertMessage(retflag);
   var_ allocator = msHmap_allocator(mList_last(evalState->scopes));
+
+  value res = ty_void;
+
+  tu_match(
+      astv,
+      case (astId, id, {
+        value *sym = eval_symbol(evalState, id);
+        if (sym) {
+          res = *sym;
+        } else {
+          error_ast(astv, snprint(stdAlloc, "undefined symbol '{slice(c8)}'", id));
+        }
+      }),
+
+      // {literals
+      case (astNumber, num, {
+        i64 n = astStr_ton(num);
+        res.type.type = expected ? expected : getType((itype_t)tu_of(it_sint, 64));
+        res.runtime_value = n;
+      }),
+
+      case (astString, str, {
+        var_ rs = state_create(
+            evalState,
+            ty_get(tu_of(it_arr, {getType((itype_t)tu_of(it_sint, 8)), astStr_len(str)})),
+            false
+        );
+        memcpy(state_fromV(evalState, rs.runtime_value), str.ptr, str.len);
+        res = rs;
+      }),
+      // }
+
+      case (astDecl, decl, {
+        assertMessage(false);
+      }),
+
+      case (astOp, op, {
+        if (op.left)
+          res = eval_op(
+              evalState,
+              (value[1]){eval(evalState, nullptr, op.left[0], retflag)},
+              op.right[0],
+              op.number_rep,
+              retflag
+          );
+        else
+          res = eval_op(evalState, nullptr, op.right[0], op.number_rep, retflag);
+      }),
+
+      // {blocks
+      case (astBBlock, block, {
+        if (expected) {
+          var_ rty = expected[0];
+          assertMessage(!rty.builtin_id);
+
+          rty.isconst;
+          rty.names;
+          rty.values;
+          rty.type;
+        }
+        assertMessage(false);
+      }),
+
+      case (astPBlock, block, {
+        var_ s = ast_match(allocator, astv, fp("Pa"));
+        if (!s || !msList_len(s))
+          error_ast(astv, snprint(stdAlloc, "parenthesis by itself with multiple args"));
+        res = eval(evalState, expected, s[0][0], retflag);
+      }),
+
+      case (astABlock, block, {
+        assertMessage(false, "lol");
+      }),
+      // }
+
+      case (astEmptyStatement, empty, {
+        res = ty_void;
+      }),
+
+      default({
+        error_ast(astv, snprint(stdAlloc, "forgot something , {ast}", astv));
+      })
+  );
+
+  return (eval_coerce(evalState, expected, &res), res);
 }
