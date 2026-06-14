@@ -1,6 +1,10 @@
 #include "ast.h"
+#include "form.h"
 #include "typ.h"
+#include "wheels/smallstream.h"
+#include <assert.h>
 #include <stdalign.h>
+#include <stdint.h>
 #include <string.h>
 #include <wheels/funct.h>
 #include <wheels/macros.h>
@@ -8,6 +12,22 @@
 #include <wheels/sList.h>
 #include <wheels/shmap.h>
 #include <wheels/tu_macros.h>
+
+__attribute__((noreturn)) void error_ast(ast a, slice(c8) message) {
+  tu_match(
+      a,
+      case (astId, s, { error_at(s.ptr, message); }),
+      case (astNumber, s, { error_at(s.ptr, message); }),
+      case (astString, s, { error_at(s.ptr, message); }),
+      case (astDecl, d, { error_ast(d.name[0], message); }),
+      case (astOp, o, { error_ast(o.right[0], message); }),
+
+      case (astPBlock, b, { error_ast(b.stmts[0][0], message); }),
+      case (astBBlock, b, { error_ast(b.stmts[0][0], message); }),
+      case (astABlock, b, { error_ast(b.items[0][0], message); }),
+      case (astEmptyStatement, _, { error_at(nullptr, message); }),
+  );
+}
 
 // {operators
 typedef itypeof(astOp, symLiteral) astOp_sym;
@@ -24,7 +44,7 @@ var_ divOp = /*  */ (astOp_union){"/"};
 var_ modOp = /*  */ (astOp_union){"%"};
 var_ addOp = /*  */ (astOp_union){"+"};
 var_ subOp = /*  */ (astOp_union){"-"};
-var_ asnOp = /*  */ (astOp_union){"and"};
+var_ andOp = /*  */ (astOp_union){"and"};
 var_ notOp = /*  */ (astOp_union){"not"};
 var_ orOp = /*   */ (astOp_union){"or"};
 var_ bandOp = /* */ (astOp_union){"band"};
@@ -179,11 +199,11 @@ itype_t *getType(itype_t t) {
  *    runtime_value : iptr ;
  *  }
  */
-typedef struct rtval *value;
+typedef struct rtval rtval;
 typedef struct {
   itype_t *type; // type
   fptr *names;   // array of member names , fun | struct
-  value *values; // array of initial values , fun | struct
+  rtval *values; // array of initial values , fun | struct
   enum : u8 {
     builtin_none,
 
@@ -216,12 +236,12 @@ typedef struct rtval {
     ast *ast_value;        // active for it_ast
     iptr runtime_value;    // active for everything else
   };
-} *value;
+} value;
 _Static_assert(!builtin_none, "");
 
 itype_t *value_Typeof(const value v) {
-  if (v->type.builtin_id) return nullptr;
-  return v->type.type;
+  if (v.type.builtin_id) return nullptr;
+  return v.type.type;
 }
 itype_t *value_isInt(const value v) {
   var_ type = value_Typeof(v);
@@ -364,6 +384,7 @@ void state_heap_free(state *s, iptr place) {
       region->count--;
       if (!region->count && region != s->heap_state && s->heap_state->count) {
         var_ t = *region;
+        t.curr = 0;
         usize idx = region - s->heap_state;
         msList_rem(s->heap_state, idx);
         msList_ins(mList_allocator(s->scopes), s->heap_state, 0, t);
@@ -379,28 +400,24 @@ u8 *state_fromV(state *s, iptr place) {
   return a + place;
 }
 
-value state_create(AllocatorV allocator, state *s, type_value type, bool isHeap);
-void state_destroy(AllocatorV allocator, state *s, value v);
-
-value state_create(AllocatorV allocator, state *s, type_value type, bool isHeap) {
+value state_create(state *s, type_value type, bool isHeap) {
   assertMessage(type.type && !type.builtin_id);
   usize size = lineup(itype_size(REF(itype, {0, type.type})), alignof(myAlign));
-  var_ res = aCreate(allocator, ptrstype(value));
-  res->type = type;
+  var_ res = (value){};
+  res.type = type;
   if (size)
-    res->runtime_value =
+    res.runtime_value =
         isHeap
             ? -state_heap_alloc(s, size)
             : state_stack_push(s, size);
   return res;
 }
-void state_destroy(AllocatorV allocator, state *s, value v) {
-  var_ tyep = v->type.type;
+void state_destroy(state *s, value v) {
+  var_ tyep = v.type.type;
   usize size = lineup(itype_size(REF(itype, {0, tyep})), alignof(myAlign));
-  defer { aFree(allocator, v, sizeof(*v)); };
 
   if (size)
-    if (v->runtime_value < 0) state_heap_free(s, -v->runtime_value);
+    if (v.runtime_value < 0) state_heap_free(s, -v.runtime_value);
 }
 
 // }
@@ -495,7 +512,7 @@ void eval_coerce(
   if (to_type_full.builtin_id) assertMessage(false, "builtins dont have a type "); // TODO give builtins a type
 
   if (tu_is(it_struct, to_type_full.type[0])) {
-    if (to_type_full.type == value_Typeof(*v) && to_type_full.names == (v[0])->type_value.names) return;
+    if (to_type_full.type == value_Typeof(*v) && to_type_full.names == (v[0]).type_value.names) return;
     else assertMessage(false);
   }
 
@@ -519,9 +536,9 @@ void eval_coerce(
       from_bits = tu_assert(it_uint, t[0]);
     assertMessage(from_bits);
 
-    if (to_bits < from_bits) assertMessage(false);
+    if (to_bits < from_bits) assertMessage(false, "bitcast would loose precision");
     // set some bits;
-    v[0]->type = expected[0];
+    v[0].type = expected[0];
   } else assertMessage(false);
 }
 
@@ -532,72 +549,119 @@ value eval(
     bool *retflag
 );
 
-value eval_symbol(
+value *eval_symbol(
     state *evalState,
     fptr name
 ) {
 
   // {builtin resolution
 
-#pragma push_macro("STATIC_BUILTIN")
-#define STATIC_BUILTIN(id)           \
+#pragma push_macro("sbin")
+#define sbin(id)                     \
   ({                                 \
-    static ptrstype(value) _v = {    \
+    static value _v = {              \
         .type = {.builtin_id = (id)} \
     };                               \
     &_v;                             \
   })
-  if /**/ (fptr_eq(name, "@sint" /*    */)) return STATIC_BUILTIN(builtin_$sint);
-  else if (fptr_eq(name, "@uint" /*    */)) return STATIC_BUILTIN(builtin_$uint);
-  else if (fptr_eq(name, "@noExpand" /**/)) return STATIC_BUILTIN(builtin_$noExpand);
-  else if (fptr_eq(name, "@expand" /*  */)) return STATIC_BUILTIN(builtin_$expand);
-  else if (fptr_eq(name, "@while" /*   */)) return STATIC_BUILTIN(builtin_$while);
-  else if (fptr_eq(name, "@type" /*    */)) return STATIC_BUILTIN(builtin_$type);
-  else if (fptr_eq(name, "@ast" /*     */)) return STATIC_BUILTIN(builtin_$ast);
-  else if (fptr_eq(name, "@void" /*    */)) return STATIC_BUILTIN(builtin_$void);
-  else if (fptr_eq(name, "return" /*   */)) return STATIC_BUILTIN(builtin_return);
-  else if (fptr_eq(name, "struct" /*   */)) return STATIC_BUILTIN(builtin_struct);
+  if /**/ (fptr_eq(name, "@sint" /*    */)) return sbin(builtin_$sint);
+  else if (fptr_eq(name, "@uint" /*    */)) return sbin(builtin_$uint);
+  else if (fptr_eq(name, "@noExpand" /**/)) return sbin(builtin_$noExpand);
+  else if (fptr_eq(name, "@expand" /*  */)) return sbin(builtin_$expand);
+  else if (fptr_eq(name, "@while" /*   */)) return sbin(builtin_$while);
+  else if (fptr_eq(name, "@type" /*    */)) return sbin(builtin_$type);
+  else if (fptr_eq(name, "@ast" /*     */)) return sbin(builtin_$ast);
+  else if (fptr_eq(name, "@void" /*    */)) return sbin(builtin_$void);
+  else if (fptr_eq(name, "return" /*   */)) return sbin(builtin_return);
+  else if (fptr_eq(name, "struct" /*   */)) return sbin(builtin_struct);
   // }
-#pragma pop_macro("STATIC_BUILTIN")
+#pragma pop_macro("sbin")
 
   foreach (var_ i, range(mList_len(evalState->scopes), 0)) {
     var_ s = mList_arr(evalState->scopes)[i - 1];
     var_ sy = msHmap_get(s, name);
-    if (sy) return sy[0];
+    if (sy) return sy;
   }
   assertMessage(false);
 }
 
+#define tu_catch(type, item, ...)             \
+  ({                                          \
+    var_ item_eval = item;                    \
+    tu_is(type, item_eval)                    \
+        ? item_eval.type                      \
+        : ({                                  \
+            __VA_ARGS__;                      \
+            assertMessage(false, "uncaught"); \
+            (type){};                         \
+          });                                 \
+  })
+
+value eval_builtin(
+    state *evalState,
+    itypeof(itypeof(value, type), builtin_id) left,
+    ast right,
+    itype_t *expected,
+    bool retflag[1]
+) {
+  assertMessage(left);
+  switch (left) {
+    case builtin_return: {
+      retflag[0] = 1;
+      return eval(evalState, expected, right, REF(bool, {}));
+    } break;
+    case builtin_$uint:
+    case builtin_$sint: {
+      // "Pn" -> Expect a PBlock containing exactly one Number. Capture the Number.
+      var_ match = ast_match(stdAlloc, right, fp("Pn"));
+
+      if (!msList_len(match))
+        error_ast(right, snprint(stdAlloc, "expected exactly one integer argument, e.g., (32)"));
+      i64 n = astStr_ton(match[0]->astNumber);
+
+      if (n < 1 || n > UINT16_MAX)
+        error_ast(right, snprint(stdAlloc, "expected positive number within bounds"));
+
+      bool isSigned = left == builtin_$sint;
+
+      itype_t *resolved_type = getType(isSigned ? (itype_t)tu_of(it_sint, (u16)n) : (itype_t)tu_of(it_uint, (u16)n));
+
+      value res = {0};
+      res.type.type = getType((itype_t)tu_of(it_type, {}));
+      res.type_value.type = resolved_type;
+
+      msList_deInit(stdAlloc, match);
+    } break;
+  }
+}
 value eval_call(
     state *evalState,
-    ast *left,
-    ast *right,
-    bool *retflag
+    value left,
+    ast right,
+    itype_t *expected,
+    bool retflag[1]
 ) {
-  assertMessage(retflag);
-  assertMessage(
-      EQUAL_ANY(
-          1,
-          tu_is(astBBlock, right[0]), // {...}
-          tu_is(astPBlock, right[0]), // (...)
-          tu_is(astABlock, right[0])  // [...]
-      )
-  );
-  var_ l = eval(evalState, nullptr, left[0], 0);
-  // var_ r= eval(evalState, nullptr, left[0], 0);
+  if (left.type.builtin_id)
+    return eval_builtin(
+        evalState,
+        left.type.builtin_id,
+        right,
+        expected,
+        retflag
+    );
 }
+
 value eval_op(
     state *evalState,
-    ast *_Nullable left,
-    ast *right,
+    value *left,
+    ast right,
     u64 op,
-    value *_Nullable vctx,
     bool *retflag
 ) {
   assertMessage(retflag);
-  assertMessage(!!vctx ^ !!left);
-  if (vctx) {
-  }
+
+  // if (op == callOp.num)
+  // return eval_call(evalState, left[0], right, retflag);
 }
 
 value eval(

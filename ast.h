@@ -13,6 +13,7 @@
 
 typedef struct ast ast;
 
+void error_at(u8 *location, slice(c8) message);
 tu_def(
     (ast, u8),
     // Identifier

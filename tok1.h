@@ -7,7 +7,6 @@
   #include <wheels/print.h>
   #include <wheels/sList.h>
 
-void error_at(u8 *location, slice(c8) message);
 
 static inline bool isNum(u8 i) { return i >= '0' && i <= '9'; };
 static inline bool isAlphaNum(u8 i) {
