@@ -158,6 +158,7 @@ REGISTER_PRINTER(itype_t, {
         }
         PUTS("}");
       }),
+      default({ PUTS("unknown"); })
   );
 });
 

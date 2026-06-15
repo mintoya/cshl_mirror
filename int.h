@@ -709,9 +709,14 @@ value eval(
 
       // {literals
       case (astNumber, num, {
-        i64 n = astStr_ton(num);
-        res.type.type = expected ? expected : getType((itype_t)tu_of(it_sint, 64));
-        res.runtime_value = n;
+        var_ rs = state_create(
+            evalState,
+            ty_get((itype_t)tu_of(it_sint, 64)),
+            false
+        );
+        var_ n = astStr_ton(num);
+        memcpy(state_fromV(evalState, rs.runtime_value), &n, sizeof n);
+        res = rs;
       }),
 
       case (astString, str, {
@@ -726,7 +731,26 @@ value eval(
       // }
 
       case (astDecl, decl, {
-        assertMessage(false);
+        value typev = {};
+        value val = {};
+
+        if (decl.type)
+          typev = eval(evalState, REF(ty_get(t_type)), decl.type[0], retflag);
+
+        if (decl.value)
+          val = eval(evalState, decl.type ? &typev.type_value : nullptr, decl.value[0], retflag);
+        else if (decl.type)
+          val = state_create(evalState, typev.type_value, true);
+
+        if (decl.name) {
+          var_ id = tu_catch(astId, decl.name[0], error_ast(decl.name[0], snprint(stdAlloc, "expected identifier")));
+          if (msHmap_get(mList_last(evalState->scopes), id))
+            error_at(id.ptr, snprint(stdAlloc, "this variable is taken for this scope"));
+
+          val.type.isconst = decl.is_const;
+          msHmap_set(mList_last(evalState->scopes), id, val);
+        }
+        res = val;
       }),
 
       case (astOp, op, {

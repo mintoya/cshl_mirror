@@ -22,7 +22,19 @@ static bool ast_match_internal(AllocatorV alloc, const ast *const node, u8 **fmt
   u8 c = *(*fmt)++;
 
   char type = '?';
-  tu_match(*node, case (astId, id, { type = 'i'; }), case (astNumber, num, { type = 'n'; }), case (astString, str, { type = 's'; }), case (astDecl, decl, { type = 'd'; }), case (astOp, op, { type = 'o'; }), case (astPBlock, block, { type = 'P'; }), case (astBBlock, block, { type = 'B'; }), case (astABlock, block, { type = 'A'; }), case (astEmptyStatement, empty, { type = 'e'; }), default({ type = '?'; }));
+  tu_match(
+      *node,
+      case (astId, id, { type = 'i'; }),
+      case (astNumber, num, { type = 'n'; }),
+      case (astString, str, { type = 's'; }),
+      case (astDecl, decl, { type = 'd'; }),
+      case (astOp, op, { type = 'o'; }),
+      case (astPBlock, block, { type = 'P'; }),
+      case (astBBlock, block, { type = 'B'; }),
+      case (astABlock, block, { type = 'A'; }),
+      case (astEmptyStatement, empty, { type = 'e'; }),
+      default({ type = '?'; })
+  );
 
   if (c != '.' && c != 'a' && c != type)
     return false;
