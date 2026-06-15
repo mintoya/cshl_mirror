@@ -233,40 +233,6 @@ ast *popVal(AllocatorV allocator, slice(Token) * backptr) {
 }
 TCO_ABI ast *parseExprPartial(AllocatorV allocator, ast *_Nullable current, slice(Token) back);
 TCO_ABI ast *parseExpr(AllocatorV allocator, slice(Token) tokens) { return parseExprPartial(allocator, nullptr, tokens); }
-TCO_ABI ast *parseTokList(AllocatorV allocator, ast *_Nullable current, slice(Token) back) {
-  assertMessage(!current);
-  if (back.len == 0) return aValue(allocator, (ast)tu_of(astEmptyStatement, {}));
-  if (Token_equal(back.ptr[0], t_colon)) error_Token(back.ptr[0], snprint(stdAlloc, "exected value here"));
-  if (back.len == 1) {
-    if (isVal(slice_last(back)))
-      return astAValue(allocator, slice_last(back));
-    else error_Token(back.ptr[0], snprint(stdAlloc, "expected value"));
-  }
-
-  if (isVal(back.ptr[0])) {
-    ast *head = astAValue(allocator, back.ptr[0]);
-    var_ rest = (slice(Token)){back.len - 1, back.ptr + 1};
-    __musttail___ return parseExprPartial(allocator, head, rest);
-  }
-  if (isBlockStart(back.ptr[0])) {
-    Token *end = next_tok_balanced(allocator, slice_split(back, (1, -1))[0], opposite_end_scope(back.ptr[0]));
-    if (!end)
-      error_Token(back.ptr[0], snprint(stdAlloc, "unclosed '{c8}'", back.ptr[0].s.ptr[0]));
-    var_ block_slice = slice_split(back, (0, end - back.ptr + 1), (end - back.ptr + 1, -1));
-    ast *block = parseBlock(allocator, block_slice[0]);
-    __musttail___ return parseExprPartial(allocator, block, block_slice[1]);
-  }
-
-  if (back.ptr[0].kind == t_operator && Token_nullable_left(back.ptr[0])) {
-    ast *rhs = parseExpr(allocator, slice_split(back, (1, -1))[0]);
-    var_ r = aValue(allocator, (ast)tu_of(astOp, {nullptr, rhs}));
-    memcpy(r->astOp.symLiteral, back.ptr->s.ptr, back.ptr->s.len);
-    return r;
-  } else if (back.ptr[0].kind == t_operator)
-    error_Token(back.ptr[0], snprint(stdAlloc, "{slice(c8)} needs operator to the left", back.ptr->s));
-
-  assertMessage(false, "%s", snprint(stdAlloc, "tlist : items fell through : {slice : Token}", back).ptr);
-}
 ast *parseOperations(AllocatorV allocator, ast *current, slice(Token) * backp) {
   assertMessage(backp);
   var_ back = *backp;
@@ -320,7 +286,23 @@ ast *parseOperations(AllocatorV allocator, ast *current, slice(Token) * backp) {
 }
 TCO_ABI ast *parseExprPartial(AllocatorV allocator, ast *_Nullable current, slice(Token) back) {
   if (!back.len) return current ?: aValue(allocator, (ast)tu_of(astEmptyStatement, {}));
-  if (!current) __musttail___ return parseTokList(allocator, nullptr, back);
+  if (!current) {
+    if (back.ptr[0].kind == t_operator && Token_nullable_left(back.ptr[0])) {
+      ast *rhs = parseExpr(allocator, slice_split(back, (1, -1))[0]);
+      var_ r = aValue(allocator, (ast)tu_of(astOp, {nullptr, rhs}));
+      memcpy(r->astOp.symLiteral, back.ptr->s.ptr, back.ptr->s.len);
+      return r;
+    } else if (back.ptr[0].kind == t_operator)
+      error_Token(back.ptr[0], snprint(stdAlloc, "{slice(c8)} needs operator to the left", back.ptr->s));
+    else current = popVal(allocator, &back);
+  }
+  if (!back.len) return current ?: aValue(allocator, (ast)tu_of(astEmptyStatement, {}));
+
+  if (back.ptr[0].kind == t_operator && Token_nullable_left(back.ptr[0])) {
+  }
+  current = current ?: popVal(allocator, &back);
+  if (!back.len) return current ?: aValue(allocator, (ast)tu_of(astEmptyStatement, {}));
+
   if (Token_equal(back.ptr[0], t_colon)) error_Token(back.ptr[0], snprint(stdAlloc, "exected value here"));
 
   if (back.ptr[0].kind == t_operator) {

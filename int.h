@@ -6,13 +6,14 @@
 #include <stdalign.h>
 #include <stdint.h>
 #include <string.h>
+#include <wheels/allocators/arenaAllocator.h>
 #include <wheels/funct.h>
 #include <wheels/macros.h>
 #include <wheels/mytypes.h>
 #include <wheels/sList.h>
 #include <wheels/shmap.h>
 #include <wheels/tu_macros.h>
-#define log(msg, ...) println("(log:\t{cstr})" msg, (char *)__FUNCTION__ __VA_OPT__(, __VA_ARGS__))
+#define log(msg, ...) println("(log:{cstr})\t" msg, (char *)__FUNCTION__ __VA_OPT__(, __VA_ARGS__))
 
 __attribute__((noreturn)) void error_ast(ast a, slice(c8) message) {
   tu_match(
@@ -751,8 +752,24 @@ value eval(
           rty.names;
           rty.values;
           rty.type;
+          log("unhandled : {ast}", &astv);
+          assertMessage(false);
+        } else {
+          AllocatorV arena = arena_new_ext(allocator, 1024);
+          var_ nextScope = msHmap_init(arena, value);
+          mList_push(evalState->scopes, nextScope);
+          defer { // the scope is also created with the allocator
+            arena_cleanup(msHmap_allocator(mList_pop(evalState->scopes)));
+          };
+
+          foreach (var_ stmnt, vlap(sentList_vla(block.stmts))) {
+            var_ t = eval(evalState, nullptr, stmnt[0], retflag);
+            if (*retflag) {
+              res = t;
+              goto coerce;
+            }
+          }
         }
-        assertMessage(false);
       }),
 
       case (astPBlock, block, {
@@ -767,14 +784,15 @@ value eval(
       }),
       // }
 
-      case (astEmptyStatement, empty, {
-        res = ty_void;
-      }),
+      case (astEmptyStatement, empty, {}),
 
       default({
         error_ast(astv, snprint(stdAlloc, "forgot something , {ast}", astv));
       })
   );
 
-  return (eval_coerce(evalState, expected, &res), res);
+  {
+  coerce:
+    return (eval_coerce(evalState, expected, &res), res);
+  }
 }
