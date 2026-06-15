@@ -220,6 +220,7 @@ typedef struct {
     builtin_$void,
     builtin_$ast,
 
+    builtin_fn,
     builtin_return,
     builtin_struct,
   } builtin_id;
@@ -589,6 +590,7 @@ value *eval_symbol(
   else if (fptr_eq(name, "@void" /*    */)) return sbin(builtin_$void);
   else if (fptr_eq(name, "return" /*   */)) return sbin(builtin_return);
   else if (fptr_eq(name, "struct" /*   */)) return sbin(builtin_struct);
+  else if (fptr_eq(name, "fn" /*       */)) return sbin(builtin_fn);
   // }
 #pragma pop_macro("sbin")
 
@@ -597,7 +599,7 @@ value *eval_symbol(
     var_ sy = msHmap_get(s, name);
     if (sy) return sy;
   }
-  assertMessage(false);
+  error_at(name.ptr, snprint(stdAlloc, "unknown symbol {slice(c8)}", name));
 }
 
 #define tu_catch(type, item, ...)             \
@@ -628,7 +630,7 @@ value eval_builtin(
     case builtin_$type:
     case builtin_$void:
     case builtin_$ast: {
-      log("{i8},{ast}", builtin,&right);
+      log("{i8},{ast}", builtin, &right);
       return builtin == builtin_$ast
                  ? ty_ast
              : builtin == builtin_$type
@@ -637,13 +639,14 @@ value eval_builtin(
     } break;
     case builtin_$uint:
     case builtin_$sint: {
-      log("signed type {i8},\n{ast}", builtin,&right);
+      log("signed type {i8},\n{ast}", builtin, &right);
       var_ match = ast_match(stdAlloc, right, fp("Pn"));
-      log("{ptr}" , match);
+      defer { msList_deInit(stdAlloc, match); };
+      log("{ptr}", match);
       if (!match || !msList_len(match))
         error_ast(right, snprint(stdAlloc, "expected exactly one integer argument, e.g., (32)"));
       i64 n = astStr_ton(match[0]->astNumber);
-      log("{i64}" , n);
+      log("{i64}", n);
 
       if (n < 1 || n > UINT16_MAX)
         error_ast(right, snprint(stdAlloc, "expected positive number within bounds"));
@@ -653,11 +656,11 @@ value eval_builtin(
       itype_t *resolved_type = getType(isSigned ? (itype_t)tu_of(it_sint, (u16)n) : (itype_t)tu_of(it_uint, (u16)n));
 
       value res = {
-        .type.type = getType((itype_t)tu_of(it_type, {})),
-        .type_value.type = resolved_type,
+          .type.type = getType((itype_t)tu_of(it_type, {})),
+          .type_value.type = resolved_type,
       };
+      log("{value}", res);
 
-      msList_deInit(stdAlloc, match);
       return res;
     } break;
   }
@@ -677,29 +680,29 @@ value eval_call(
         expected,
         retflag
     );
-  assertMessage(false , "fallthrough");
+  assertMessage(false, "fallthrough");
 }
-bigint bigint_from_mem(AllocatorV allocator, u8* mem, u16 bits, bool is_signed) {
-    usize byte_count = (bits + 7) / 8;
-    usize unit_count = (byte_count + sizeof(bigint_unit) - 1) / sizeof(bigint_unit);
-    
-    bigint res = msList_init(allocator, bigint_unit, unit_count);
-    
-    msList_pushArr(allocator, res, *VLAP((bigint_unit *)mem, unit_count));
-    
-    u8 leftover_bits = bits % (sizeof(bigint_unit) * 8);
-    if (leftover_bits > 0) {
-        res[unit_count - 1] &= ((bigint_unit)1 << leftover_bits) - 1;
-    }
+bigint bigint_from_mem(AllocatorV allocator, u8 *mem, u16 bits, bool is_signed) {
+  usize byte_count = (bits + 7) / 8;
+  usize unit_count = (byte_count + sizeof(bigint_unit) - 1) / sizeof(bigint_unit);
 
-    if (is_signed && (mem[(bits - 1) / 8] & (1 << ((bits - 1) % 8)))) {
-        if (leftover_bits > 0) {
-            res[unit_count - 1] |= ~(((bigint_unit)1 << leftover_bits) - 1);
-        }
+  bigint res = msList_init(allocator, bigint_unit, unit_count);
+
+  msList_pushArr(allocator, res, *VLAP((bigint_unit *)mem, unit_count));
+
+  u8 leftover_bits = bits % (sizeof(bigint_unit) * 8);
+  if (leftover_bits > 0) {
+    res[unit_count - 1] &= ((bigint_unit)1 << leftover_bits) - 1;
+  }
+
+  if (is_signed && (mem[(bits - 1) / 8] & (1 << ((bits - 1) % 8)))) {
+    if (leftover_bits > 0) {
+      res[unit_count - 1] |= ~(((bigint_unit)1 << leftover_bits) - 1);
     }
-    
-    bigint_trim(&res);
-    return res;
+  }
+
+  bigint_trim(&res);
+  return res;
 }
 value eval_op(
     state *evalState,
@@ -709,15 +712,14 @@ value eval_op(
     bool *retflag
 ) {
   assertMessage(retflag);
-  if(op == callOp.num) { 
+  if (op == callOp.num) {
     assertMessage(left);
-    return eval_call(evalState ,left[0], right , nullptr ,retflag );
-  }
-  else if(op == addOp.num){
+    return eval_call(evalState, left[0], right, nullptr, retflag);
+  } else if (op == addOp.num) {
     var_ r_val = eval(evalState, nullptr, right, retflag);
-    if(*retflag) return r_val;
+    if (*retflag) return r_val;
 
-    if(left) {
+    if (left) {
       var_ l_type = value_isInt(left[0]);
       var_ r_type = value_isInt(r_val);
       assertMessage(l_type && r_type, "Both operands must be integers for addition");
@@ -749,8 +751,8 @@ value eval_op(
 
       // Allocate space in the evalState for the result
       var_ res = state_create(evalState, ty_ptr(res_itype), false);
-      u8* res_mem = state_fromV(evalState, res.runtime_value);
-      
+      u8 *res_mem = state_fromV(evalState, res.runtime_value);
+
       // Zero out the newly allocated memory first
       usize res_byte_count = (res_bits + 7) / 8;
       memset(res_mem, 0, res_byte_count);
@@ -759,7 +761,7 @@ value eval_op(
       usize units_to_copy = msList_len(b_sum);
       usize bytes_to_copy = units_to_copy * sizeof(bigint_unit);
       if (bytes_to_copy > res_byte_count) bytes_to_copy = res_byte_count; // Truncate if sum overflowed target width
-      
+
       memcpy(res_mem, b_sum, bytes_to_copy);
 
       return res;
@@ -767,7 +769,7 @@ value eval_op(
     return r_val;
   }
 
-  log("unhandled {} ,{ast}" ,op, &right);
+  log("unhandled {} ,{ast}", op, &right);
   assertMessage(false);
 }
 
@@ -952,5 +954,13 @@ REGISTER_PRINTER(type_value, {
       PUTS("}");
     } else
       USETYPEPRINTER(itype_t, in.type[0]);
+  }
+});
+REGISTER_PRINTER(value, {
+  PUTS("value : ");
+  if (in.type.type == &t_type) {
+    PUTS("typeof(");
+    USETYPEPRINTER(type_value, in.type_value);
+    PUTS(")");
   }
 });
