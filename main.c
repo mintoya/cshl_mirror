@@ -101,8 +101,13 @@ int cmdline_main(cmdline_args args) {
 
   AllocatorV arena = arena_new_ext(allocator, 48 * 255);
   defer { arena_cleanup(arena); };
-  println("{ast}", parseBBlock(arena, (slice(Token)){.len = msList_len(tokens), tokens}));
+  var_ ast = parseBBlock(arena, (slice(Token)){.len = msList_len(tokens), tokens});
+  println("{ast}", ast);
   println("current place : {}", FBA_current(s));
+
+  bool r;
+  var_ st = state_init(s);
+  eval(REF(st), nullptr, ast[0], &r);
   return 0;
 }
 

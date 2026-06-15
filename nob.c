@@ -1,7 +1,7 @@
 #define NOB_IMPLEMENTATION
 
 #if !defined CC
-  #define CC "clang"
+  #define CC "zcc"
 #endif
 #if defined(_WIN32)
   #define EXTENSION ".exe"
@@ -16,7 +16,7 @@
     // #define COMMON_CFLAGS "-std=c23", "-fdefer-ts" , "-ldbghelp"
     #define COMMON_CFLAGS "-std=c23", "-fdefer-ts", "-DnoAssertMessage"
   #else
-    #define COMMON_CFLAGS "-std=gnu23", "-fdefer-ts" , "-D__PRETTY_FUNCTION__=__FUNCTION__"
+    #define COMMON_CFLAGS "-std=gnu23", "-fdefer-ts" , "-D__PRETTY_FUNCTION__=__FUNCTION__" , "-fno-sanitize=vla-bound"
   #endif
 
 bool build_main(Cmd *cmd, Procs *procs) {

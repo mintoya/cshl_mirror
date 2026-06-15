@@ -322,8 +322,10 @@ typedef struct eval_state {
   }) heap_state; // sorted
 } state;
 state state_init(AllocatorV allocator) {
+  var_ l = mList_init(allocator, scope);
+  mList_push(l, msHmap_init(allocator, value));
   return (state){
-      .scopes = mList_init(allocator, scope),
+      .scopes = l,
       .stack = msList_init(allocator, u8),
       .heap = msList_init(allocator, u8),
       .heap_state = msList_init(allocator, ptrstype(itypeof(state, heap_state))),
