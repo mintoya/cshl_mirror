@@ -1,5 +1,4 @@
 #include "int.h"
-#include <stddefer.h>
 #include <stdlib.h>
 #include <wheels/allocators/arenaAllocator.h>
 #include <wheels/allocators/debugallocator.h>
