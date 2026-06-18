@@ -1,15 +1,23 @@
+1 - 2;
 1 + 2;
+2 * 2;
+2 / 1;
+2 % 1;
 ast :: @ast();
 type :: @type();
 
 int : type : @sint(32);
 
+vec :: struct{ 
+  x:int:5;
+  y:int;
+};
 iter :: struct{ 
   decl :ast;
   cont :ast;
   init :ast;
 };
-each ::fn((name:ast , array : []t) , iter){
+each ::fn((name:ast , array : any) , iter){
   // noExpand will ignore first level of scope punctuation
   id : ast : name.id;
   return [ 

@@ -7,7 +7,6 @@
   #include <wheels/print.h>
   #include <wheels/sList.h>
 
-
 static inline bool isNum(u8 i) { return i >= '0' && i <= '9'; };
 static inline bool isAlphaNum(u8 i) {
   switch (i) {
@@ -67,7 +66,10 @@ static msList(Token) tokenize(AllocatorV allocator, fptr input) {
         } else if (i + 1 < input.len && input.ptr[i + 1] == '/') {
           while (input.ptr[i] != '\n')
             i++;
-        } else error_at(input.ptr + i, snprint(stdAlloc, "/ by itself"));
+        } else {
+          msList_push(allocator, res, ((Token){(fptr){1, i + input.ptr}, .kind = t_operator}));
+          i++;
+        }
         continue;
       } break;
 

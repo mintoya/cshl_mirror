@@ -12,8 +12,6 @@ tu_def(
     (itype_t, u8),
 
     (it_void, nothing_t),
-    (it_type, nothing_t),
-    (it_ast, nothing_t),
 
     (it_uint, u16),
     (it_sint, u16),
@@ -22,7 +20,7 @@ tu_def(
 
     (it_arr, struct { itype_t * type ; usize length; }),
     (it_fun, sentList_t(itype_t *)),
-    (it_struct, sentList_t(struct { itype_t * type; bool isconst :  1; usize offset : 63; })),
+    (it_struct, sentList_t(struct { itype_t * type;  usize offset ; })),
 );
 
 typedef struct itype {
@@ -36,8 +34,6 @@ static usize itype_alignment(const itype *t) {
 
       case (it_void, _, { return 0; }),
       case (it_fun, _, { return 0; }),
-      case (it_type, _, { return 0; }),
-      case (it_ast, _, { return 0; }),
 
       case (it_uint, bits, { return (bits + 7) / 8; }),
       case (it_sint, bits, { return (bits + 7) / 8; }),
@@ -55,7 +51,6 @@ static usize itype_alignment(const itype *t) {
         usize max = 1;
         var_ vla = sentList_vla(bits);
         foreach (var_ t, vla(*vla)) {
-          if (t.isconst) continue;
           itype temp = (itype){.type = t.type};
           usize alig = itype_alignment(&temp);
           max = max > alig ? max : alig;
@@ -71,8 +66,6 @@ static usize itype_size(const itype *t) {
 
       case (it_void, _, { return 0; }),
       case (it_fun, _, { return 0; }),
-      case (it_type, _, { return 0; }),
-      case (it_ast, _, { return 0; }),
 
       case (it_uint, bits, { return (bits + 7) / 8; }),
       case (it_sint, bits, { return (bits + 7) / 8; }),
@@ -87,12 +80,11 @@ static usize itype_size(const itype *t) {
         return itype_size(&temp) * arry.length;
       }),
       case (it_struct, bits, {
-        usize max = 0;
+        usize max = 1;
         usize alig = itype_alignment(t);
 
         var_ vla = sentList_vla(bits);
         foreach (var_ t, vla(*vla)) {
-          if (t.isconst) continue;
           itype temp = (itype){.type = t.type};
           usize size = itype_size(&temp);
           max = max > size + t.offset ? max : size + t.offset;
@@ -111,12 +103,6 @@ REGISTER_PRINTER(itype_t, {
       in,
       case (it_void, _, {
         PUTS("void");
-      }),
-      case (it_ast, _, {
-        PUTS("ast");
-      }),
-      case (it_type, _, {
-        PUTS("type");
       }),
       case (it_uint, u, {
         PUTS("u");

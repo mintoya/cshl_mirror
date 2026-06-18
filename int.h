@@ -1,9 +1,11 @@
 #include "ast.h"
 #include "form.h"
 #include "typ.h"
+#include "wheels/smallstream.h"
 #include <assert.h>
 #include <stdalign.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <wheels/allocators/arenaAllocator.h>
 #include <wheels/bigint.h>
@@ -13,6 +15,7 @@
 #include <wheels/sList.h>
 #include <wheels/shmap.h>
 #include <wheels/tu_macros.h>
+
 #define log(msg, ...) println("(log:{cstr})\t" msg, (char *)__FUNCTION__ __VA_OPT__(, __VA_ARGS__))
 
 __attribute__((noreturn)) void error_ast(ast a, slice(c8) message) {
@@ -21,13 +24,16 @@ __attribute__((noreturn)) void error_ast(ast a, slice(c8) message) {
       case (astId, s, { error_at(s.ptr, message); }),
       case (astNumber, s, { error_at(s.ptr, message); }),
       case (astString, s, { error_at(s.ptr, message); }),
+
       case (astDecl, d, { error_ast(d.name[0], message); }),
       case (astOp, o, { error_ast(o.right[0], message); }),
 
       case (astPBlock, b, { error_ast(b.stmts[0][0], message); }),
       case (astBBlock, b, { error_ast(b.stmts[0][0], message); }),
       case (astABlock, b, { error_ast(b.items[0][0], message); }),
+
       case (astEmptyStatement, _, { error_at(nullptr, message); }),
+      default(abort();),
   );
 }
 
@@ -71,11 +77,10 @@ int buffer_cmp(const void *a, const void *b) {
   return fptr_cmp(*ap, *bp);
 }
 
-static var_ t_ast = (itype_t)tu_of(it_ast, {});
-static var_ t_type = (itype_t)tu_of(it_type, {});
 static var_ t_void = (itype_t)tu_of(it_void, {});
 
-itype_t *getType(itype_t t) {
+#define getType(x) getType((itype_t)x)
+itype_t *(getType)(itype_t t) {
 
 #define mHmap_setorgetinitmanaged(map, key, value)                                \
   ({                                                                              \
@@ -95,12 +100,6 @@ itype_t *getType(itype_t t) {
       t,
       case (it_void, _, {
         return &t_void;
-      }),
-      case (it_ast, _, {
-        return &t_ast;
-      }),
-      case (it_type, _, {
-        return &t_type;
       }),
 
       case (it_uint, bits, {
@@ -202,29 +201,32 @@ itype_t *getType(itype_t t) {
  *  }
  */
 typedef struct rtval rtval;
+typedef enum type_value_enum : u8 {
+  builtin_none,
 
-typedef struct {
-  itype_t *type; // type
-  fptr *names;   // array of member names , fun | struct
-  rtval *values; // array of initial values , fun | struct
-  bool isconst;
-  enum : u8 {
-    builtin_none,
+  builtin_$sint,
+  builtin_$uint,
+  builtin_$noExpand,
+  builtin_$expand,
+  builtin_$while,
+  builtin_$type,
+  builtin_$void,
+  builtin_$ast,
 
-    builtin_$sint,
-    builtin_$uint,
-    builtin_$noExpand,
-    builtin_$expand,
-    builtin_$while,
-    builtin_$type,
-    builtin_$void,
-    builtin_$ast,
-
-    builtin_fn,
-    builtin_return,
-    builtin_struct,
-  } builtin_id;
-} type_value;
+  builtin_fn,
+  builtin_return,
+  builtin_struct,
+} builtin_id;
+tu_def(
+    (type_value, u8),
+    // something
+    (tv_type, itype_t *_Nullable),
+    (tv_ast, nothing_t),
+    (tv_runtime, itype_t *),
+    (tv_strct, struct { struct { fptr name; rtval *_Nullable value; } * fields ; itype_t* layout; }),
+    (tv_function, struct { fptr name; rtval * _Nullable value; } *),
+    (tv_builtin, builtin_id),
+);
 
 typedef struct rtval {
   type_value type;
@@ -237,24 +239,21 @@ typedef struct rtval {
       not null terminated, same length as the function's signature
     */
 
-    ast *function_value;   // active for it_fun
-    type_value type_value; // active for it_type
-    ast *ast_value;        // active for it_ast
-    iptr runtime_value;    // active for everything else
+    ast *function_value; // active for it_fun
+    ast *ast_value;      // active for it_ast
+    iptr runtime_value;  // active for everything else
   };
 } value;
 
 _Static_assert(!builtin_none, "");
-#define ty_ptr(itype_ptr) ((type_value){.type = (itype_ptr)})
-#define ty_get(struct) ty_ptr(getType((itype_t) struct))
 
-static var_ ty_ast = (value){.type = &t_type, .type_value = &t_ast};
-static var_ ty_type = (value){.type = &t_type, .type_value = &t_type};
-static var_ ty_void = (value){.type = &t_type, .type_value = &t_void};
+static var_ ty_ast = (value){};
+static var_ ty_type = (value){};
+static var_ ty_void = (value){};
 
 itype_t *value_Typeof(const value v) {
-  if (v.type.builtin_id) return nullptr;
-  return v.type.type;
+  if (tu_is(tv_runtime, v.type))
+    return tu_assert(tv_runtime, v.type);
 }
 itype_t *value_isInt(const value v) {
   var_ type = value_Typeof(v);
@@ -298,17 +297,9 @@ itype_t *value_isPtr(const value v) {
     return type;
   } else return nullptr;
 }
-itype_t *value_isAst(const value v) {
-  var_ type = value_Typeof(v);
-  if (type && tu_is(it_ast, type[0])) {
-    return type;
-  } else return nullptr;
-}
 itype_t *value_isType(const value v) {
-  var_ type = value_Typeof(v);
-  if (type && tu_is(it_type, type[0])) {
-    return type;
-  } else return nullptr;
+  if (tu_is(tv_type, v.type)) tu_assert(tv_type, v.type);
+  return nullptr;
 }
 // }
 
@@ -415,10 +406,13 @@ u8 *state_fromV(state *s, iptr place) {
   return a + place;
 }
 value state_create(state *s, type_value type, bool isHeap) {
-  assertMessage(type.type && !type.builtin_id);
-  static_assert(sizeof(type) == 32);
   log("creating : {type_value}", type);
-  usize size = lineup(itype_size(REF(itype, {0, type.type})), alignof(myAlign));
+  usize size = 0;
+  if (tu_is(tv_runtime, type))
+    size = lineup(
+        itype_size(REF(itype, {0, tu_assert(tv_runtime, type)}, )),
+        alignof(myAlign)
+    );
   var_ res = (value){};
   res.type = type;
   if (size)
@@ -429,9 +423,12 @@ value state_create(state *s, type_value type, bool isHeap) {
   return res;
 }
 void state_destroy(state *s, value v) {
-  var_ tyep = v.type.type;
-  usize size = lineup(itype_size(REF(itype, {0, tyep})), alignof(myAlign));
-
+  usize size = 0;
+  if (tu_is(tv_runtime, v.type))
+    size = lineup(
+        itype_size(REF(itype, {0, tu_assert(tv_runtime, v.type)}, )),
+        alignof(myAlign)
+    );
   if (size)
     if (v.runtime_value < 0) state_heap_free(s, -v.runtime_value);
 }
@@ -525,17 +522,18 @@ void eval_coerce(
 ) {
   if (!expected) return;
   var_ to_type_full = expected[0];
-  if (to_type_full.builtin_id) assertMessage(false, "builtins dont have a type "); // TODO give builtins a type
+  if (tu_is(tv_builtin, to_type_full))
+    assertMessage(false, "builtins dont have a type "); // TODO give builtins a type
 
-  if (tu_is(it_struct, to_type_full.type[0])) {
-    if (to_type_full.type == value_Typeof(*v) && to_type_full.names == (v[0]).type_value.names) return;
+  if (tu_is(tv_strct, to_type_full)) {
+    if (tu_assert(tv_strct, to_type_full).layout == value_Typeof(*v)) return;
     else assertMessage(false);
   }
 
-  var_ to_type = to_type_full.type;
+  var_ to_type = value_Typeof((value){.type = to_type_full});
   if (to_type == value_Typeof(*v)) return;
 
-  if (tu_is(it_uint, to_type[0]) || tu_is(it_sint, to_type[0])) {
+  if (to_type && (tu_is(it_uint, to_type[0]) || tu_is(it_sint, to_type[0]))) {
     var_ item_type = value_isInt(*v);
     if (!item_type) assertMessage(false);
 
@@ -573,12 +571,12 @@ value *eval_symbol(
   // {builtin resolution
 
 #pragma push_macro("sbin")
-#define sbin(id)                     \
-  ({                                 \
-    static value _v = {              \
-        .type = {.builtin_id = (id)} \
-    };                               \
-    &_v;                             \
+#define sbin(id)                      \
+  ({                                  \
+    static value _v = {               \
+        .type = tu_of(tv_builtin, id) \
+    };                                \
+    &_v;                              \
   })
   if /**/ (fptr_eq(name, "@sint" /*    */)) return sbin(builtin_$sint);
   else if (fptr_eq(name, "@uint" /*    */)) return sbin(builtin_$uint);
@@ -616,7 +614,7 @@ value *eval_symbol(
 
 value eval_builtin(
     state *evalState,
-    itypeof(itypeof(value, type), builtin_id) builtin,
+    builtin_id builtin,
     ast right,
     type_value *_Nullable expected,
     bool retflag[1]
@@ -653,16 +651,46 @@ value eval_builtin(
 
       bool isSigned = builtin == builtin_$sint;
 
-      itype_t *resolved_type = getType(isSigned ? (itype_t)tu_of(it_sint, (u16)n) : (itype_t)tu_of(it_uint, (u16)n));
+      itype_t *ftyp = getType((isSigned ? (itype_t)tu_of(it_sint, (u16)n) : (itype_t)tu_of(it_uint, (u16)n)));
 
-      value res = {
-          .type.type = getType((itype_t)tu_of(it_type, {})),
-          .type_value.type = resolved_type,
-      };
-      log("{value}", res);
+      value res = {.type = tu_of(tv_type, ftyp)};
+      log("{type_value}", res.type);
 
       return res;
     } break;
+    case builtin_struct: {
+      var_ matches = ast_match(stdAlloc, right, fp("B + d"));
+      defer { msList_deInit(stdAlloc, matches); };
+
+      if (!matches)
+        error_ast(right, snprint(stdAlloc, "struct expects a block of field declarations"));
+
+      var_ field_count = msList_len(matches);
+      var_ field_types = &aCreate(stdAlloc, itype_t *, field_count + 1);
+      defer { aFree(stdAlloc, field_types, sizeof(*field_types)); };
+
+      for (usize i = 0; i < field_count; i++) {
+        var_ decl_ast = matches[i][0];
+        var_ type_expr = tu_catch(astDecl, decl_ast, error_ast(decl_ast, snprint(stdAlloc, "expected declaration"))).type;
+        if (!type_expr)
+          error_ast(decl_ast, snprint(stdAlloc, "field must have a type"));
+
+        bool retflag = false;
+        var_ type_val = eval(evalState, &ty_type.type, type_expr[0], &retflag);
+        assertMessage(!retflag, "returned inside struct initialization");
+        if (!tu_is(tv_type, type_val.type))
+          error_ast(type_expr[0], snprint(stdAlloc, "field type must evaluate to a type"));
+        field_types[0][i] = tu_assert(tv_type, type_val.type);
+      }
+
+      itype_t *struct_type = getType((itype_t)tu_of(it_struct, *field_types));
+
+      var_ res = (value){.type = tu_of(tv_type, struct_type)};
+      log("{type_value}", res.type);
+      return res;
+    }
+    default:
+      assertMessage(false, "forgot something , %i", builtin);
   }
 }
 value eval_call(
@@ -672,101 +700,96 @@ value eval_call(
     type_value *_Nullable expected,
     bool retflag[1]
 ) {
-  if (left.type.builtin_id)
+  if (tu_is(tv_builtin, left.type))
     return eval_builtin(
         evalState,
-        left.type.builtin_id,
+        tu_assert(tv_builtin, left.type),
         right,
         expected,
         retflag
     );
+
+  log("call op with {ast}", &right);
+  log("call op with {type_value}", left.type);
+
   assertMessage(false, "fallthrough");
-}
-bigint bigint_from_mem(AllocatorV allocator, u8 *mem, u16 bits, bool is_signed) {
-  usize byte_count = (bits + 7) / 8;
-  usize unit_count = (byte_count + sizeof(bigint_unit) - 1) / sizeof(bigint_unit);
-
-  bigint res = msList_init(allocator, bigint_unit, unit_count);
-
-  msList_pushArr(allocator, res, *VLAP((bigint_unit *)mem, unit_count));
-
-  u8 leftover_bits = bits % (sizeof(bigint_unit) * 8);
-  if (leftover_bits > 0) {
-    res[unit_count - 1] &= ((bigint_unit)1 << leftover_bits) - 1;
-  }
-
-  if (is_signed && (mem[(bits - 1) / 8] & (1 << ((bits - 1) % 8)))) {
-    if (leftover_bits > 0) {
-      res[unit_count - 1] |= ~(((bigint_unit)1 << leftover_bits) - 1);
-    }
-  }
-
-  bigint_trim(&res);
-  return res;
 }
 value eval_op(
     state *evalState,
     value *left,
     ast right,
     u64 op,
-    bool *retflag
+    bool retflag[1]
 ) {
   assertMessage(retflag);
   if (op == callOp.num) {
     assertMessage(left);
     return eval_call(evalState, left[0], right, nullptr, retflag);
-  } else if (op == addOp.num) {
-    var_ r_val = eval(evalState, nullptr, right, retflag);
-    if (*retflag) return r_val;
+  }
+  if (
+      EQUAL_ANY(
+          op,
+          addOp.num,
+          subOp.num,
+          mulOp.num,
+          divOp.num,
+          modOp.num,
+      )
+  ) {
+    assertMessage(left);
+    var_ rvalue = eval(evalState, &left->type, right, retflag);
+    var_ arena = arena_new_ext(mList_allocator(evalState->scopes), 1024);
+    defer { arena_cleanup(arena); };
 
-    if (left) {
-      var_ l_type = value_isInt(left[0]);
-      var_ r_type = value_isInt(r_val);
-      assertMessage(l_type && r_type, "Both operands must be integers for addition");
+    var_ type = value_Typeof(left[0]);
+    bool iss = tu_is(it_sint, type[0]);
+    usize bc =
+        iss
+            ? tu_assert(it_sint, type[0])
+            : tu_assert(it_uint, type[0]);
 
-      bool l_sign = tu_is(it_sint, l_type[0]);
-      bool r_sign = tu_is(it_sint, r_type[0]);
-      u16 l_bits = l_sign ? tu_assert(it_sint, l_type[0]) : tu_assert(it_uint, l_type[0]);
-      u16 r_bits = r_sign ? tu_assert(it_sint, r_type[0]) : tu_assert(it_uint, r_type[0]);
+    var_ rb =
+        BInt.from.bits(arena, state_fromV(evalState, rvalue.runtime_value), bc, iss);
+    var_ lb =
+        BInt.from.bits(arena, state_fromV(evalState, left[0].runtime_value), bc, iss);
+    log("{bigint}", lb);
+    if (op == addOp.num)
+      log("+", rb);
+    else if (op == subOp.num)
+      log("-", rb);
+    else if (op == mulOp.num)
+      log("*", rb);
+    else if (op == divOp.num)
+      log("//", rb);
+    else if (op == modOp.num)
+      log("%", rb);
+    log("{bigint}", rb);
 
-      // Grab a temporary allocator for the bigint math so we don't leak it into the permanent state
-      var_ temp_arena = arena_new_ext(stdAlloc, 1024);
-      defer { arena_cleanup(temp_arena); };
+    log("=");
 
-      // Convert memory to bigints
-      bigint b_left = bigint_from_mem(
-          temp_arena, state_fromV(evalState, left->runtime_value), l_bits, l_sign
-      );
-      bigint b_right = bigint_from_mem(
-          temp_arena, state_fromV(evalState, r_val.runtime_value), r_bits, r_sign
-      );
+    if (op == addOp.num)
+      BInt.advanced.add_ip(arena, &lb, rb, 0);
+    else if (op == subOp.num)
+      BInt.advanced.sub_ip(arena, &lb, rb, 0);
+    else if (op == mulOp.num)
+      lb = BInt.mul(arena, rb, lb);
+    else if (op == divOp.num)
+      lb = BInt.div(arena, lb, rb).div;
+    else if (op == modOp.num)
+      lb = BInt.div(arena, lb, rb).mod;
+    log("{bigint}", lb);
 
-      // Evaluate using your custom library!
-      bigint b_sum = bigint_add(temp_arena, b_left, b_right);
+    var_ res = state_create(evalState, left->type, true);
+    usize tsize = ({ itype t = (itype){.type = tu_assert(tv_runtime, res.type)};itype_size(&t); });
 
-      // Determine result type (standard promotion, adjust if your language rules differ)
-      u16 res_bits = l_bits > r_bits ? l_bits : r_bits;
-      bool res_sign = (l_bits == r_bits) ? (l_sign && r_sign) : (l_bits > r_bits ? l_sign : r_sign);
-      var_ res_itype = getType(res_sign ? (itype_t)tu_of(it_sint, res_bits) : (itype_t)tu_of(it_uint, res_bits));
+    BInt.expand(arena, &lb, tsize / sizeof(bigint_unit) + 1);
 
-      // Allocate space in the evalState for the result
-      var_ res = state_create(evalState, ty_ptr(res_itype), false);
-      u8 *res_mem = state_fromV(evalState, res.runtime_value);
-
-      // Zero out the newly allocated memory first
-      usize res_byte_count = (res_bits + 7) / 8;
-      memset(res_mem, 0, res_byte_count);
-
-      // Copy the bigint result bytes back into the target memory
-      usize units_to_copy = msList_len(b_sum);
-      usize bytes_to_copy = units_to_copy * sizeof(bigint_unit);
-      if (bytes_to_copy > res_byte_count) bytes_to_copy = res_byte_count; // Truncate if sum overflowed target width
-
-      memcpy(res_mem, b_sum, bytes_to_copy);
-
-      return res;
-    }
-    return r_val;
+    memcpy(
+        state_fromV(evalState, res.runtime_value),
+        lb,
+        tsize
+    );
+    return res;
   }
 
   log("unhandled {} ,{ast}", op, &right);
@@ -796,7 +819,11 @@ value eval(
       case (astNumber, num, {
         var_ rs = state_create(
             evalState,
-            ty_get((itype_t)tu_of(it_sint, 64)),
+            // ty_get((itype_t)tu_of(it_sint, 64)),
+            (type_value)tu_of(
+                tv_runtime,
+                getType(tu_of(it_sint, 64))
+            ),
             false
         );
         var_ n = astStr_ton(num);
@@ -807,7 +834,16 @@ value eval(
       case (astString, str, {
         var_ rs = state_create(
             evalState,
-            ty_get(tu_of(it_arr, {getType((itype_t)tu_of(it_sint, 8)), astStr_len(str)})),
+            (type_value)tu_of(
+                tv_runtime,
+                getType(tu_of(
+                    it_arr,
+                    {
+                        .type = getType(tu_of(it_sint, 8)),
+                        .length = astStr_len(str),
+                    }
+                ))
+            ),
             false
         );
         memcpy(state_fromV(evalState, rs.runtime_value), str.ptr, str.len);
@@ -820,19 +856,24 @@ value eval(
         value val = {};
 
         if (decl.type)
-          typev = eval(evalState, REF(ty_get(t_type)), decl.type[0], retflag);
+          typev = eval(evalState, &ty_type.type, decl.type[0], retflag);
+
+        type_value expected_tv = {};
+        if (decl.type) {
+          if (tu_is(tv_type, typev.type)) expected_tv = (type_value)tu_of(tv_runtime, tu_assert(tv_type, typev.type));
+          else expected_tv = typev.type;
+        }
 
         if (decl.value)
-          val = eval(evalState, decl.type ? &typev.type_value : nullptr, decl.value[0], retflag);
+          val = eval(evalState, decl.type ? &expected_tv : nullptr, decl.value[0], retflag);
         else if (decl.type)
-          val = state_create(evalState, typev.type_value, true);
+          val = state_create(evalState, expected_tv, true);
 
         if (decl.name) {
           var_ id = tu_catch(astId, decl.name[0], error_ast(decl.name[0], snprint(stdAlloc, "expected identifier")));
           if (msHmap_get(mList_last(evalState->scopes), id))
             error_at(id.ptr, snprint(stdAlloc, "this variable is taken for this scope"));
 
-          val.type.isconst = decl.is_const;
           msHmap_set(mList_last(evalState->scopes), id, val);
         }
         res = val;
@@ -855,12 +896,8 @@ value eval(
       case (astBBlock, block, {
         if (expected) {
           var_ rty = expected[0];
-          assertMessage(!rty.builtin_id);
+          assertMessage(!tu_is(tv_builtin, rty));
 
-          rty.isconst;
-          rty.names;
-          rty.values;
-          rty.type;
           log("unhandled : {ast}", &astv);
           assertMessage(false);
         } else {
@@ -907,60 +944,101 @@ value eval(
 }
 
 REGISTER_PRINTER(type_value, {
-  if (in.builtin_id) {
-    switch (in.builtin_id) {
-        // clang-format off
-      case builtin_$sint    :{PUTS("@sint")    ;}break;
-      case builtin_$uint    :{PUTS("@uint")    ;}break;
-      case builtin_$noExpand:{PUTS("@noExpand");}break;
-      case builtin_$expand  :{PUTS("@expand")  ;}break;
-      case builtin_$while   :{PUTS("@while")   ;}break;
-      case builtin_$type    :{PUTS("@type")    ;}break;
-      case builtin_$void    :{PUTS("@void")    ;}break;
-      case builtin_$ast     :{PUTS("@ast")     ;}break;
-      case builtin_return   :{PUTS("'return'") ;}break;
-      case builtin_struct   :{PUTS("'struct'") ;}break;
-      default:{PUTS("uninitialized?");USETYPEPRINTER(usize, in.builtin_id);}break;
-        // clang-format on
+  if (tu_is(tv_builtin, in)) {
+    switch (tu_assert(tv_builtin, in)) {
+      case builtin_$sint: {
+        PUTS("@sint");
+      } break;
+      case builtin_$uint: {
+        PUTS("@uint");
+      } break;
+      case builtin_$noExpand: {
+        PUTS("@noExpand");
+      } break;
+      case builtin_$expand: {
+        PUTS("@expand");
+      } break;
+      case builtin_$while: {
+        PUTS("@while");
+      } break;
+      case builtin_$type: {
+        PUTS("@type");
+      } break;
+      case builtin_$void: {
+        PUTS("@void");
+      } break;
+      case builtin_$ast: {
+        PUTS("@ast");
+      } break;
+      case builtin_return: {
+        PUTS("'return'");
+      } break;
+      case builtin_struct: {
+        PUTS("'struct'");
+      } break;
+      default: {
+        PUTS("uninitialized?");
+        USETYPEPRINTER(usize, tu_assert(tv_builtin, in));
+      } break;
     }
-  } else {
-    assertMessage(in.type);
-    if (tu_is(it_fun, in.type[0])) {
-      var_ fn = tu_assert(it_fun, in.type[0]);
-      var_ len = sentList_length(fn, sizeof(*fn));
-      PUTS("fn((");
-      foreach (var_ it, span(fn, len - 1)) {
-        USENAMEDPRINTER("itype_t", it[0]);
-        PUTS(",");
-      }
-      PUTS(",");
-      fn[len - 1];
-      PUTS(")");
-    } else if (tu_is(it_struct, in.type[0])) {
-      var_ st = tu_assert(it_struct, in.type[0]);
-      var_ vlap = sentList_vla(st);
-
-      PUTS("struct{");
+  } else if (tu_is(tv_strct, in)) {
+    // This is a struct value (instance), not a type. Print with field names.
+    var_ st = tu_assert(tv_strct, in);
+    PUTS("struct{");
+    if (st.layout && tu_is(it_struct, st.layout[0])) {
+      var_ layout_st = tu_assert(it_struct, st.layout[0]);
+      var_ vlap = sentList_vla(layout_st);
+      bool first = true;
       foreach (var_ it, pair(i, *vlap)) {
-        USENAMEDPRINTER("slice(c8)", in.names[i]);
+        if (!first) PUTS(",");
+        first = false;
+        USENAMEDPRINTER("slice(c8)", st.fields[i].name);
         PUTS(":");
         USENAMEDPRINTER("itype_t", it.type[0]);
-        PUTS(",");
-        // if (in.values[i]) {
-        //   if (in.isconst) PUTS(":");
-        //   else PUTS("=");
-        // }
       }
-      PUTS("}");
-    } else
-      USETYPEPRINTER(itype_t, in.type[0]);
-  }
-});
-REGISTER_PRINTER(value, {
-  PUTS("value : ");
-  if (in.type.type == &t_type) {
-    PUTS("typeof(");
-    USETYPEPRINTER(type_value, in.type_value);
-    PUTS(")");
+    }
+    PUTS("}");
+  } else {
+    // tv_runtime or tv_type
+    itype_t *t = nullptr;
+    if (tu_is(tv_runtime, in)) {
+      t = tu_assert(tv_runtime, in);
+    } else if (tu_is(tv_type, in)) {
+      t = tu_assert(tv_type, in);
+      // We'll print the type directly; only add "typeof(" for non-struct types.
+    }
+
+    if (t) {
+      if (tu_is(it_fun, t[0])) {
+        // function type: fn((params...), ret)
+        var_ fn = tu_assert(it_fun, t[0]);
+        var_ len = sentList_length(fn, sizeof(*fn));
+        PUTS("fn((");
+for (usize i = 0; i < len - 1; i++) {
+          if (i > 0) PUTS(",");
+          USENAMEDPRINTER("itype_t", fn[i]);
+        }
+        PUTS("),");
+        USENAMEDPRINTER("itype_t", fn[len - 1]);
+        PUTS(")");
+      } else if (tu_is(it_struct, t[0])) {
+        // struct type – print field types (no names, they are not stored here)
+        var_ st = tu_assert(it_struct, t[0]);
+        var_ vlap = sentList_vla(st);
+        PUTS("struct{");
+        bool first = true;
+        foreach (var_ it, pair(i, *vlap)) {
+          if (!first) PUTS(",");
+          first = false;
+          USENAMEDPRINTER("itype_t", it.type[0]);
+        }
+        PUTS("}");
+      } else {
+        // primitive types – wrap with "typeof(" only if it's a tv_type
+        if (tu_is(tv_type, in)) PUTS("typeof(");
+        USETYPEPRINTER(itype_t, t[0]);
+        if (tu_is(tv_type, in)) PUTS(")");
+      }
+    }
   }
 });
