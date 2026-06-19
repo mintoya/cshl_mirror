@@ -9,7 +9,6 @@
 #include <string.h>
 #include <wheels/allocators/arenaAllocator.h>
 #include <wheels/bigint.h>
-#include <wheels/funct.h>
 #include <wheels/macros.h>
 #include <wheels/mytypes.h>
 #include <wheels/sList.h>

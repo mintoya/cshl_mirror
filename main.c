@@ -15,14 +15,6 @@
 #include "tok2.h"
 #include "wheels/sList.h"
 
-var_ cmd_options = sentList(
-    cmdline_option,
-    {"--help" /*      */, CMDARG_BOOLEAN, "print help message"},
-    {"-h" /*          */, CMDARG_BOOLEAN, "print help message"},
-    {"--log-allocations", CMDARG_BOOLEAN, "enable allocation logging"},
-    {"--echo-file" /* */, CMDARG_BOOLEAN, "echo read file"},
-    {"--log-tokens" /* */, CMDARG_BOOLEAN, "emmit list of tokens"}
-);
 fptr *filectx = nullptr;
 __attribute__((noreturn)) void error_at(u8 *location, slice(c8) message) {
   assertMessage(filectx);
@@ -43,34 +35,33 @@ __attribute__((noreturn)) void error_at(u8 *location, slice(c8) message) {
   println("error : {} , at line {} column {}", message, line + 1, col + 1);
   exit(1);
 }
-CMDLINE_GENERATE_MAIN(cmd_options);
 
 void on_allocation(allocationType *t) {
   println("allocation from {} line {} , {}->{}", t->trace.fn, t->trace.ln, t->insize, t->outsize);
 }
-int cmdline_main(cmdline_args args) {
+cmd_main(
+    int nargs,
+    char **args,
+    (bool, help, ("-h", "--help"), "print help message", false),
+    (bool, log_alloc, ("--log-allocations"), "print help message", false),
+    (bool, echo_file, ("--echo-file"), "echo read file", false),
+    (bool, log_tokens, ("--log-tokens"), "emmit list of tokens", false)
+) {
+  char *progname = nargs ? *args : "cshl";
 
-  msList(char *) positionals = cmdLine_positionals(args);
-
-  var_ help =
-      cmdline_get(args, "--help", bool) ?: cmdline_get(args, "-h", bool);
-  if (help && *help) {
-    cmdLine_printUsage("cshl", cmd_options);
+  if (help) {
+    cmd_usage(progname);
     return 0;
-  } else if (msList_len(positionals) < 2) {
+  } else if (nargs < 2) {
     println("no input file provided");
-    cmdLine_printUsage("cshl", cmd_options);
+    cmd_usage(progname);
     return 1;
   }
-  var_ log_alloc = cmdline_get(args, "--log-allocations", bool);
-  var_ echo_file = cmdline_get(args, "--echo-file", bool);
-  var_ list_tokens = cmdline_get(args, "--log-tokens", bool);
-
   var_ s = fba_new(stdAlloc, 1024 * 1024);
   defer { fba_del(stdAlloc, s); };
 
   AllocatorV allocator =
-      (log_alloc && *log_alloc)
+      log_alloc
           ? debugAllocator(
                     .allocator = s,
                     .log = stdout,
@@ -78,7 +69,7 @@ int cmdline_main(cmdline_args args) {
             )
           : s;
   defer {
-    if (log_alloc && *log_alloc) debugAllocatorDeInit(allocator);
+    if (log_alloc) debugAllocatorDeInit(allocator);
   };
 
   fptr buffer = {};
@@ -87,14 +78,14 @@ int cmdline_main(cmdline_args args) {
       slice_free(allocator, buffer);
   };
 
-  buffer = readFileAlloc(allocator, positionals[1]);
+  buffer = readFileAlloc(allocator, args[1]);
   filectx = &buffer;
-  if (echo_file && *echo_file)
+  if (echo_file)
     println("file : \n{slice(c8)}\n", buffer);
 
   var_ tokens = tokenize(allocator, buffer);
   defer { msList_deInit(allocator, tokens); };
-  if (list_tokens && *list_tokens)
+  if (log_tokens)
     foreach (var_ token, vla(*msList_vla(tokens)))
       println(" {Token} ", token);
 
