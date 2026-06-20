@@ -1,19 +1,11 @@
 #include "int.h"
 #include <stdlib.h>
-#include <wheels/allocators/arenaAllocator.h>
-#include <wheels/allocators/debugallocator.h>
-#include <wheels/allocators/fbaAllocator.h>
 #include <wheels/cmdline_parser.h>
-#include <wheels/macros.h>
-#include <wheels/mytypes.h>
-#include <wheels/print.h>
-#include <wheels/shmap.h>
-#include <wheels/tu_macros.h>
+#include <wheels/examples/includeAll.c>
 
 #include "ast.h"
 #include "tok1.h"
 #include "tok2.h"
-#include "wheels/sList.h"
 
 fptr *filectx = nullptr;
 __attribute__((noreturn)) void error_at(u8 *location, slice(c8) message) {
@@ -39,6 +31,7 @@ __attribute__((noreturn)) void error_at(u8 *location, slice(c8) message) {
 void on_allocation(allocationType *t) {
   println("allocation from {} line {} , {}->{}", t->trace.fn, t->trace.ln, t->insize, t->outsize);
 }
+
 cmd_main(
     int nargs,
     char **args,
@@ -47,6 +40,7 @@ cmd_main(
     (bool, echo_file, ("--echo-file"), "echo read file", false),
     (bool, log_tokens, ("--log-tokens"), "emmit list of tokens", false)
 ) {
+  var_ allocator = stdAlloc;
   char *progname = nargs ? *args : "cshl";
 
   if (help) {
@@ -57,20 +51,6 @@ cmd_main(
     cmd_usage(progname);
     return 1;
   }
-  var_ s = fba_new(stdAlloc, 1024 * 1024);
-  defer { fba_del(stdAlloc, s); };
-
-  AllocatorV allocator =
-      log_alloc
-          ? debugAllocator(
-                    .allocator = s,
-                    .log = stdout,
-                    .on_call = on_allocation,
-            )
-          : s;
-  defer {
-    if (log_alloc) debugAllocatorDeInit(allocator);
-  };
 
   fptr buffer = {};
   defer {
@@ -89,16 +69,8 @@ cmd_main(
     foreach (var_ token, vla(*msList_vla(tokens)))
       println(" {Token} ", token);
 
-  AllocatorV arena = arena_new_ext(allocator, 48 * 255);
-  defer { arena_cleanup(arena); };
-  var_ ast = parseBBlock(arena, (slice(Token)){.len = msList_len(tokens), tokens});
+  var_ ast = parseBBlock(stdAlloc, (slice(Token)){.len = msList_len(tokens), tokens});
   println("{ast}", ast);
-  println("current place : {}", FBA_current(s));
 
-  bool r;
-  var_ st = state_init(s);
-  eval(REF(st), nullptr, ast[0], &r);
   return 0;
 }
-
-#include <wheels/wheels.h>
