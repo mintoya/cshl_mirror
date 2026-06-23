@@ -69,8 +69,11 @@ cmd_main(
     foreach (var_ token, vla(*msList_vla(tokens)))
       println(" {Token} ", token);
 
-  var_ ast = parseBBlock(stdAlloc, (slice(Token)){.len = msList_len(tokens), tokens});
+  var_ ast = parseBBlock(stdAlloc, buffer.ptr, (slice(Token)){.len = msList_len(tokens), tokens});
   println("{ast}", ast);
+
+  var_ state = state_init(stdAlloc);
+  eval(&state, nullptr, *ast, REF(false));
 
   return 0;
 }

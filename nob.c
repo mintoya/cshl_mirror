@@ -16,7 +16,7 @@
     // #define COMMON_CFLAGS "-std=c23", "-fdefer-ts" , "-ldbghelp"
     #define COMMON_CFLAGS "-std=c23", "-fdefer-ts", "-DnoAssertMessage"
   #else
-    #define COMMON_CFLAGS "-std=gnu23", "-fdefer-ts", "-D__PRETTY_FUNCTION__=__FUNCTION__" , "-fno-sanitize=vla-bound"
+    #define COMMON_CFLAGS "-std=gnu23", "-fdefer-ts", "-D__PRETTY_FUNCTION__=__FUNCTION__", "-fno-sanitize=vla-bound", "-rdynamic"
   #endif
 
 bool build_main(Cmd *cmd, Procs *procs) {

@@ -266,8 +266,10 @@ ast *parseOperations(AllocatorV allocator, ast *current, slice(Token) * backp) {
     usize mp = -1;
     foreach (var_ op, pair(i, *msList_vla(opsList))) {
       usize p = getPrec(op);
-      min = mp >= p ? i : min;
-      mp = mp >= p ? p : mp;
+      // min = mp >= p ? i : min;
+      // mp = mp >= p ? p : mp;
+      min = mp > p ? i : min;
+      mp = mp > p ? p : mp;
     }
 
     var_ opNode = aValue(
@@ -369,13 +371,13 @@ ast *parseDecl(AllocatorV allocator, slice(Token) tokens) { // ... : ... (;|= ..
   return aValue(allocator, (ast)tu_of(astDecl, decl));
 }
 
-ast *parseBBlock(AllocatorV allocator, slice(Token) tokens) { // {...}
+ast *parseBBlock(AllocatorV allocator, u8 *loc, slice(Token) tokens) { // {...}
   if_decl (var_ t, next_tok_balanced(allocator, tokens, t_comma))
     error_Token(t[0], snprint(stdAlloc, "comma not allowed here"));
 
   usize count = balanced_count(allocator, tokens, t_semi);
   var_ rp = aCreate(allocator, ast *, count + 3);
-  rp[0] = aValue(allocator, (ast)tu_of(astBBlock, ((astBBlock){rp + 1})));
+  rp[0] = aValue(allocator, (ast)tu_of(astBBlock, ((astBBlock){loc, rp + 1})));
   foreach (var_ item, span(rp + 1, count)) {
     Token *nplace = next_tok_balanced(allocator, tokens, t_semi);
     var_ slice = (slice(Token)){nplace - tokens.ptr, tokens.ptr};
@@ -392,14 +394,14 @@ ast *parseBBlock(AllocatorV allocator, slice(Token) tokens) { // {...}
 
   return rp[0];
 }
-ast *parseABlock(AllocatorV allocator, slice(Token) tokens) { // [...]
+ast *parseABlock(AllocatorV allocator, u8 *loc, slice(Token) tokens) { // [...]
   if_decl (var_ t, next_tok_balanced(allocator, tokens, t_semi))
     error_Token(t[0], snprint(stdAlloc, "semicolon not allowed here"));
 
   usize count = balanced_count(allocator, tokens, t_comma);
 
   var_ rp = aCreate(allocator, ast *, count + 3);
-  rp[0] = aValue(allocator, (ast)tu_of(astABlock, {rp + 1}));
+  rp[0] = aValue(allocator, (ast)tu_of(astABlock, {loc, rp + 1}));
   foreach (var_ item, span(rp + 1, count)) {
     Token *nplace = next_tok_balanced(allocator, tokens, t_comma);
     var_ slice = (slice(Token)){nplace - tokens.ptr, tokens.ptr};
@@ -419,14 +421,14 @@ ast *parseABlock(AllocatorV allocator, slice(Token) tokens) { // [...]
             : parseExpr(allocator, tokens);
   return rp[0];
 }
-ast *parsePBlock(AllocatorV allocator, slice(Token) tokens) { // (...)
+ast *parsePBlock(AllocatorV allocator, u8 *loc, slice(Token) tokens) { // (...)
   if_decl (var_ t, next_tok_balanced(allocator, tokens, t_semi))
     error_Token(t[0], snprint(stdAlloc, "semicolon not allowed here"));
 
   usize count = balanced_count(allocator, tokens, t_comma);
 
   var_ rp = aCreate(allocator, ast *, count + 3);
-  rp[0] = aValue(allocator, (ast)tu_of(astPBlock, {rp + 1}));
+  rp[0] = aValue(allocator, (ast)tu_of(astPBlock, {loc, rp + 1}));
   foreach (var_ item, span(rp + 1, count)) {
     Token *nplace = next_tok_balanced(allocator, tokens, t_comma);
     assertMessage(nplace);
@@ -451,12 +453,13 @@ ast *parseBlock(AllocatorV allocator, slice(Token) tokens) {
   if (!tokens.len)
     return aValue(allocator, (ast)tu_of(astEmptyStatement, {}));
   var_ inner = slice_split(tokens, (1, tokens.len - 1))[0];
+  var_ first_char = tokens.ptr[0].s.ptr;
   if (Token_equal(tokens.ptr[0], t_lbrace))
-    return parseBBlock(allocator, inner);
+    return parseBBlock(allocator, first_char, inner);
   if (Token_equal(tokens.ptr[0], t_lbracket))
-    return parseABlock(allocator, inner);
+    return parseABlock(allocator, first_char, inner);
   if (Token_equal(tokens.ptr[0], t_lparen))
-    return parsePBlock(allocator, inner);
+    return parsePBlock(allocator, first_char, inner);
 
   error_Token(tokens.ptr[0], snprint(stdAlloc, "expected block start token"));
   return nullptr;

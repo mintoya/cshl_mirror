@@ -1,5 +1,9 @@
 #include "ast.h"
+#include "form.h"
+#include "wheels/shmap.h"
 #include "wheels/smallstream.h"
+#include <stdcountof.h>
+#include <wheels/allocators/arenaAllocator.h>
 #include <wheels/bigint.h>
 #include <wheels/macros.h>
 #include <wheels/mytypes.h>
@@ -26,6 +30,7 @@ REGISTER_PRINTER(builtin_id, {
   switch (in) {
       // clang-format off
     case builtin_none/*     */:PUTS("none/invalid")/**/;break;
+
     case builtin_$sint/*    */:PUTS("$sint")/*       */;break;
     case builtin_$uint/*    */:PUTS("$uint")/*       */;break;
     case builtin_$noExpand/**/:PUTS("$noExpand")/*   */;break;
@@ -118,8 +123,10 @@ REGISTER_PRINTER(runtime, {
       case (r_funct, f, {
         var_ vla = sentList_vla(f);
         PUTS("fn((");
-        foreach (var_ v, span(*vla, countof(*vla) - 1))
+        foreach (var_ v, span(*vla, countof(*vla) - 1)) {
+          if (v != *vla) PUTS(",");
           USETYPEPRINTER(runtime, *v);
+        }
         PUTS("),");
         USETYPEPRINTER(runtime, vla[0][countof(*vla) - 1]);
         PUTS(")");
@@ -193,7 +200,7 @@ typedef struct comptime_funct comptime_funct;
 tu_def(
     // written so that all items are nullable,
     (comptime, u8),
-    (c_int, bigint), // bigint's are nullable
+    (c_int, bigint),
     (c_ast, ast *),
     (c_Type, Type *),
     (c_funct, comptime_funct *),
@@ -205,7 +212,12 @@ tu_def(
     (runtime, runtime),
     (builtin, builtin_id),
 );
-#define Type_of(time, type, ...) (Type) tu_of(time, ((time)tu_of(type, (type)__VA_ARGS__)))
+#define Type_of(time, type, ...) (Type) tu_of(time, tu_of(type, (type)__VA_ARGS__))
+
+var_ typeof_type = Type_of(comptime, c_Type, nullptr);
+var_ typeof_ast = Type_of(comptime, c_ast, nullptr);
+var_ typeof_int = Type_of(comptime, c_int, nullptr);
+
 typedef struct comptime_funct {
   sentList_t(struct {
     Type t;
@@ -273,13 +285,13 @@ __attribute__((noreturn)) void error_ast(ast a, slice(c8) message) {
       case (astDecl, d, { error_ast(d.name[0], message); }),
       case (astOp, o, { error_ast(o.right[0], message); }),
 
-      case (astPBlock, b, { error_ast(b.stmts[0][0], message); }),
-      case (astBBlock, b, { error_ast(b.stmts[0][0], message); }),
-      case (astABlock, b, { error_ast(b.items[0][0], message); }),
+      case (astPBlock, b, { error_at(b.loc, message); }),
+      case (astBBlock, b, { error_at(b.loc, message); }),
+      case (astABlock, b, { error_at(b.loc, message); }),
 
-      case (astEmptyStatement, _, { error_at(nullptr, message); }),
-      default(abort();),
+      default(error_at(nullptr, message);),
   );
+  unreachable();
 }
 
 // {operators
@@ -316,12 +328,14 @@ var_ setOp = /*  */ (astOp_union){"="};
 // }
 // {literal conversion
 
-bigint astStr_ton(AllocatorV allocator, fptr str_number) {
-  if (str_number.len > 2 && fptr_eq(slice_split(str_number, (0, 2))[0], "0x"))
-    return BInt.from.fptr(allocator, 16, slice_split(str_number, (2, -1))[0]);
-  else if (str_number.len > 2 && fptr_eq(slice_split(str_number, (0, 2))[0], "0b"))
-    return BInt.from.fptr(allocator, 2, slice_split(str_number, (2, -1))[0]);
-  else return BInt.from.fptr(allocator, 10, str_number);
+bigint astStr_ton(AllocatorV allocator, fptr str) {
+  bigint res = nullptr;
+  if (str.len > 2 && fptr_eq(slice_split(str, (0, 2))[0], "0x"))
+    res = BInt.from.fptr(allocator, 16, slice_split(str, (2, -1))[0]);
+  else if (str.len > 2 && fptr_eq(slice_split(str, (0, 2))[0], "0b"))
+    res = BInt.from.fptr(allocator, 2, slice_split(str, (2, -1))[0]);
+  else res = BInt.from.fptr(allocator, 10, str);
+  return res;
 }
 usize astStr_len(fptr fp) {
   if (fp.len < 2) return 0;
@@ -369,7 +383,8 @@ void astStr_tom(fptr from, fptr *to) {
 // {value
 typedef struct value_struct {
   Type t;
-  iptr rtvalue;
+  bool isConst : 1;
+  iptr rtvalue : sizeof(iptr) * 8 - 1;
 } value;
 bool runtime_type_eq(runtime a, runtime b) {
   if (a.tag != b.tag) return false;
@@ -595,6 +610,9 @@ u8 *state_fromV(EState *s, iptr place) {
   place -= alignof(myAlign);
   return a + place;
 }
+u8 *state_fromVal(EState *s, value v) {
+  return state_fromV(s, v.rtvalue);
+}
 value state_create(EState *s, Type type, bool isHeap) {
   log("creating : {Type}", type);
   usize size = lineup(Type_sizeof(type), alignof(myAlign));
@@ -613,26 +631,211 @@ void state_destroy(EState *s, value v) {
   if (tu_is(runtime, v.t) && lineup(Type_sizeof(v.t), alignof(myAlign)))
     if (v.rtvalue < 0) state_heap_free(s, -v.rtvalue);
 }
-AllocatorV state_last_allocator(EState s) {
-  assertMessage(msList_len(s.scopes));
-  return msHmap_allocator(msList_last(s.scopes));
+AllocatorV state_last_allocator(EState *s) {
+  assertMessage(mList_len(s->scopes));
+  return msHmap_allocator(mList_last(s->scopes));
+}
+void state_set(EState *s, astId id, value v) {
+  if (msHmap_get(mList_last(s->scopes), id))
+    error_ast((ast)tu_of(astId, id), snprint(stdAlloc, "value in the same scope with the same name"));
+  msHmap_set(mList_last(s->scopes), id, v);
+}
+void state_push(EState *s) {
+  var_ nextScopeStorage =
+      arena_new_ext(
+          state_last_allocator(s),
+          1024
+      );
+  var_ nextScope = msHmap_init(nextScopeStorage, value);
+  mList_push(s->scopes, nextScope);
+}
+void state_pop(EState *s) {
+  var_ nextScope = mList_pop(s->scopes);
+  var_ allocator = msHmap_allocator(nextScope);
+  arena_cleanup(allocator);
 }
 // }
 
-void coerce_value(value *v, Type *expected);
+void coerce_value(value *v, Type *expected) {
+  assertMessage(v);
+  if (!expected) return;
+  if (Type_eq(v->t, *expected)) return;
+  // the type of a type is a type, handled in type eq
+  if (Type_eq(typeof_type, expected[0])) {
+    if (Type_eq(typeof_ast, v->t)) return;
+    if (Type_eq(typeof_int, v->t)) return;
+  }
+  assertMessage(false, "unhandled coersion");
+}
+Type value_toType(ast err_loc, value v) {
+  tu_match(
+      v.t,
+      case (comptime, c, {
+        tu_match(
+            c,
+            case (c_int, i, {
+              if (i) error_ast(err_loc, snprint(stdAlloc, "this is a value not a type"));
+              return typeof_int;
+            }),
+            case (c_ast, a, {
+              if (a) error_ast(err_loc, snprint(stdAlloc, "this is a value not a type"));
+              return typeof_ast;
+            }),
+            case (c_Type, t, return t ? t[0] : typeof_type;),
+            default(error_ast(err_loc, snprint(stdAlloc, "this is a value not a type"));)
+        );
+      }),
+      default(error_ast(err_loc, snprint(stdAlloc, "this is a value not a type"));)
+  );
+  error_ast(err_loc, snprint(stdAlloc, "this is a value not a type"));
+}
+value eval(
+    EState *evalState,
+    Type *_Nullable expected,
+    ast part,
+    bool retflag[1]
+);
+bigint value_toI(AllocatorV alloc, EState *evs, value v) {
+  tu_match(
+      v.t,
+      case (runtime, r, {
+        tu_match(
+            r,
+            case (r_sint, s, return BInt.from.bits(alloc, state_fromVal(evs, v), Type_sizeof(v.t) * 8, true);),
+            case (r_uint, u, return BInt.from.bits(alloc, state_fromVal(evs, v), Type_sizeof(v.t) * 8, false);),
+            default(return nullptr;),
+        );
+      }),
+      case (comptime, c, {
+        if_tu_is (bigint b, c_int, c) {
+          return bigint_copy(alloc, b);
+        } else return nullptr;
+      }),
+      default(return nullptr;)
+  );
+  return nullptr;
+}
+value eval_call(
+    EState *evalState,
+    value left,
+    ast args,
+    bool retflag[1]
+) {
+  var_ allocator = state_last_allocator(evalState);
+  if_tu_is (var_ builtin, builtin, left.t) {
+    switch (builtin) {
+      case builtin_$ast:
+        return (value){typeof_ast};
+      case builtin_$type:
+        return (value){typeof_type};
+      case builtin_return: {
+        bool r2 = false;
+        var_ res = eval(evalState, nullptr, args, &r2);
+        assertMessage(!r2, "returned inside a return statement?");
+        *retflag = true;
+        return res;
+      }
+      case builtin_fn: {
+        AllocatorV arena = arena_new_ext(allocator, 1024);
+        defer { arena_clear(arena); };
+        if_tu_is (var_ sts, astPBlock, args) {
+          // var_ vla = sentList_vla(sts.stmts);
+          // usize len = countof(*vla);
+          usize len = sentList_length(sts.stmts, sizeof(*sts.stmts));
+          println("length : {}", len);
+          if (len > 2 || len < 1)
+            error_ast(args, snprint(stdAlloc, "expected 2 args"));
+        } else error_ast(args, snprint(stdAlloc, "expected parenthesized args"));
+
+        assertMessage(false);
+      }
+      default:
+        assertMessage(false, "unhandled builtin %i", builtin);
+    }
+  }
+  assertMessage(false, "unreachable?");
+}
+value eval_op(
+    EState *evalState,
+
+    value *_Nullable left,
+    ast right,
+    usize op,
+
+    bool retflag[1]
+) {
+  var_ allocator = state_last_allocator(evalState);
+
+  if (op == callOp.num) {
+    assertMessage(left);
+    return eval_call(evalState, left[0], right, retflag);
+  } else if (
+      EQUAL_ANY(
+          op,
+          addOp.num,
+          subOp.num,
+          mulOp.num,
+          divOp.num,
+          modOp.num,
+      )
+  ) {
+    assertMessage(left);
+    var_ lv = *left;
+    var_ rv = eval(evalState, &left->t, right, retflag);
+    if (*retflag) return rv;
+
+    var_ arena = arena_new_ext(allocator, 1024);
+    defer { arena_cleanup(arena); };
+
+    var_ lb = (bigint)value_toI(arena, evalState, lv);
+    var_ rb = (bigint)value_toI(arena, evalState, rv);
+    print("{bigint} {cstr} {bigint}  = ", lb, (char *)&op, rb);
+    if (!lb || !rb) error_ast(right, snprint(stdAlloc, "could'nt convert these to integers"));
+    if (op == addOp.num)
+      BInt.advanced.add_ip(arena, &lb, rb, 0);
+    else if (op == subOp.num)
+      BInt.advanced.sub_ip(arena, &lb, rb, 0);
+    else if (op == mulOp.num)
+      lb = BInt.mul(arena, lb, rb);
+    else if (op == divOp.num)
+      lb = BInt.div(arena, lb, rb).div;
+    else if (op == modOp.num)
+      lb = BInt.div(arena, lb, rb).mod;
+    else assertMessage(false, "unreachable?");
+    println("{bigint}", lb);
+    return (value){Type_of(comptime, c_int, bigint_copy(allocator, lb))};
+  }
+  assertMessage(false, "unreachable?");
+}
+value state_getId(EState *s, astId id) {
+  foreach (var_ i, range(mList_len(s->scopes), 0))
+    if_decl (var_ v, msHmap_get(mList_arr(s->scopes)[i - 1], id))
+      return *v;
+  if (fptr_eq(id, "@ast")) return (value){(Type)tu_of(builtin, builtin_$ast)};
+  if (fptr_eq(id, "@type")) return (value){(Type)tu_of(builtin, builtin_$type)};
+  if (fptr_eq(id, "return")) return (value){(Type)tu_of(builtin, builtin_return)};
+  if (fptr_eq(id, "fn")) return (value){(Type)tu_of(builtin, builtin_fn)};
+  if (fptr_eq(id, "struct")) return (value){(Type)tu_of(builtin, builtin_struct)};
+  error_ast((ast)tu_of(astId, id), snprint(stdAlloc, "unidentified symbol"));
+}
 value eval(
     EState *evalState,
     Type *_Nullable expected,
     ast part,
     bool retflag[1]
 ) {
-  var_ allocator = state_last_allocator(*evalState);
+  assertMessage(retflag, "must have return flag");
+  assertMessage(!*retflag, "return flag is already set?");
+  var_ allocator = state_last_allocator(evalState);
   var_ result = (value){};
   tu_match(
       part,
+      //
+      // trivial
+      //
       case (astEmptyStatement, _, {}),
-
-      case (astNumber, n, { result = (value){Type_of(comptime, c_int, astStr_ton(allocator, n))}; }),
+      case (astId, id, result = state_getId(evalState, id);),
+      case (astNumber, n, result = (value){Type_of(comptime, c_int, astStr_ton(allocator, n))};),
       case (astString, s, {
         usize l = astStr_len(s);
         var_ arrt = aValue(allocator, ((ptrstype(r_arr)){runtime_of(r_sint, 8), l})); // TODO: intern
@@ -640,8 +843,65 @@ value eval(
         var_ to = (fptr){l, state_fromV(evalState, result.rtvalue)};
         astStr_tom(s, &to);
       }),
+      case (astPBlock, pb, {
+        var_ vla = sentList_vla(pb.stmts);
+        assertMessage(countof(vla[0]) == 1, "no tuples in this language");
+        result = eval(evalState, expected, vla[0][0][0], retflag);
+      }),
+
+      case (astOp, op, {
+        var_ opn = op.number_rep;
+        var_ left = (value){};
+        if (op.left) {
+          left = eval(evalState, nullptr, op.left[0], retflag);
+          result = eval_op(evalState, &left, op.right[0], opn, retflag);
+        } // TODO: check rflag
+        else
+          result = eval_op(evalState, nullptr, op.right[0], opn, retflag);
+      }),
+      case (astDecl, decl, {
+        var_ type = (Type){};
+        if (decl.type) {
+          var_ t = eval(evalState, &typeof_type, decl.type[0], retflag);
+          if (*retflag) {
+            result = t;
+            goto coersion;
+          }
+          type = value_toType(decl.type[0], t);
+        }
+        var_ val = (value){};
+        if (decl.value) {
+          var_ v = eval(evalState, decl.type ? &type : nullptr, decl.value[0], retflag);
+          if (*retflag) {
+            result = v;
+            goto coersion;
+          }
+          val = v;
+        }
+        val.isConst = decl.is_const;
+        state_set(evalState, tu_assert(astId, decl.name[0]), val);
+        result = val;
+      }),
+      case (astBBlock, bb, {
+        if (expected) {
+          assertMessage(false, "unimplemented");
+        } else {
+          var_ vla = sentList_vla(bb.stmts);
+          state_push(evalState);
+          defer { state_pop(evalState); };
+          result = (value){};
+          foreach (var_ st, vlap(vla)) {
+            if (st)
+              result = eval(evalState, expected, *st, retflag);
+            if (*retflag) goto coersion;
+          }
+        }
+      }),
+      default({
+        assertMessage(false, "%s", snprint(stdAlloc, "{astTag}", part.tag).ptr);
+      }),
 
   );
-  coerce_value(&result, expected);
+  {coersion : } coerce_value(&result, expected);
   return result;
 }

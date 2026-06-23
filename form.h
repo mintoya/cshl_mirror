@@ -39,11 +39,8 @@ static bool ast_match_internal(AllocatorV alloc, const ast *const node, u8 **fmt
   if (c != '.' && c != 'a' && c != type)
     return false;
 
-  // Flattening magic: Only push value/operation nodes.
-  // Ignore structural wrappers (B, P, A) so the list contains exactly the requested targets.
-  if (c >= 'a' && c <= 'z') {
+  if (c >= 'a' && c <= 'z')
     msList_push(alloc, *list, node);
-  }
 
   while (*fmt < fmt_end && **fmt == ' ')
     (*fmt)++;

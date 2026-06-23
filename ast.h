@@ -1,3 +1,4 @@
+#include "wheels/macros.h"
 #if !defined(AST_H)
   #define AST_H
   #include "wheels/smallstream.h"
@@ -44,16 +45,30 @@ tu_def(
     // PBlocks
     // whatever is inside ()
     // ccomma-separated
-    (astPBlock, struct { sentList_t(ast *) stmts; }),
+    (astPBlock, struct {u8* loc ; sentList_t(ast *) stmts; }),
     // Blocks
     // whatever is inside {}
     // always semicolon-separated
-    (astBBlock, struct { sentList_t(ast *) stmts; }),
+    (astBBlock, struct {u8* loc ; sentList_t(ast *) stmts; }),
     // Blocks
     // whatever is inside []
     // always comma-separated
-    (astABlock, struct { sentList_t(ast *) items; }),
+    (astABlock, struct {u8* loc ; sentList_t(ast *) items; }),
 );
+REGISTER_SPECIAL_PRINTER("astTag", itypeof(ast, tag), {
+  tu_match(
+      ((ast){.tag = in}),
+      case (astId, _, PUTS("astId");),
+      case (astNumber, _, PUTS("astNum");),
+      case (astString, _, PUTS("astStr");),
+      case (astDecl, _, PUTS("astDecl");),
+      case (astOp, _, PUTS("astOp");),
+      case (astBBlock, _, PUTS("astBBlock");),
+      case (astPBlock, _, PUTS("astPBlock");),
+      case (astABlock, _, PUTS("astABlock");),
+      case (astEmptyStatement, _, PUTS("astEmpty");),
+  );
+});
 
 static inline slice(u8) readFileAlloc(AllocatorV allocator, const char *filename) {
   var_ fileptr = file_stream_open(
