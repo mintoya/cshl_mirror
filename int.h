@@ -34,17 +34,18 @@ REGISTER_PRINTER(builtin_id, {
       // clang-format off
     case builtin_none/*     */:PUTS("none/invalid")/**/;break;
 
-    case builtin_$sint/*    */:PUTS("$sint")/*       */;break;
-    case builtin_$uint/*    */:PUTS("$uint")/*       */;break;
-    case builtin_$noExpand/**/:PUTS("$noExpand")/*   */;break;
-    case builtin_$expand/*  */:PUTS("$expand")/*     */;break;
-    case builtin_$while/*   */:PUTS("$while")/*      */;break;
-    case builtin_$type/*    */:PUTS("$type")/*       */;break;
-    case builtin_$void/*    */:PUTS("$void")/*       */;break;
-    case builtin_$ast/*     */:PUTS("$ast")/*        */;break;
-    case builtin_fn/*       */:PUTS("fn")/*          */;break;
-    case builtin_return/*   */:PUTS("return")/*      */;break;
-    case builtin_struct/*   */:PUTS("struct")/*      */;break;
+    case builtin_$any/*     */:PUTS("$any")/*     */;break;
+    case builtin_$sint/*    */:PUTS("$sint")/*    */;break;
+    case builtin_$uint/*    */:PUTS("$uint")/*    */;break;
+    case builtin_$noExpand/**/:PUTS("$noExpand")/**/;break;
+    case builtin_$expand/*  */:PUTS("$expand")/*  */;break;
+    case builtin_$while/*   */:PUTS("$while")/*   */;break;
+    case builtin_$type/*    */:PUTS("$type")/*    */;break;
+    case builtin_$void/*    */:PUTS("$void")/*    */;break;
+    case builtin_$ast/*     */:PUTS("$ast")/*     */;break;
+    case builtin_fn/*       */:PUTS("fn")/*       */;break;
+    case builtin_return/*   */:PUTS("return")/*   */;break;
+    case builtin_struct/*   */:PUTS("struct")/*   */;break;
       // clang-format on
   }
 });
@@ -216,7 +217,7 @@ tu_def(
     (runtime, runtime),
     (builtin, builtin_id),
 );
-#define Type_of(time, type, ...) (Type) tu_of(time, tu_of(type, (type)__VA_ARGS__))
+#define Type_of(time, type, ...) (Type) tu_of(time, tu_of(type, __VA_ARGS__))
 
 var_ typeof_type = Type_of(comptime, c_Type, nullptr);
 var_ typeof_ast = Type_of(comptime, c_ast, nullptr);
@@ -228,8 +229,9 @@ typedef struct comptime_funct {
     Type t;
     fptr name;
     void *initial_value;
+    bool isconst;
   }) args;
-  astBBlock block;
+  itypeof(astBBlock, stmts) block;
 } comptime_funct;
 REGISTER_PRINTER(comptime, {
   tu_match(
@@ -241,13 +243,44 @@ REGISTER_PRINTER(comptime, {
       case (c_ast, a, { PUTS("c_ast"); }),
       case (c_Type, t, {
         PUTS("c_Type:");
-        if (t) USENAMEDPRINTER("Type", *t);
+        if (t) {
+          USENAMEDPRINTER("Type", *t);
+        } else PUTS("type");
       }),
-      case (c_funct, f, { PUTS("c_funct"); }),
+      case (c_funct, f, {
+        PUTS("c_funct((");
+        var_ vla = sentList_vla(f->args);
+        foreach (var_ a, span(vla[0], countof(vla[0]) - 1)) {
+          if (a != vla[0]) PUTS(",");
+          USENAMEDPRINTER("slice(c8)", a->name);
+          PUTS(":");
+          USENAMEDPRINTER("Type", a->t);
+        }
+        PUTS("),");
+        var_ ret = vla[0][countof(vla[0]) - 1];
+        USENAMEDPRINTER("slice(c8)", ret.name);
+        PUTS(":");
+        USENAMEDPRINTER("Type", ret.t);
+        PUTS(")");
+      }),
       default(unreachable();)
   );
 });
+bool Type_eq(Type a, Type b);
 REGISTER_PRINTER(Type, {
+  if (Type_eq(in, typeof_type)) {
+    PUTS("type");
+    return;
+  } else if (Type_eq(in, typeof_ast)) {
+    PUTS("ast");
+    return;
+  } else if (Type_eq(in, typeof_int)) {
+    PUTS("int");
+    return;
+  } else if (Type_eq(in, typeof_any)) {
+    PUTS("any");
+    return;
+  }
   tu_match(
       in,
       case (builtin, b, {
@@ -262,7 +295,7 @@ REGISTER_PRINTER(Type, {
         PUTS("runtime:");
         USETYPEPRINTER(runtime, r);
       }),
-      default(unreachable();)
+      default(assertMessage(false, "%i", in.tag);)
   );
 });
 
@@ -443,12 +476,14 @@ bool runtime_type_eq(runtime a, runtime b) {
       })
   );
 }
-bool Type_eq(Type a, Type b);
 bool comptime_type_eq(comptime a, comptime b) {
   if (a.tag != b.tag) return false;
   if (fptr_eq(((fptr){sizeof(a), (u8 *)&a}), ((fptr){sizeof(b), (u8 *)&b}))) return true;
   tu_match(
       a,
+      case (c_any, _, {
+        return true; // TODO probably fine
+      }),
       case (c_ast, _, {
         return true; // TODO probably fine
       }),
@@ -697,6 +732,9 @@ Type value_toType(ast err_loc, value v) {
   );
   error_ast(err_loc, snprint(stdAlloc, "this is a value not a type"));
 }
+value Type_toValue(ast err_loc, Type t) {
+  return (value){Type_of(comptime, c_Type, aValue(stdAlloc, t))}; // TODO
+}
 value eval(
     EState *evalState,
     Type *_Nullable expected,
@@ -724,8 +762,8 @@ bigint value_toI(AllocatorV alloc, EState *evs, value v) {
   return nullptr;
 }
 
-static ptrstype(itypeof(comptime_funct, args)) eval_fn_arg(
-    EState *evalState, ast part, bool retflag[1]
+ptrstype(itypeof(comptime_funct, args)) eval_fn_arg(
+    EState *evalState, ast part
 ) {
   typedef ptrstype(itypeof(comptime_funct, args)) function_arg;
   var_ res = (function_arg){0};
@@ -734,13 +772,26 @@ static ptrstype(itypeof(comptime_funct, args)) eval_fn_arg(
       case (astDecl, d, {
         if (d.name) res.name = tu_assert(astId, d.name[0]);
         if (d.type) {
-          var_ tv = eval(evalState, &typeof_type, d.type[0], retflag);
-          if (!*retflag) res.t = value_toType(d.type[0], tv);
+          bool rf = false;
+          var_ tv = eval(evalState, &typeof_type, d.type[0], &rf);
+          if (rf) error_ast(d.type[0], snprint(stdAlloc, "returned while evaluating a function"));
+          res.t = value_toType(d.type[0], tv);
         } else error_ast(part, snprint(stdAlloc, "arguments must have a type"));
+        res.isconst = d.is_const;
+        if (d.value) {
+          bool rf = false;
+          var_ v = eval(evalState, d.type ? &res.t : nullptr, d.value[0], &rf);
+          if (rf) error_ast(d.type[0], snprint(stdAlloc, "returned while evaluating a function"));
+          res.initial_value = aValue(
+              state_last_allocator(evalState), v // TODO: wrong allocator
+          );
+        }
       }),
       case (astId, id, {
-        var_ tv = eval(evalState, &typeof_type, part, retflag);
-        if (!*retflag) res.t = value_toType(part, tv);
+        bool rf = false;
+        var_ tv = eval(evalState, &typeof_type, part, &rf);
+        if (rf) error_ast(part, snprint(stdAlloc, "returned while evaluating a function"));
+        res.t = value_toType(part, tv);
       }),
       case (astEmptyStatement, empty, {
         res.t = Type_of(runtime, r_void, {});
@@ -748,6 +799,48 @@ static ptrstype(itypeof(comptime_funct, args)) eval_fn_arg(
       default(error_ast(part, snprint(stdAlloc, "{astTag} not supported here", part.tag));),
   );
   return res;
+}
+value eval_fncall(
+    EState *evalState,
+    comptime_funct *f,
+    ast args
+) {
+  var_ allocator = state_last_allocator(evalState);
+  if_tu_is (var_ pb, astPBlock, args) {
+    AllocatorV arena = arena_new_ext(allocator, 1024);
+    defer { arena_clear(arena); };
+
+    var_ argsList = ast_match(arena, args, fp("P+a"));
+    usize arg_count = argsList ? msList_len(argsList) : 0;
+
+    var_ vla_params = sentList_vla(f->args);
+    usize param_count = countof(vla_params[0]) - 1;
+
+    if (arg_count != param_count)
+      error_ast(args, snprint(stdAlloc, "expected {} args, got {}", param_count, arg_count));
+
+    value *eval_args = aCreate(arena, value, arg_count);
+    for (usize i = 0; i < arg_count; i++) {
+      bool rf = false;
+      eval_args[i] = eval(evalState, &vla_params[0][i].t, argsList[i][0], &rf);
+      if (rf) error_ast(argsList[i][0], snprint(stdAlloc, "returned while evaluating argument"));
+    }
+
+    state_push(evalState);
+    defer { state_pop(evalState); };
+
+    for (usize i = 0; i < arg_count; i++)
+      state_set(evalState, vla_params[0][i].name, eval_args[i]);
+    bool rflag = false;
+    var_ bb = (astBBlock){.stmts = f->block};
+    Type ret_type = vla_params[0][param_count].t;
+
+    value res = eval(evalState, nullptr, (ast)tu_of(astBBlock, bb), &rflag);
+    coerce_value(&res, &ret_type);
+
+    return res;
+  }
+  error_ast(args, snprint(stdAlloc, "expected parenthesized arguments"));
 }
 value eval_call(
     EState *evalState,
@@ -790,15 +883,10 @@ value eval_call(
               .block = nullptr
           };
 
-          foreach (var_ i, range(0, arglen)) {
-            rfunc.args[i] = eval_fn_arg(evalState, argsList[i][0], retflag);
-            if (*retflag) return (value){0};
-          }
+          foreach (var_ i, range(0, arglen))
+            rfunc.args[i] = eval_fn_arg(evalState, argsList[i][0]);
 
-          rfunc.args[arglen] = eval_fn_arg(evalState, retV, retflag);
-          if (*retflag) return (value){0};
-
-          rfunc.args[arglen + 1] = (function_arg){0}; // Sentinel
+          rfunc.args[arglen] = eval_fn_arg(evalState, retV);
 
           return (value){Type_of(comptime, c_funct, aValue(allocator, rfunc))};
         } else error_ast(args, snprint(stdAlloc, "expected parenthesized args"));
@@ -807,9 +895,27 @@ value eval_call(
         assertMessage(false, "unhandled builtin %i", builtin);
     }
   }
-  assertMessage(
+  if_tu_is (var_ c_val, comptime, left.t) {
+    tu_match(
+        c_val,
+        case (c_funct, f, {
+          if (!f->block) {
+            if_tu_is (var_ bb, astBBlock, args) {
+              var_ rfunc = *f;
+              rfunc.block = tu_assert(astBBlock, args).stmts;
+              return (value){Type_of(comptime, c_funct, aValue(allocator, rfunc))}; // TODO:
+            }
+            error_ast(args, snprint(stdAlloc, "expected block for function body"));
+          } else
+            return eval_fncall(evalState, f, args);
+          goto fail;
+        }),
+        default(goto fail;)
+    );
+  }
+  {fail : } assertMessage(
       false,
-      "unhandled call scenario : \n%s",
+      "unhandled call: \n%s",
       snprint(
           stdAlloc,
           "{Type}\n{ast}\n",
@@ -949,7 +1055,8 @@ value eval(
       }),
       case (astBBlock, bb, {
         if (expected) {
-          assertMessage(false, "unimplemented");
+          var_ left = Type_toValue(part, expected[0]);
+          result = eval_op(evalState, &left, part, callOp.num, retflag);
         } else {
           var_ vla = sentList_vla(bb.stmts);
           state_push(evalState);

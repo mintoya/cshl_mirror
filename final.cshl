@@ -1,9 +1,3 @@
-pi :: 31415926535;
-piscale :: 10000000000;
-radius :: 5;
-
-result :: pi *  radius * radius / piscale;
-
 type : @type() : @type();
 ast : type : @ast();
 any : type : @any();
@@ -11,3 +5,10 @@ any : type : @any();
 square :: fn((a : any) , any) {
   return a * a;
 };
+
+pi :: 31415926535;
+piscale :: 10000000000;
+radius :: 5;
+
+result :: pi *  square(radius) / piscale;
+
