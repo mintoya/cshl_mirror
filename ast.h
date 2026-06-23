@@ -172,8 +172,7 @@ static void print_ast_recursive(ast *node, int indent, outputFunction put, void 
            }),
            case (astOp, op, {
              PUTS("Op '");
-             PUTS(op.symLiteral);
-             // USETYPEPRINTER(usize, op.number_rep);
+             USENAMEDPRINTER("cstr", (char *)op.symLiteral);
              PUTS("'\n");
 
              print_ast_indent(indent + 1, put, _arb);

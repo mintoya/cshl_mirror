@@ -1,53 +1,13 @@
-1 - 2;
-1 + 2;
-2 * 2;
-2 / 1;
-2 % 1;
+pi :: 31415926535;
+piscale :: 10000000000;
+radius :: 5;
 
+result :: pi *  radius * radius / piscale;
 
-ast :: @ast();
-type :: @type();
+type : @type() : @type();
+ast : type : @ast();
+any : type : @any();
 
-int : type : @sint(32);
-
-vec :: struct{ 
-  x:int:5;
-  y:int;
+square :: fn((a : any) , any) {
+  return a * a;
 };
-iter :: struct{ 
-  decl :ast;
-  cont :ast;
-  init :ast;
-};
-each ::fn((name:ast , array : any) , iter){
-  // noExpand will ignore first level of scope punctuation
-  id : ast : name.id;
-  return [ 
-    .init = @noExpand{ i : @uint(64) = 0; } , 
-    .cont = @noExpand{ i < array.len; } , 
-    .decl = @noExpand{ id := array[i]; i = i + 1; } , 
-  ];
-};
-for :fn((cnd : iter), fn((ast) , ast)):{
-  return fn((body : ast) , ast){
-    return 
-      @noExpand(
-        { // these brackcets will also be insserted
-          @expand(cnd.init);
-          @while(@expand(cnd.cont),{
-            @expand(cnd.decl);
-            body;
-          });
-        }
-      );
-  };
-};
-
-
-str : type : []@sint(8);
-
-main : fn(( []str ),int);
-main = fn(( arg : []str ),r : int = 0){
-  for each(arg,args) print(arg);
-};
-

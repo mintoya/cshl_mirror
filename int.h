@@ -1,7 +1,9 @@
 #include "ast.h"
 #include "form.h"
+#include "wheels/sList.h"
 #include "wheels/shmap.h"
 #include "wheels/smallstream.h"
+#include <assert.h>
 #include <stdcountof.h>
 #include <wheels/allocators/arenaAllocator.h>
 #include <wheels/bigint.h>
@@ -21,6 +23,7 @@ typedef enum builtin_enum : u8 {
   builtin_$type,
   builtin_$void,
   builtin_$ast,
+  builtin_$any,
 
   builtin_fn,
   builtin_return,
@@ -204,6 +207,7 @@ tu_def(
     (c_ast, ast *),
     (c_Type, Type *),
     (c_funct, comptime_funct *),
+    (c_any, nothing_t),
 );
 #define comptime_of(type, value) ((comptime)tu_of(type, value))
 tu_def(
@@ -217,6 +221,7 @@ tu_def(
 var_ typeof_type = Type_of(comptime, c_Type, nullptr);
 var_ typeof_ast = Type_of(comptime, c_ast, nullptr);
 var_ typeof_int = Type_of(comptime, c_int, nullptr);
+var_ typeof_any = Type_of(comptime, c_any, {});
 
 typedef struct comptime_funct {
   sentList_t(struct {
@@ -659,9 +664,11 @@ void state_pop(EState *s) {
 void coerce_value(value *v, Type *expected) {
   assertMessage(v);
   if (!expected) return;
+  if (Type_eq(expected[0], typeof_any)) return;
   if (Type_eq(v->t, *expected)) return;
   // the type of a type is a type, handled in type eq
   if (Type_eq(typeof_type, expected[0])) {
+    if (Type_eq(typeof_any, v->t)) return;
     if (Type_eq(typeof_ast, v->t)) return;
     if (Type_eq(typeof_int, v->t)) return;
   }
@@ -677,6 +684,7 @@ Type value_toType(ast err_loc, value v) {
               if (i) error_ast(err_loc, snprint(stdAlloc, "this is a value not a type"));
               return typeof_int;
             }),
+            case (c_any, a, { return typeof_any; }),
             case (c_ast, a, {
               if (a) error_ast(err_loc, snprint(stdAlloc, "this is a value not a type"));
               return typeof_ast;
@@ -715,6 +723,32 @@ bigint value_toI(AllocatorV alloc, EState *evs, value v) {
   );
   return nullptr;
 }
+
+static ptrstype(itypeof(comptime_funct, args)) eval_fn_arg(
+    EState *evalState, ast part, bool retflag[1]
+) {
+  typedef ptrstype(itypeof(comptime_funct, args)) function_arg;
+  var_ res = (function_arg){0};
+  tu_match(
+      part,
+      case (astDecl, d, {
+        if (d.name) res.name = tu_assert(astId, d.name[0]);
+        if (d.type) {
+          var_ tv = eval(evalState, &typeof_type, d.type[0], retflag);
+          if (!*retflag) res.t = value_toType(d.type[0], tv);
+        } else error_ast(part, snprint(stdAlloc, "arguments must have a type"));
+      }),
+      case (astId, id, {
+        var_ tv = eval(evalState, &typeof_type, part, retflag);
+        if (!*retflag) res.t = value_toType(part, tv);
+      }),
+      case (astEmptyStatement, empty, {
+        res.t = Type_of(runtime, r_void, {});
+      }),
+      default(error_ast(part, snprint(stdAlloc, "{astTag} not supported here", part.tag));),
+  );
+  return res;
+}
 value eval_call(
     EState *evalState,
     value left,
@@ -728,6 +762,8 @@ value eval_call(
         return (value){typeof_ast};
       case builtin_$type:
         return (value){typeof_type};
+      case builtin_$any:
+        return (value){typeof_any};
       case builtin_return: {
         bool r2 = false;
         var_ res = eval(evalState, nullptr, args, &r2);
@@ -739,21 +775,49 @@ value eval_call(
         AllocatorV arena = arena_new_ext(allocator, 1024);
         defer { arena_clear(arena); };
         if_tu_is (var_ sts, astPBlock, args) {
-          // var_ vla = sentList_vla(sts.stmts);
-          // usize len = countof(*vla);
           usize len = sentList_length(sts.stmts, sizeof(*sts.stmts));
-          println("length : {}", len);
           if (len > 2 || len < 1)
             error_ast(args, snprint(stdAlloc, "expected 2 args"));
-        } else error_ast(args, snprint(stdAlloc, "expected parenthesized args"));
+          var_ retV = len == 2 ? sts.stmts[1][0] : (ast)tu_of(astEmptyStatement, {});
+          var_ argsV = sts.stmts[0];
 
-        assertMessage(false);
+          var_ argsList = ast_match(arena, argsV[0], fp("P+a"));
+          usize arglen = argsList ? msList_len(argsList) : 0;
+
+          typedef ptrstype(itypeof(comptime_funct, args)) function_arg;
+          var_ rfunc = (comptime_funct){
+              .args = aCreate(allocator, function_arg, arglen + 2),
+              .block = nullptr
+          };
+
+          foreach (var_ i, range(0, arglen)) {
+            rfunc.args[i] = eval_fn_arg(evalState, argsList[i][0], retflag);
+            if (*retflag) return (value){0};
+          }
+
+          rfunc.args[arglen] = eval_fn_arg(evalState, retV, retflag);
+          if (*retflag) return (value){0};
+
+          rfunc.args[arglen + 1] = (function_arg){0}; // Sentinel
+
+          return (value){Type_of(comptime, c_funct, aValue(allocator, rfunc))};
+        } else error_ast(args, snprint(stdAlloc, "expected parenthesized args"));
       }
       default:
         assertMessage(false, "unhandled builtin %i", builtin);
     }
   }
-  assertMessage(false, "unreachable?");
+  assertMessage(
+      false,
+      "unhandled call scenario : \n%s",
+      snprint(
+          stdAlloc,
+          "{Type}\n{ast}\n",
+          left.t,
+          &args
+      )
+          .ptr
+  );
 }
 value eval_op(
     EState *evalState,
@@ -812,11 +876,12 @@ value state_getId(EState *s, astId id) {
     if_decl (var_ v, msHmap_get(mList_arr(s->scopes)[i - 1], id))
       return *v;
   if (fptr_eq(id, "@ast")) return (value){(Type)tu_of(builtin, builtin_$ast)};
+  if (fptr_eq(id, "@any")) return (value){(Type)tu_of(builtin, builtin_$any)};
   if (fptr_eq(id, "@type")) return (value){(Type)tu_of(builtin, builtin_$type)};
   if (fptr_eq(id, "return")) return (value){(Type)tu_of(builtin, builtin_return)};
   if (fptr_eq(id, "fn")) return (value){(Type)tu_of(builtin, builtin_fn)};
   if (fptr_eq(id, "struct")) return (value){(Type)tu_of(builtin, builtin_struct)};
-  error_ast((ast)tu_of(astId, id), snprint(stdAlloc, "unidentified symbol"));
+  error_ast((ast)tu_of(astId, id), snprint(stdAlloc, "unidentified symbol '{slice(c8)}'", id));
 }
 value eval(
     EState *evalState,
