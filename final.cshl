@@ -1,14 +1,12 @@
 type : @type() : @type();
-ast : type : @ast();
-any : type : @any();
+// ast  : type : @ast();
+any  : type : @any();
+int  : type : @int(); // signed bigint
 
-square :: fn((a : any) , any) {
-  return a * a;
-};
+square::fn((a:int),@sint(64)){return a * a;};
 
 pi :: 31415926535;
-piscale :: 10000000000;
+pis:: 10000000000;
 radius :: 5;
 
-result :: pi *  square(radius) / piscale;
-
+result :: pi *  square(radius) / pis;

@@ -5,6 +5,7 @@
 #include "wheels/smallstream.h"
 #include <assert.h>
 #include <stdcountof.h>
+#include <string.h>
 #include <wheels/allocators/arenaAllocator.h>
 #include <wheels/bigint.h>
 #include <wheels/macros.h>
@@ -17,17 +18,17 @@ typedef enum builtin_enum : u8 {
 
   builtin_$sint,
   builtin_$uint,
-  builtin_$noExpand,
-  builtin_$expand,
-  builtin_$while,
+  builtin_$noExpand, // x
+  builtin_$expand,   // x
+  builtin_$while,    // x
   builtin_$type,
   builtin_$void,
   builtin_$ast,
+  builtin_$int,
   builtin_$any,
-
   builtin_fn,
   builtin_return,
-  builtin_struct,
+  builtin_struct, // x
 } builtin_id;
 REGISTER_PRINTER(builtin_id, {
   switch (in) {
@@ -201,14 +202,25 @@ usize runtime_sizeof(runtime rt) {
 }
 
 typedef struct comptime_funct comptime_funct;
+typedef struct value_struct value;
+typedef struct comptime_struct comptime_struct;
+typedef struct comptime_struct {
+  r_struct variable;
+  // separate because of forward declaration
+  sentList_t(fptr) names;
+  sentList_t(value) vals;
+} comptime_struct;
 tu_def(
     // written so that all items are nullable,
     (comptime, u8),
-    (c_int, bigint),
-    (c_ast, ast *),
-    (c_Type, Type *),
-    (c_funct, comptime_funct *),
-    (c_any, nothing_t),
+    (c_invalid /**/, nothing_t),
+
+    (c_int /*    */, bigint),
+    (c_ast /*    */, ast *),
+    (c_Type /*   */, Type *),
+    (c_funct /*  */, comptime_funct *),
+    (c_struct /* */, comptime_struct *),
+    (c_any /*    */, nothing_t),
 );
 #define comptime_of(type, value) ((comptime)tu_of(type, value))
 tu_def(
@@ -554,6 +566,7 @@ typedef msHmap(value) scope;
 typedef struct eval_state {
   mList(scope) scopes;
   msList(u8) stack, heap;
+  msList(comptime_funct *) callstack;
   msList(struct {
     u16 count;
     u16 curr;
@@ -567,6 +580,7 @@ EState state_init(AllocatorV allocator) {
   return (EState){
       .scopes = l,
       .stack = msList_init(allocator, u8),
+      .callstack = msList_init(allocator, comptime_funct *),
       .heap = msList_init(allocator, u8),
       .heap_state = msList_init(allocator, ptrstype(itypeof(EState, heap_state))),
   };
@@ -694,9 +708,42 @@ void state_pop(EState *s) {
   var_ allocator = msHmap_allocator(nextScope);
   arena_cleanup(allocator);
 }
+void state_pushFn(EState *s, comptime_funct *fn) {
+  msList_push(mList_allocator(s->scopes), s->callstack, fn);
+  state_push(s);
+}
+void state_popFn(EState *s) {
+  msList_pop(s->callstack);
+  state_pop(s);
+}
+comptime_funct *_Nullable state_last_callfn(EState *s) {
+  if (msList_len(s->callstack))
+    return msList_last(s->callstack);
+  else return nullptr;
+}
 // }
 
-void coerce_value(value *v, Type *expected) {
+bigint value_toI(AllocatorV alloc, EState *evs, value v) {
+  tu_match(
+      v.t,
+      case (runtime, r, {
+        tu_match(
+            r,
+            case (r_sint, s, return BInt.from.bits(alloc, state_fromVal(evs, v), Type_sizeof(v.t) * 8, true);),
+            case (r_uint, u, return BInt.from.bits(alloc, state_fromVal(evs, v), Type_sizeof(v.t) * 8, false);),
+            default(return nullptr;),
+        );
+      }),
+      case (comptime, c, {
+        if_tu_is (bigint b, c_int, c) {
+          return bigint_copy(alloc, b);
+        } else return nullptr;
+      }),
+      default(return nullptr;)
+  );
+  return nullptr;
+}
+void coerce_value(EState *s, value *v, Type *expected) {
   assertMessage(v);
   if (!expected) return;
   if (Type_eq(expected[0], typeof_any)) return;
@@ -706,8 +753,46 @@ void coerce_value(value *v, Type *expected) {
     if (Type_eq(typeof_any, v->t)) return;
     if (Type_eq(typeof_ast, v->t)) return;
     if (Type_eq(typeof_int, v->t)) return;
+    if_tu_is (var_ ct, comptime, v->t) // literal type of a thing
+      if_tu_is (var_ t, c_Type, ct) return;
   }
-  assertMessage(false, "unhandled coersion");
+  // Comptime Int -> Runtime Int
+  if (Type_eq(typeof_int, v->t) && tu_is(runtime, expected[0])) {
+    var_ rt = tu_assert(runtime, *expected);
+    if (rt.tag == TU_TAG(r_sint) || rt.tag == TU_TAG(r_uint)) {
+      var_ b = tu_assert(c_int, tu_assert(comptime, v->t));
+      var_ alloc = state_last_allocator(s);
+      usize bytes = Type_sizeof(*expected);
+      bigint_expand(alloc, &b, bytes / sizeof(*b) + 1);
+
+      value nv = state_create(s, *expected, false);
+      memcpy(state_fromVal(s, nv), b, bytes);
+      *v = nv;
+      return;
+    }
+  }
+
+  // Runtime Int -> Comptime Int
+  if (tu_is(runtime, v->t) && Type_eq(typeof_int, *expected)) {
+    var_ rt = tu_assert(runtime, v->t);
+    if (rt.tag == TU_TAG(r_sint) || rt.tag == TU_TAG(r_uint)) {
+      var_ alloc = state_last_allocator(s);
+      var_ b = value_toI(alloc, s, *v);
+      *v = (value){Type_of(comptime, c_int, b)};
+      return;
+    }
+  }
+  assertMessage(
+      false,
+      "unhandled coersion , %s",
+      snprint(
+          stdAlloc,
+          "{Type}->{Type}",
+          v->t,
+          expected[0]
+      )
+          .ptr
+  );
 }
 Type value_toType(ast err_loc, value v) {
   tu_match(
@@ -741,26 +826,6 @@ value eval(
     ast part,
     bool retflag[1]
 );
-bigint value_toI(AllocatorV alloc, EState *evs, value v) {
-  tu_match(
-      v.t,
-      case (runtime, r, {
-        tu_match(
-            r,
-            case (r_sint, s, return BInt.from.bits(alloc, state_fromVal(evs, v), Type_sizeof(v.t) * 8, true);),
-            case (r_uint, u, return BInt.from.bits(alloc, state_fromVal(evs, v), Type_sizeof(v.t) * 8, false);),
-            default(return nullptr;),
-        );
-      }),
-      case (comptime, c, {
-        if_tu_is (bigint b, c_int, c) {
-          return bigint_copy(alloc, b);
-        } else return nullptr;
-      }),
-      default(return nullptr;)
-  );
-  return nullptr;
-}
 
 ptrstype(itypeof(comptime_funct, args)) eval_fn_arg(
     EState *evalState, ast part
@@ -769,6 +834,9 @@ ptrstype(itypeof(comptime_funct, args)) eval_fn_arg(
   var_ res = (function_arg){0};
   tu_match(
       part,
+      case (astEmptyStatement, empty, {
+        res.t = Type_of(runtime, r_void, {});
+      }),
       case (astDecl, d, {
         if (d.name) res.name = tu_assert(astId, d.name[0]);
         if (d.type) {
@@ -787,16 +855,12 @@ ptrstype(itypeof(comptime_funct, args)) eval_fn_arg(
           );
         }
       }),
-      case (astId, id, {
+      default({
         bool rf = false;
         var_ tv = eval(evalState, &typeof_type, part, &rf);
         if (rf) error_ast(part, snprint(stdAlloc, "returned while evaluating a function"));
         res.t = value_toType(part, tv);
       }),
-      case (astEmptyStatement, empty, {
-        res.t = Type_of(runtime, r_void, {});
-      }),
-      default(error_ast(part, snprint(stdAlloc, "{astTag} not supported here", part.tag));),
   );
   return res;
 }
@@ -817,7 +881,15 @@ value eval_fncall(
     usize param_count = countof(vla_params[0]) - 1;
 
     if (arg_count != param_count)
-      error_ast(args, snprint(stdAlloc, "expected {} args, got {}", param_count, arg_count));
+      error_ast(
+          args,
+          snprint(
+              stdAlloc,
+              "expected {} args, got {}",
+              param_count,
+              arg_count
+          )
+      );
 
     value *eval_args = aCreate(arena, value, arg_count);
     for (usize i = 0; i < arg_count; i++) {
@@ -826,17 +898,37 @@ value eval_fncall(
       if (rf) error_ast(argsList[i][0], snprint(stdAlloc, "returned while evaluating argument"));
     }
 
-    state_push(evalState);
-    defer { state_pop(evalState); };
+    state_pushFn(evalState, f);
+    defer { state_popFn(evalState); };
+
+    Type ret_type = vla_params[0][param_count].t;
+    var_ TypeSize = Type_sizeof(ret_type);
+
+    iptr ret_rtvalue =
+        TypeSize
+            ? ret_rtvalue = state_stack_push(evalState, TypeSize)
+            : 0;
+
+    var_ stack_checkpoint = state_stack_current(evalState[0]);
+    defer { msList_len(evalState->stack) = stack_checkpoint; };
 
     for (usize i = 0; i < arg_count; i++)
       state_set(evalState, vla_params[0][i].name, eval_args[i]);
+
     bool rflag = false;
     var_ bb = (astBBlock){.stmts = f->block};
-    Type ret_type = vla_params[0][param_count].t;
 
     value res = eval(evalState, nullptr, (ast)tu_of(astBBlock, bb), &rflag);
-    coerce_value(&res, &ret_type);
+    coerce_value(evalState, &res, &ret_type);
+
+    if_tu_is (var_ rt, runtime, res.t) {
+      if (TypeSize > 0) {
+        var_ src = state_fromVal(evalState, res);
+        var_ dst = state_fromV(evalState, ret_rtvalue);
+        memcpy(dst, src, TypeSize);
+        res.rtvalue = ret_rtvalue;
+      }
+    }
 
     return res;
   }
@@ -853,20 +945,56 @@ value eval_call(
     switch (builtin) {
       case builtin_$ast:
         return (value){typeof_ast};
+      case builtin_$int:
+        return (value){typeof_int};
+      case builtin_$sint:
+      case builtin_$uint: {
+        var_ mat = ast_match(allocator, args, fp("Pn"));
+        defer { msList_deInit(allocator, mat); };
+
+        if (!mat) error_ast(args, snprint(stdAlloc, "expected a number"));
+
+        var_ resn = astStr_ton(allocator, tu_assert(astNumber, mat[0][0]));
+        defer { msList_deInit(allocator, resn); };
+        bigint_expand(allocator, &resn, sizeof(u16) / sizeof(*resn) + 1);
+
+        u16 res = 0;
+        memcpy(&res, resn, sizeof(res));
+        if (builtin == builtin_$sint) // TODO
+          return (value){Type_of(comptime, c_Type, aValue(allocator, Type_of(runtime, r_sint, res)))};
+        else
+          return (value){Type_of(comptime, c_Type, aValue(allocator, Type_of(runtime, r_uint, res)))};
+
+        assertMessage(false);
+      }
       case builtin_$type:
         return (value){typeof_type};
       case builtin_$any:
         return (value){typeof_any};
       case builtin_return: {
         bool r2 = false;
-        var_ res = eval(evalState, nullptr, args, &r2);
-        assertMessage(!r2, "returned inside a return statement?");
+        var_ lc = state_last_callfn(evalState);
+        value res;
+        if (lc) {
+          var_ rts = lc->args;
+          var_ sl = sentList_length(lc->args, sizeof(*lc->args));
+          res = eval(
+              evalState,
+              sl ? &rts[sl - 1].t : nullptr,
+              args,
+              &r2
+          );
+        } else res = eval(evalState, nullptr, args, &r2);
+
+        assertMessage(!r2, "returned inside a return ");
         *retflag = true;
         return res;
       }
       case builtin_fn: {
+
         AllocatorV arena = arena_new_ext(allocator, 1024);
         defer { arena_clear(arena); };
+
         if_tu_is (var_ sts, astPBlock, args) {
           usize len = sentList_length(sts.stmts, sizeof(*sts.stmts));
           if (len > 2 || len < 1)
@@ -888,7 +1016,8 @@ value eval_call(
 
           rfunc.args[arglen] = eval_fn_arg(evalState, retV);
 
-          return (value){Type_of(comptime, c_funct, aValue(allocator, rfunc))};
+          var_ rt = Type_of(comptime, c_funct, aValue(allocator, rfunc));
+          return (value){rt};
         } else error_ast(args, snprint(stdAlloc, "expected parenthesized args"));
       }
       default:
@@ -982,6 +1111,9 @@ value state_getId(EState *s, astId id) {
     if_decl (var_ v, msHmap_get(mList_arr(s->scopes)[i - 1], id))
       return *v;
   if (fptr_eq(id, "@ast")) return (value){(Type)tu_of(builtin, builtin_$ast)};
+  if (fptr_eq(id, "@int")) return (value){(Type)tu_of(builtin, builtin_$int)};
+  if (fptr_eq(id, "@uint")) return (value){(Type)tu_of(builtin, builtin_$uint)};
+  if (fptr_eq(id, "@sint")) return (value){(Type)tu_of(builtin, builtin_$sint)};
   if (fptr_eq(id, "@any")) return (value){(Type)tu_of(builtin, builtin_$any)};
   if (fptr_eq(id, "@type")) return (value){(Type)tu_of(builtin, builtin_$type)};
   if (fptr_eq(id, "return")) return (value){(Type)tu_of(builtin, builtin_return)};
@@ -1074,6 +1206,6 @@ value eval(
       }),
 
   );
-  {coersion : } coerce_value(&result, expected);
+  {coersion : } coerce_value(evalState, &result, expected);
   return result;
 }
