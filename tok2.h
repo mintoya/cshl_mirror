@@ -213,14 +213,15 @@ ast *popVal(AllocatorV allocator, slice(Token) * backptr) {
     if (!end)
       error_Token(back.ptr[0], snprint(stdAlloc, "unclosed '{c8}'", back.ptr[0].s.ptr[0]));
     var_ slices = slice_split(back, (0, end - back.ptr + 1), (end - back.ptr + 1, -1));
-    // var_ slices = slice_cut(back, 0, end - back.ptr + 1, -1);
     *backptr = slices[1];
     return parseBlock(allocator, slices[0]);
   } else if (isValue) {
     var_ a = astAValue(allocator, back.ptr[0]);
     var_ nh = slice_split(back, (1, -1))[0];
 
-    while (nh.len && isBlockStart(nh.ptr[0])) {
+    // only pop it as part of the value if they are directly next to eachother
+    // so in a(b) + x a(b) binds tight as possible
+    while (nh.len && isBlockStart(nh.ptr[0]) && nh.ptr[0].s.ptr == P$(back.ptr[0].s, $.ptr + $.len)) {
       var_ parens = popVal(allocator, &nh);
       a = aValue(allocator, (ast)tu_of(astOp, {a, parens, "()"}));
     }

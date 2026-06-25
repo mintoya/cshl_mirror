@@ -13,13 +13,24 @@ u32:type:@uint(32);
 u16:type:@uint(16);
 u8 :type:@uint(8);
 
-j:u64=10;
+j:u64=1000;
 square ::fn((i:any) , any) { return i*i; };
 j=square(j) ;
 
-while :: fn((cond: ast , body : ast)) {
- @while(@uqot(cond), @uqot(body));
+while :: fn((cond_body : ast)) {
+  return @qot(@while(
+    @uqot(cond_body.op.call.left),
+    @uqot(cond_body.op.call.right)
+  ));
 };
 
+while j j = j - 1;
+  j = 10;
 
-while(j,j = j - 1);
+while j {
+  j = j - 1;
+};
+j = 10;
+while (j) {
+  j = j - 1;
+};
