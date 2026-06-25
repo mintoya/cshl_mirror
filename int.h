@@ -1195,38 +1195,45 @@ value eval_call(
         if (sentList_length(argsList, sizeof(argsList[0])) != 2)
           error_ast(args, snprint(stdAlloc, "expected 2 args"));
 
-        ast cond_ast = argsList[0][0];
-        ast body_ast = argsList[1][0];
+        ast cond = argsList[0][0];
+        ast body = argsList[1][0];
+
+        var_ ctype = get_ast_type(evalState, cond);
+        // println("expect {Type} for {ast}", ctype, &cond);
 
         value last_val = (value){0, Type_of(runtime, r_void, {})};
         var_ place = state_stack_current(evalState[0]);
+
+        var_ loop_arena = arena_new_ext(allocator, 1024);
+        defer { arena_cleanup(loop_arena); };
+
         while (true) {
-          state_push(evalState);
+          arena_clear(loop_arena);
+
+          var_ temp_scope = msHmap_init(loop_arena, rvalue);
+          mList_push(evalState->scopes, temp_scope);
+          defer { mList_pop(evalState->scopes); };
+
           state_stack_set(evalState, place);
           bool rf = false;
-          var_ cond_val = eval(evalState, nullptr, cond_ast, &rf);
+
+          var_ cond_val = eval(evalState, &typeof_int, cond, &rf);
           if (rf) {
             *retflag = true;
-            state_pop(evalState);
             return cond_val;
           }
 
-          var_ cond_int = value_toI(state_last_allocator(evalState), evalState, cond_val);
+          var_ cond_int = value_toI(loop_arena, evalState, cond_val);
           if (!cond_int)
-            error_ast(cond_ast, snprint(stdAlloc, "condition must evaluate to an integer"));
+            error_ast(cond, snprint(stdAlloc, "condition must evaluate to an integer"));
 
-          if (!bigint_cmp(cond_int, nullptr)) {
-            state_pop(evalState);
-            break;
-          }
+          if (!bigint_cmp(cond_int, nullptr)) break;
 
-          last_val = eval(evalState, nullptr, body_ast, &rf);
+          last_val = eval(evalState, &typeof_any, body, &rf);
           if (rf) {
             *retflag = true;
-            state_pop(evalState);
             return last_val;
           }
-          state_pop(evalState);
         }
         return (value){0, Type_of(runtime, r_void, {})};
       }
@@ -1487,6 +1494,17 @@ value eval(
   assertMessage(retflag, "must have return flag");
   assertMessage(!*retflag, "return flag is already set?");
   var_ allocator = state_last_allocator(evalState);
+
+  // auto-qot
+  if (expected && Type_eq(*expected, typeof_ast)) {
+    Type actual_type = get_ast_type(evalState, part);
+    if (!Type_eq(actual_type, typeof_ast)) {
+      ast *av = aValue(allocator, part);
+      defer { aFree(allocator, av, sizeof(*av)); };
+      return (value){0, Type__(evalState, Type_of(comptime, c_ast, av))};
+    }
+  }
+
   var_ result = (value){};
   tu_match(
       part,
@@ -1564,6 +1582,24 @@ value eval(
       }),
 
   );
-  {coersion : } coerce_value(evalState, &result, expected);
+  {
+  coersion:
+  }
+
+  // auto-uqot
+  if (expected && !Type_eq(*expected, typeof_ast)) {
+    while (Type_eq(value_acess(result).t, typeof_ast)) {
+      var_ ap = tu_assert(c_ast, tu_assert(comptime, value_acess(result).t));
+      if (!ap) break;
+      bool rf = false;
+      result = eval(evalState, expected, *ap, &rf);
+      if (rf) {
+        *retflag = true;
+        return result;
+      }
+    }
+  }
+
+  coerce_value(evalState, &result, expected);
   return result;
 }
