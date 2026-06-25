@@ -74,7 +74,6 @@ tu_def(
     // at runtime only types matter
     (r_funct, sentList_t(runtime)),
 );
-_Static_assert(!TU_TAG(r_void)); // to make sure at leas {} init doesnt cause a seg fault
 typedef struct runtime_struct {
   runtime t;
   fptr name;
@@ -238,6 +237,7 @@ var_ typeof_type = Type_of(comptime, c_Type, nullptr);
 var_ typeof_ast = Type_of(comptime, c_ast, nullptr);
 var_ typeof_int = Type_of(comptime, c_int, nullptr);
 var_ typeof_any = Type_of(comptime, c_any, {});
+var_ typeof_void = Type_of(runtime, r_void, {});
 
 typedef struct comptime_funct {
   sentList_t(struct {
@@ -913,12 +913,11 @@ void coerce_value(EState *s, value *vv, Type *expected) {
   if (Type_eq(expected[0], typeof_any)) return;
   var_ v = value_ap(vv);
 
-  if (Type_eq(v->t, *expected)) return;
-
-  if (Type_eq(Type_of(runtime, r_void, {}), expected[0])) {
-    v->t = Type_of(runtime, r_void, {});
+  if (Type_eq(typeof_void, expected[0])) {
+    *vv = (typeof(*vv)){.value = {.t = typeof_void}};
     return;
   }
+  if (Type_eq(v->t, *expected)) return;
   if (Type_eq(typeof_type, expected[0])) {
     if (Type_eq(typeof_any, v->t)) return;
     if (Type_eq(typeof_ast, v->t)) return;
@@ -931,7 +930,7 @@ void coerce_value(EState *s, value *vv, Type *expected) {
   // Comptime Int -> Runtime Int
   if (Type_eq(typeof_int, v->t) && tu_is(runtime, expected[0])) {
     var_ rt = tu_assert(runtime, *expected);
-    if (rt.tag == TU_TAG(r_sint) || rt.tag == TU_TAG(r_uint)) {
+    if (tu_is(r_sint, rt) || tu_is(r_uint, rt)) {
       var_ b = tu_assert(c_int, tu_assert(comptime, v->t));
       var_ alloc = state_last_allocator(s);
       usize bytes = Type_sizeof(*expected);
@@ -947,7 +946,7 @@ void coerce_value(EState *s, value *vv, Type *expected) {
   // Runtime Int -> Comptime Int
   if (tu_is(runtime, v->t) && Type_eq(typeof_int, *expected)) {
     var_ rt = tu_assert(runtime, v->t);
-    if (rt.tag == TU_TAG(r_sint) || rt.tag == TU_TAG(r_uint)) {
+    if (tu_is(r_sint, rt) || tu_is(r_uint, rt)) {
       var_ alloc = state_last_allocator(s);
       var_ b = value_toI(alloc, s, value_(v));
       *v = (rvalue){Type_of(comptime, c_int, b)};
@@ -1019,7 +1018,7 @@ ptrstype(itypeof(comptime_funct, args)) eval_fn_arg(
   tu_match(
       part,
       case (astEmptyStatement, empty, {
-        res.t = Type_of(runtime, r_void, {});
+        res.t = typeof_void;
       }),
       case (astDecl, d, {
         if (d.name) res.name = tu_assert(astId, d.name[0]);
@@ -1161,18 +1160,18 @@ value state_getId(EState *s, astId id) {
 //           if_tu_is (var_ c, comptime, value_acess(fn_val).t)
 //             if_tu_is (var_ f, c_funct, c) {
 //               var_ sl = sentList_length(f->args, sizeof(*f->args));
-//               return sl ? f->args[sl - 1].t : Type_of(runtime, r_void, {});
+//               return sl ? f->args[sl - 1].t : typeof_void;
 //             }
 //         }
-//         return Type_of(runtime, r_void, {});
+//         return typeof_void;
 //       }),
 //       case (astBBlock, bb, {
 //         var_ vla = sentList_vla(bb.stmts);
 //         usize c = countof(vla[0]);
-//         if (c == 0) return Type_of(runtime, r_void, {});
+//         if (c == 0) return typeof_void;
 //         return get_ast_type(s, vla[0][c - 1][0]);
 //       }),
-//       default(return Type_of(runtime, r_void, {});)
+//       default(return typeof_void;)
 //   );
 // }
 value eval_call(
@@ -1205,7 +1204,6 @@ value eval_call(
 
         // println("expect {Type} for {ast}", ctype, &cond);
 
-        value last_val = (value){0, Type_of(runtime, r_void, {})};
         var_ place = state_stack_current(evalState[0]);
 
         var_ loop_arena = arena_new_ext(allocator, 1024);
@@ -1233,13 +1231,13 @@ value eval_call(
 
           if (!bigint_cmp(cond_int, nullptr)) break;
 
-          last_val = eval(evalState, &typeof_any, body, &rf);
+          value last_val = eval(evalState, &typeof_any, body, &rf);
           if (rf) {
             *retflag = true;
             return last_val;
           }
         }
-        return (value){0, Type_of(runtime, r_void, {})};
+        return (value){0, typeof_void};
       }
       case builtin_$typeof: {
         assertMessage(false, "unimplemented");
@@ -1277,11 +1275,12 @@ value eval_call(
         if_tu_is (var_ c_val, comptime, val.t) {
           if_tu_is (var_ ast_ptr, c_ast, c_val) {
             if (!ast_ptr) error_ast(args, snprint(stdAlloc, "null ast passed to @uqot"));
-
             return eval(evalState, nullptr, *ast_ptr, retflag);
           }
-        }
-        error_ast(args, snprint(stdAlloc, "expected a c_ast value in @uqot"));
+        } else
+          // println("couldnt get an ast, using {Type} ", value_acess(evaled_arg).t);
+          return evaled_arg;
+        error_ast(args, snprint(stdAlloc, "unreachable?"));
       }
       case builtin_$ast:
         return (value){0, typeof_ast};
@@ -1400,7 +1399,7 @@ value eval_call(
       eval(evalState, nullptr, args, &rf);
       if (rf) error_ast(args, snprint(stdAlloc, "returned from discarded result"));
 
-      var_ ty = Type_of(runtime, r_void, {});
+      var_ ty = typeof_void;
       return (value){0, ty};
     }
 
@@ -1468,19 +1467,40 @@ value eval_op(
 
     var_ lb = (bigint)value_toI(arena, evalState, lv);
     var_ rb = (bigint)value_toI(arena, evalState, rv);
+    BInt.trim(&lb);
+    BInt.trim(&rb);
     print("{bigint} {cstr} {bigint}  = ", lb, (char *)&op, rb);
     if (!lb || !rb) error_ast(right, snprint(stdAlloc, "could'nt convert these to integers"));
-    if (op == addOp.num)
-      BInt.advanced.add_ip(arena, &lb, rb, 0);
-    else if (op == subOp.num)
-      BInt.advanced.sub_ip(arena, &lb, rb, 0);
-    else if (op == mulOp.num)
-      lb = BInt.mul(arena, lb, rb);
-    else if (op == divOp.num)
-      lb = BInt.div(arena, lb, rb).div;
-    else if (op == modOp.num)
-      lb = BInt.div(arena, lb, rb).mod;
-    else assertMessage(false, "unreachable?");
+    if (
+        msList_len(lb) <= sizeof(umax) / sizeof(*lb) &&
+        msList_len(rb) <= sizeof(umax) / sizeof(*lb)
+    ) {
+      BInt.expand(arena, &lb, sizeof(umax) / sizeof(*lb));
+      BInt.expand(arena, &rb, sizeof(umax) / sizeof(*lb));
+      if (op == addOp.num)
+        *(umax *)lb = *(umax *)lb + *(umax *)rb;
+      else if (op == subOp.num)
+        *(umax *)lb = *(umax *)lb - *(umax *)rb;
+      else if (op == mulOp.num)
+        lb = BInt.mul(arena, lb, rb);
+      else if (op == divOp.num)
+        *(umax *)lb = *(umax *)lb / *(umax *)rb;
+      else if (op == modOp.num)
+        *(umax *)lb = *(umax *)lb % *(umax *)rb;
+      else assertMessage(false, "unreachable?");
+    } else {
+      if (op == addOp.num)
+        BInt.advanced.add_ip(arena, &lb, rb, 0);
+      else if (op == subOp.num)
+        BInt.advanced.sub_ip(arena, &lb, rb, 0);
+      else if (op == mulOp.num)
+        lb = BInt.mul(arena, lb, rb);
+      else if (op == divOp.num)
+        lb = BInt.div(arena, lb, rb).div;
+      else if (op == modOp.num)
+        lb = BInt.div(arena, lb, rb).mod;
+      else assertMessage(false, "unreachable?");
+    }
     println("{bigint}", lb);
     return (value){0, Type_of(comptime, c_int, bigint_copy(allocator, lb))};
   } else if (op == dotOp.num) {
@@ -1506,8 +1526,8 @@ value eval_op(
                   right,
                   snprint(
                       stdAlloc,
-                      "{ast} is not an operation",
-                      &aval
+                      "{astTag} is not an operation",
+                      aval.tag
                   )
               )
           );
@@ -1556,14 +1576,15 @@ value eval(
     ast part,
     bool retflag[1]
 ) {
+  // println("eval({ptr:Type},{ast})", expected, &part);
   assertMessage(retflag, "must have return flag");
   assertMessage(!*retflag, "return flag is already set?");
+  // println("eval({ptr:Type},{astTag})", expected, part.tag);
   var_ allocator = state_last_allocator(evalState);
 
   // auto-qot
   if (expected && Type_eq(*expected, typeof_ast)) {
     ast *av = aValue(allocator, part);
-    defer { aFree(allocator, av, sizeof(*av)); };
     return (value){0, Type__(evalState, Type_of(comptime, c_ast, av))};
   }
 
@@ -1624,7 +1645,7 @@ value eval(
         result = val;
       }),
       case (astBBlock, bb, {
-        if (expected) {
+        if (expected && !Type_eq(expected[0], typeof_any)) {
           var_ left = Type_toValue(evalState, part, expected[0]);
           result = eval_op(evalState, &left, part, callOp.num, retflag);
         } else {
