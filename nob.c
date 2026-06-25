@@ -1,7 +1,7 @@
 #define NOB_IMPLEMENTATION
 
 #if !defined CC
-  #define CC "clang"
+  #define CC "zcc"
 #endif
 #if defined(_WIN32)
   #define EXTENSION ".exe"

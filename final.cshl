@@ -1,12 +1,25 @@
 type : @type() : @type();
-// ast  : type : @ast();
-any  : type : @any();
-int  : type : @int(); // signed bigint
+any:type: @any();
+ast:type: @ast();
+int:type: @int(); // signed bigint
 
-square::fn((a:int),@sint(64)){return a * a;};
+i64:type:@sint(64);
+i32:type:@sint(32);
+i16:type:@sint(16);
+i8 :type:@sint(8);
 
-pi :: 31415926535;
-pis:: 10000000000;
-radius :: 5;
+u64:type:@uint(64);
+u32:type:@uint(32);
+u16:type:@uint(16);
+u8 :type:@uint(8);
 
-result :: pi *  square(radius) / pis;
+j:u64=1000;
+square ::fn((i:any) , any) { return i*i; };
+j=square(j) ;
+
+while :: fn((cond: ast , body : ast)) {
+ @while(@uqot(cond), @uqot(body));
+};
+
+
+while(@qot(j) ,@qot(j = j - 1));

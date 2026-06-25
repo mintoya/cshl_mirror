@@ -266,10 +266,11 @@ ast *parseOperations(AllocatorV allocator, ast *current, slice(Token) * backp) {
     usize mp = -1;
     foreach (var_ op, pair(i, *msList_vla(opsList))) {
       usize p = getPrec(op);
-      // min = mp >= p ? i : min;
-      // mp = mp >= p ? p : mp;
-      min = mp > p ? i : min;
-      mp = mp > p ? p : mp;
+      var_ mo = mp > p;
+      if (EQUAL_ANY(1, Token_equal(op, t_equals), ))
+        mo |= mp == p;
+      min = mo ? i : min;
+      mp = mo ? p : mp;
     }
 
     var_ opNode = aValue(

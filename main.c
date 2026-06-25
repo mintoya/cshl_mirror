@@ -39,13 +39,14 @@ cmd_main(
     (bool, echo_file, ("--echo-file"), "echo read file", false),
     (bool, log_tokens, ("--log-tokens"), "emmit list of tokens", false)
 ) {
-  var_ allocator = arena_new_ext(stdAlloc, 1024);
-  defer {
-    println("blocks    : {}", arena_countBlocks(allocator));
-    println("footprint : {}", arena_footprint(allocator));
-    println("total mem : {}", arena_totalMem(allocator));
-    arena_cleanup(allocator);
-  };
+  // var_ allocator = arena_new_ext(stdAlloc, 1024);
+  // defer {
+  //   println("blocks    : {}", arena_countBlocks(allocator));
+  //   println("footprint : {}", arena_footprint(allocator));
+  //   println("total mem : {}", arena_totalMem(allocator));
+  //   arena_cleanup(allocator);
+  // };
+  var_ allocator = stdAlloc;
 
   char *progname = nargs ? *args : "cshl";
 
