@@ -17,7 +17,7 @@ j:u64=100;
 square ::fn((i:any) , any) { return i*i; };
 j=square(j) ;
 
-while :: fn((cond_body : ast)) {
+while:fn((cond_body : ast)):{
   @uqot({ 
     @while(
      cond_body.op.call.left,
@@ -26,29 +26,14 @@ while :: fn((cond_body : ast)) {
   ;});
 };
 if :: fn((cond_body : ast)) {
-  return 
-    @uqot({ 
-      iter := cond_body.op.call.left;
-      @while(
-       iter,
-       @qot({  cond_body.op.call.right  ; iter = 0;})
-      ) 
-    ;})
-  ;
+  iter := cond_body.op.call.left;
+  @qot(
+    while (iter) {  
+      cond_body.op.call.right;
+      iter = 0;
+    }
+  );
 };
 
 while j j = j - 1;
-
-j = 10;
-
-while j {
-  j = j - 1;
-};
-j = 10;
-while (j) {
-  j = j - 1;
-};
-
-if (1) {100 * 100;};
-if (0) {100 * 100;};
 

@@ -987,7 +987,7 @@ Type value_toType(EState *s, ast err_loc, value vv) {
               var_ av = aValue(allocator, *f);
               defer { aFree(allocator, av, sizeof(*av)); };
               if (f && !f->block)
-                return Type__(s, Type_of(comptime, c_funct, av)); // TODO
+                return Type__(s, (Type)tu_of(comptime, tu_of(c_funct, av)));
             }),
             default(error_ast(err_loc, snprint(stdAlloc, "3:this is a value not a type"));)
         );
@@ -1387,13 +1387,17 @@ value eval_call(
             return eval_fncall(evalState, f, args);
           goto fail;
         }),
-        default(goto fail;)
+        case (c_Type, t, {
+          assertMessage(t);
+          var_ td = (value){.value = {.t = t[0]}};
+          return eval_call(evalState, td, args, retflag);
+        }),
     );
   }
   //
   // (void)something
   //
-  if_tu_is (var_ r_val, runtime, value_acess(left).t)
+  if_tu_is (var_ r_val, runtime, value_acess(left).t) {
     if_tu_is (var_ r_val, r_void, r_val) {
       bool rf = false;
       eval(evalState, nullptr, args, &rf);
@@ -1402,6 +1406,15 @@ value eval_call(
       var_ ty = typeof_void;
       return (value){0, ty};
     }
+  }
+
+  // if_tu_is (var_ c_val, comptime, value_acess(left).t) {
+  //   if_tu_is (var_ fn, c_funct, c_val) {
+  //     if (!fn) assertMessage(false, "fn is null");
+  //     if (fn->block) assertMessage(false, "fn is a value");
+  //     assertMessage(false, "expected failure");
+  //   } else assertMessage(false, "???");
+  // } else assertMessage(false, "???");
 
   {fail : } assertMessage(
       false,
@@ -1424,6 +1437,32 @@ value eval_op(
 
     bool retflag[1]
 ) {
+  var_ all_operations = &(struct {char* name ; astOp_union un; }[]){
+      {"call", {"()"}},
+      {"dot", {"."}},
+      {"mul", {"*"}},
+      {"div", {"/"}},
+      {"mod", {"%"}},
+      {"add", {"+"}},
+      {"sub", {"-"}},
+      {"and", {"and"}},
+      {"not", {"not"}},
+      {"or", {"or"}},
+      {"band", {"band"}},
+      {"bnot", {"bnot"}},
+      {"bor", {"bor"}},
+      {"shr", {"shr"}},
+      {"shl", {"shl"}},
+      {"les", {"<"}},
+      {"mor", {">"}},
+      {"leq", {"<="}},
+      {"moq", {">="}},
+      {"eq", {"=="}},
+      {"neq", {"!="}},
+      {"pipe", {"|>"}},
+      {"set", {"="}},
+
+  };
   assertMessage(retflag, "must have return flag");
   assertMessage(!*retflag, "return flag is already set?");
   var_ allocator = state_last_allocator(evalState);
@@ -1506,19 +1545,21 @@ value eval_op(
   } else if (op == dotOp.num) {
     assertMessage(left);
     astId prop = tu_catch(astId, right, error_ast(right, snprint(stdAlloc, "dot operator only takes left id")));
-    // println("left is :{Type}\nright is : ({slice(c8)})", value_ap(left)->t, prop);
+    // {fake ast operations
     if_tu_is (var_ ctv, comptime, value_ap(left)->t)
       if_tu_is (var_ astv, c_ast, ctv) {
         if (!astv) error_ast(right, snprint(stdAlloc, "no value, is this a type?"));
         var_ aval = *astv;
-        if (
-            EQUAL_ANY(
-                1,
-                fptr_eq(prop, "op"),
-                fptr_eq(prop, "call"),
-                fptr_eq(prop, "add"),
-            )
-        ) {
+        usize opIdx = 0;
+        var_ isgeneralOp = fptr_eq(prop, "op");
+        if (!isgeneralOp)
+          for (; opIdx < countof(*all_operations); opIdx++) {
+            var_ op = all_operations[0][opIdx];
+            var_ fp = fptr_CS(op.name);
+            if (fptr_eq(fp, prop))
+              break;
+          }
+        if (isgeneralOp || opIdx < countof(*all_operations)) {
           var_ operation = tu_catch(
               astOp,
               aval,
@@ -1531,10 +1572,9 @@ value eval_op(
                   )
               )
           );
-          if (fptr_eq(prop, "call"))
-            assertMessage(operation.number_rep == callOp.num);
-          if (fptr_eq(prop, "add"))
-            assertMessage(operation.number_rep == addOp.num);
+          if (!isgeneralOp)
+            if (operation.number_rep != all_operations[0][opIdx].un.num)
+              error_ast(right, snprint(stdAlloc, "expected {cstr} , got {cstr}", &all_operations[0][opIdx].un.num, &operation.number_rep));
 
           return (value){
               0,
@@ -1565,7 +1605,7 @@ value eval_op(
           println("it's something else?");
         }
       }
-
+    // }
     assertMessage(false, "unreachable op?");
   }
   assertMessage(false, "unreachable?");
