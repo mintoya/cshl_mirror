@@ -1,8 +1,5 @@
 #include "ast.h"
 #include "form.h"
-#include "wheels/sList.h"
-#include "wheels/shmap.h"
-#include "wheels/smallstream.h"
 #include <assert.h>
 #include <stdcountof.h>
 #include <string.h>
@@ -10,6 +7,9 @@
 #include <wheels/bigint.h>
 #include <wheels/macros.h>
 #include <wheels/mytypes.h>
+#include <wheels/sList.h>
+#include <wheels/shmap.h>
+#include <wheels/smallstream.h>
 #include <wheels/tu_macros.h>
 #define log(msg, ...) println("(log:{cstr})\t" msg, (char *)__FUNCTION__, __VA_ARGS__)
 // {types
@@ -752,7 +752,7 @@ int fptr_cmp_bbs(const void *a, const void *b) {
 fptr fptr_store(EState *s, fptr f) {
   var_ allocator = mList_allocator(s->scopes);
   if (!f.len) return nullFptr;
-  var_ hash = HMap_hash(f);
+  umax hash = HMap_hash(f);
   if_decl (var_ ptr, mHmap_get(s->buffers, hash)) {
     var_ s = bbsearch(&f, *ptr, msList_len(*ptr), sizeof(fptr), fptr_cmp_bbs);
     if (s.f) return *(fptr *)s.p;
@@ -767,7 +767,8 @@ fptr fptr_store(EState *s, fptr f) {
 
   var_ i = bbsearch(&f, list, msList_len(list), sizeof(fptr), fptr_cmp_bbs);
   msList_ins(allocator, list, (fptr *)i.p - list, f);
-  defer { mHmap_setManaged(s->buffers, 75, hash, list); }
+  mHmap_setManaged(s->buffers, 75, hash, list);
+
   return f;
 }
 

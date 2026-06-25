@@ -1,11 +1,11 @@
-#include "wheels/macros.h"
 #if !defined(AST_H)
   #define AST_H
-  #include "wheels/smallstream.h"
   #include <wheels/allocator.h>
   #include <wheels/assertMessage.h>
   #include <wheels/fptr.h>
+  #include <wheels/macros.h>
   #include <wheels/print.h>
+  #include <wheels/smallstream.h>
   #include <wheels/smallstreams/smallfiles.h>
   #include <wheels/tu_macros.h>
   #if !defined(_Nullable)
