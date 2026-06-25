@@ -13,11 +13,7 @@ u32:type:@uint(32);
 u16:type:@uint(16);
 u8 :type:@uint(8);
 
-j:u64=100;
-square ::fn((i:any) , any) { return i*i; };
-j=square(j) ;
-
-while:fn((cond_body : ast)):{
+while:fn((ast)):fn((cond_body : ast)){
   @uqot({ 
     @while(
      cond_body.op.call.left,
@@ -35,5 +31,6 @@ if :: fn((cond_body : ast)) {
   );
 };
 
+j := 100;
 while j j = j - 1;
 

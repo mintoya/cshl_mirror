@@ -36,17 +36,18 @@ cmd_main(
     int nargs,
     char **args,
     (bool, help, ("-h", "--help"), "print help message", false),
-    (bool, echo_file, ("--echo-file"), "echo read file", false),
+    (bool, echo_ast, ("--log-ast"), "log the ast", false),
+    (bool, echo_file, ("--log-file"), "echo read file", false),
     (bool, log_tokens, ("--log-tokens"), "emmit list of tokens", false)
 ) {
-  // var_ allocator = arena_new_ext(stdAlloc, 1024);
-  // defer {
-  //   println("blocks    : {}", arena_countBlocks(allocator));
-  //   println("footprint : {}", arena_footprint(allocator));
-  //   println("total mem : {}", arena_totalMem(allocator));
-  //   arena_cleanup(allocator);
-  // };
-  var_ allocator = stdAlloc;
+  var_ allocator = arena_new_ext(stdAlloc, 1024);
+  defer {
+    println("blocks    : {}", arena_countBlocks(allocator));
+    println("footprint : {}", arena_footprint(allocator));
+    println("total mem : {}", arena_totalMem(allocator));
+    arena_cleanup(allocator);
+  };
+  // var_ allocator = stdAlloc;
 
   char *progname = nargs ? *args : "cshl";
 
@@ -76,12 +77,16 @@ cmd_main(
     foreach (var_ token, vla(*msList_vla(tokens)))
       println(" {Token} ", token);
 
-  var_ ast = parseBBlock(allocator, buffer.ptr, (slice(Token)){.len = msList_len(tokens), tokens});
-  println("{ast}", ast);
+  var_ astArena = arena_new_ext(allocator, 1024);
+  defer { arena_cleanup(astArena); };
+
+  var_ ast = parseBBlock(astArena, buffer.ptr, (slice(Token)){.len = msList_len(tokens), tokens});
+  if (echo_ast)
+    println("{ast}", ast);
 
   var_ state = state_init(allocator);
   eval(&state, nullptr, *ast, REF(false));
-  println("stack size : {}", msList_len(state.stack));
+  println("stack place : {}", msList_len(state.stack));
 
   return 0;
 }
