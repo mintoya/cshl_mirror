@@ -1,4 +1,4 @@
-type : @type() : @type();
+type:@type():@type();
 any:type: @any();
 ast:type: @ast();
 int:type: @int(); // signed bigint
@@ -13,24 +13,28 @@ u32:type:@uint(32);
 u16:type:@uint(16);
 u8 :type:@uint(8);
 
-while:fn((ast)):fn((cond_body : ast)){
-  @uqot({ 
-    @while(
-     cond_body.op.call.left,
-     cond_body.op.call.right
-    ) 
-  ;});
-};
-if :: fn((cond_body : ast)) {
-  iter := cond_body.op.call.left;
-  @qot(
-    while (iter) {  
-      cond_body.op.call.right;
-      iter = 0;
-    }
-  );
+if : fn((args : ast)) ;
+if = fn((args : ast)) {
+  call :: args."op"."call";
+  cond :: call."left";
+  bodies:: call."right";
+
+  
+  has_else :: @typeof(bodies."not") == ast;
+
+  @if(has_else, {
+    1000 * 1000;
+    @if(cond, @uqot(bodies."left"));
+    @if(not cond, @uqot(bodies."right"));
+  });
+
+  @if(not has_else, {
+    @if(cond, @uqot(bodies));
+  });
 };
 
-j := 100;
-while j j = j - 1;
 
+
+if (1) {
+  5 * 10;
+};

@@ -38,7 +38,8 @@ cmd_main(
     (bool, help, ("-h", "--help"), "print help message", false),
     (bool, echo_ast, ("--log-ast"), "log the ast", false),
     (bool, echo_file, ("--log-file"), "echo read file", false),
-    (bool, log_tokens, ("--log-tokens"), "emmit list of tokens", false)
+    (bool, log_tokens, ("--log-tokens"), "emmit list of tokens", false),
+    (bool, execute, ("-r", "--run"), "interpret the ast", false)
 ) {
   var_ allocator = arena_new_ext(stdAlloc, 1024);
   defer {
@@ -84,9 +85,11 @@ cmd_main(
   if (echo_ast)
     println("{ast}", ast);
 
-  var_ state = state_init(allocator);
-  eval(&state, nullptr, *ast, REF(false));
-  println("stack place : {}", msList_len(state.stack));
+  if (execute) {
+    var_ state = state_init(allocator);
+    eval(&state, nullptr, *ast, REF(false));
+    println("stack place : {}", msList_len(state.stack));
+  }
 
   return 0;
 }

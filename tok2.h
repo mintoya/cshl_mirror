@@ -1,3 +1,4 @@
+#include <limits.h>
 #if !defined(TOKENIZER_H1)
   #define TOKENIZER_H1 (1)
   #include "ast.h"
@@ -14,7 +15,7 @@
     #define TCO_ABI
   #endif
 
-__attribute__((noreturn)) void error_Token(Token t, slice(c8) msg) {
+__attribute__((noreturn)) void error_Tok(Token t, slice(c8) msg) {
   error_at(t.s.ptr, msg);
 }
 
@@ -85,11 +86,11 @@ bool isVal(Token t) {
 }
 Token opposite_end_scope(Token t) { // TODO something about this
   if (Token_equal(t, t_lbrace)) return t_rbrace;
-  if (Token_equal(t, t_rbrace)) error_Token(t, snprint(stdAlloc, "unexpected '{c8}'", (c8)t.s.ptr[0]));
+  if (Token_equal(t, t_rbrace)) error_Tok(t, snprint(stdAlloc, "unexpected '{c8}'", (c8)t.s.ptr[0]));
   if (Token_equal(t, t_lbracket)) return t_rbracket;
-  if (Token_equal(t, t_rbracket)) error_Token(t, snprint(stdAlloc, "unexpected '{c8}'", (c8)t.s.ptr[0]));
+  if (Token_equal(t, t_rbracket)) error_Tok(t, snprint(stdAlloc, "unexpected '{c8}'", (c8)t.s.ptr[0]));
   if (Token_equal(t, t_lparen)) return t_rparen;
-  if (Token_equal(t, t_rparen)) error_Token(t, snprint(stdAlloc, "unexpected '{c8}'", (c8)t.s.ptr[0]));
+  if (Token_equal(t, t_rparen)) error_Tok(t, snprint(stdAlloc, "unexpected '{c8}'", (c8)t.s.ptr[0]));
   assertMessage(false, "item isnt scope marker");
 }
 
@@ -110,7 +111,7 @@ Token *next_tok_balanced(AllocatorV allocator, slice(Token) tokens, Token t) {
     else if (isScope(tp[0])) msList_push(allocator, ts, tp[0]);
 
   if (msList_len(ts))
-    error_Token(msList_last(ts), snprint(stdAlloc, "unclosed {c8}", (char)msList_last(ts).s.ptr[0]));
+    error_Tok(msList_last(ts), snprint(stdAlloc, "unclosed {c8}", (char)msList_last(ts).s.ptr[0]));
   return nullptr;
 }
 struct next_op_result {
@@ -142,7 +143,7 @@ struct next_op_result next_op_balanced(AllocatorV allocator, slice(Token) tokens
     }
 
   if (msList_len(ts))
-    error_Token(msList_last(ts), snprint(stdAlloc, "unclosed {c8}", (char)msList_last(ts).s.ptr[0]));
+    error_Tok(msList_last(ts), snprint(stdAlloc, "unclosed {c8}", (char)msList_last(ts).s.ptr[0]));
 
   return (struct next_op_result){nullptr, skipped};
 }
@@ -166,7 +167,7 @@ usize balanced_count(AllocatorV allocator, slice(Token) tokens, Token t) {
       msList_push(allocator, ts, tp[0]);
 
   if (msList_len(ts))
-    error_Token(msList_last(ts), snprint(stdAlloc, "unclosed {c8}", (char)msList_last(ts).s.ptr[0]));
+    error_Tok(msList_last(ts), snprint(stdAlloc, "unclosed {c8}", (char)msList_last(ts).s.ptr[0]));
   return count;
 }
 usize getPrec(Token t) {
@@ -176,7 +177,7 @@ usize getPrec(Token t) {
     if (fptr_eq(fp(op.name), t.s))
       return op.prec + 1;
 
-  error_Token(
+  error_Tok(
       t,
       snprint(stdAlloc, "compiler error : operator not in operator list {slice(c8)}", t.s)
   );
@@ -198,9 +199,7 @@ ast *astAValue(AllocatorV allocator, Token t) {
   }
 }
 
-  // { operations
-  #define slice_first(slice) ({var_ _slice = slice ; _slice.ptr[0]; })
-
+// { operations
 ast *popVal(AllocatorV allocator, slice(Token) * backptr) {
   var_ back = *backptr;
   assertMessage(back.len);
@@ -211,7 +210,7 @@ ast *popVal(AllocatorV allocator, slice(Token) * backptr) {
   if (isblockStart) {
     Token *end = next_tok_balanced(allocator, slice_split(back, (1, -1))[0], opposite_end_scope(back.ptr[0]));
     if (!end)
-      error_Token(back.ptr[0], snprint(stdAlloc, "unclosed '{c8}'", back.ptr[0].s.ptr[0]));
+      error_Tok(back.ptr[0], snprint(stdAlloc, "unclosed '{c8}'", back.ptr[0].s.ptr[0]));
     var_ slices = slice_split(back, (0, end - back.ptr + 1), (end - back.ptr + 1, -1));
     *backptr = slices[1];
     return parseBlock(allocator, slices[0]);
@@ -229,11 +228,25 @@ ast *popVal(AllocatorV allocator, slice(Token) * backptr) {
     *backptr = nh;
     return a;
   } else
-    error_Token(back.ptr[0], snprint(stdAlloc, "compiler expected value here"));
+    error_Tok(back.ptr[0], snprint(stdAlloc, "compiler expected value here"));
   return nullptr;
 }
 TCO_ABI ast *parseExprPartial(AllocatorV allocator, ast *_Nullable current, slice(Token) back);
-TCO_ABI ast *parseExpr(AllocatorV allocator, slice(Token) tokens) { return parseExprPartial(allocator, nullptr, tokens); }
+TCO_ABI ast *parseExpr(AllocatorV allocator, slice(Token) tokens) {
+  if_decl (var_ eq_tok, next_tok_balanced(allocator, tokens, t_equals)) {
+    usize idx = eq_tok - tokens.ptr;
+    var_ s = slice_split(tokens, (0, idx), (idx + 1, -1));
+    var_ left = s[0];
+    var_ right = s[1];
+
+    ast *l_ast = parseExpr(allocator, left);
+    ast *r_ast = parseExpr(allocator, right);
+
+    var_ opNode = aValue(allocator, (ast)tu_of(astOp, {l_ast, r_ast}));
+    memcpy(opNode->astOp.symLiteral, eq_tok->s.ptr, eq_tok->s.len);
+    return opNode;
+  } else return parseExprPartial(allocator, nullptr, tokens);
+}
 ast *parseOperations(AllocatorV allocator, ast *current, slice(Token) * backp) {
   assertMessage(backp);
   var_ back = *backp;
@@ -297,7 +310,7 @@ TCO_ABI ast *parseExprPartial(AllocatorV allocator, ast *_Nullable current, slic
       memcpy(r->astOp.symLiteral, back.ptr->s.ptr, back.ptr->s.len);
       return r;
     } else if (back.ptr[0].kind == t_operator)
-      error_Token(back.ptr[0], snprint(stdAlloc, "{slice(c8)} needs operator to the left", back.ptr->s));
+      error_Tok(back.ptr[0], snprint(stdAlloc, "{slice(c8)} needs operator to the left", back.ptr->s));
     else current = popVal(allocator, &back);
   }
   if (!back.len) return current ?: aValue(allocator, (ast)tu_of(astEmptyStatement, {}));
@@ -307,7 +320,7 @@ TCO_ABI ast *parseExprPartial(AllocatorV allocator, ast *_Nullable current, slic
   current = current ?: popVal(allocator, &back);
   if (!back.len) return current ?: aValue(allocator, (ast)tu_of(astEmptyStatement, {}));
 
-  if (Token_equal(back.ptr[0], t_colon)) error_Token(back.ptr[0], snprint(stdAlloc, "exected value here"));
+  if (Token_equal(back.ptr[0], t_colon)) error_Tok(back.ptr[0], snprint(stdAlloc, "exected value here"));
 
   if (back.ptr[0].kind == t_operator) {
     ast *nc = parseOperations(allocator, current, &back);
@@ -375,7 +388,7 @@ ast *parseDecl(AllocatorV allocator, slice(Token) tokens) { // ... : ... (;|= ..
 
 ast *parseBBlock(AllocatorV allocator, u8 *loc, slice(Token) tokens) { // {...}
   if_decl (var_ t, next_tok_balanced(allocator, tokens, t_comma))
-    error_Token(t[0], snprint(stdAlloc, "comma not allowed here"));
+    error_Tok(t[0], snprint(stdAlloc, "comma not allowed here"));
 
   usize count = balanced_count(allocator, tokens, t_semi);
   var_ rp = aCreate(allocator, ast *, count + 3);
@@ -392,13 +405,13 @@ ast *parseBBlock(AllocatorV allocator, u8 *loc, slice(Token) tokens) { // {...}
             : parseExpr(allocator, slice);
   }
   if (tokens.len)
-    error_Token(tokens.ptr[0], snprint(stdAlloc, "trailing semicolon required"));
+    error_Tok(tokens.ptr[0], snprint(stdAlloc, "trailing semicolon required"));
 
   return rp[0];
 }
 ast *parseABlock(AllocatorV allocator, u8 *loc, slice(Token) tokens) { // [...]
   if_decl (var_ t, next_tok_balanced(allocator, tokens, t_semi))
-    error_Token(t[0], snprint(stdAlloc, "semicolon not allowed here"));
+    error_Tok(t[0], snprint(stdAlloc, "semicolon not allowed here"));
 
   usize count = balanced_count(allocator, tokens, t_comma);
 
@@ -425,7 +438,7 @@ ast *parseABlock(AllocatorV allocator, u8 *loc, slice(Token) tokens) { // [...]
 }
 ast *parsePBlock(AllocatorV allocator, u8 *loc, slice(Token) tokens) { // (...)
   if_decl (var_ t, next_tok_balanced(allocator, tokens, t_semi))
-    error_Token(t[0], snprint(stdAlloc, "semicolon not allowed here"));
+    error_Tok(t[0], snprint(stdAlloc, "semicolon not allowed here"));
 
   usize count = balanced_count(allocator, tokens, t_comma);
 
@@ -463,7 +476,7 @@ ast *parseBlock(AllocatorV allocator, slice(Token) tokens) {
   if (Token_equal(tokens.ptr[0], t_lparen))
     return parsePBlock(allocator, first_char, inner);
 
-  error_Token(tokens.ptr[0], snprint(stdAlloc, "expected block start token"));
+  error_Tok(tokens.ptr[0], snprint(stdAlloc, "expected block start token"));
   return nullptr;
 }
 #endif

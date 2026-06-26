@@ -1,7 +1,6 @@
 #include "ast.h"
 #include "form.h"
 #include <assert.h>
-#include <stdcountof.h>
 #include <string.h>
 #include <wheels/allocators/arenaAllocator.h>
 #include <wheels/bigint.h>
@@ -20,6 +19,7 @@ typedef enum builtin_enum : u8 {
   builtin_$uint,
   builtin_$noExpand, // x
   builtin_$expand,   // x
+  builtin_$if,       // x
   builtin_$while,    // x
   builtin_$type,
   builtin_$typeof,
@@ -53,7 +53,7 @@ REGISTER_PRINTER(builtin_id, {
 });
 typedef struct runtime runtime;
 typedef struct runtime_struct runtime_struct;
-typedef struct runtime_array *runtime_array;
+typedef struct runtime_arrayStruct *runtime_array;
 typedef struct runtime_bitset runtime_bitset;
 typedef struct Type Type;
 
@@ -79,7 +79,7 @@ typedef struct runtime_struct {
   fptr name;
   usize offset;
 } runtime_struct;
-typedef struct runtime_array {
+typedef struct runtime_arrayStruct {
   runtime t;
   usize count;
 } *runtime_array;
@@ -239,14 +239,17 @@ var_ typeof_int = Type_of(comptime, c_int, nullptr);
 var_ typeof_any = Type_of(comptime, c_any, {});
 var_ typeof_void = Type_of(runtime, r_void, {});
 
+typedef
+
+    struct {
+  Type t;
+  fptr name;
+  void *initial_value;
+  bool isconst;
+} comptime_funct_arg;
 typedef struct comptime_funct {
-  sentList_t(struct {
-    Type t;
-    fptr name;
-    void *initial_value;
-    bool isconst;
-  }) args;
-  itypeof(astBBlock, stmts) block;
+  sentList_t(comptime_funct_arg) args;
+  ast *block;
 } comptime_funct;
 REGISTER_PRINTER(comptime, {
   tu_match(
@@ -278,6 +281,7 @@ REGISTER_PRINTER(comptime, {
         USENAMEDPRINTER("Type", ret.t);
         PUTS(")");
       }),
+      case (c_any, _, { PUTS("any"); }),
       default(unreachable();)
   );
 });
@@ -383,7 +387,7 @@ var_ setOp = /*  */ (astOp_union){"="};
 
 bigint astStr_ton(AllocatorV allocator, fptr str) {
   bigint res = nullptr;
-  if (str.len > 2 && fptr_eq(slice_split(str, (0, 2))[0], "0x"))
+  if (str.len > 2 && fptr_eq((slice_split(str, (0, 2))[0]), "0x"))
     res = BInt.from.fptr(allocator, 16, slice_split(str, (2, -1))[0]);
   else if (str.len > 2 && fptr_eq(slice_split(str, (0, 2))[0], "0b"))
     res = BInt.from.fptr(allocator, 2, slice_split(str, (2, -1))[0]);
@@ -911,6 +915,7 @@ bigint value_toI(AllocatorV alloc, EState *evs, value vv) {
 void coerce_value(EState *s, value *vv, Type *expected) {
   assertMessage(vv);
   if (!expected) return;
+  // println("coercing {Type} to {Type}", value_acess(*vv).t, expected[0]);
   if (Type_eq(expected[0], typeof_any)) return;
   var_ v = value_ap(vv);
 
@@ -966,6 +971,20 @@ void coerce_value(EState *s, value *vv, Type *expected) {
           .ptr
   );
 }
+bool value_isType(value vv) {
+  var_ v = value_acess(vv);
+  if (!tu_is(comptime, v.t)) return false;
+  var_ c = tu_catch(comptime, v.t, return false;);
+  tu_match(
+      c,
+      case (c_int, i, return !i;),
+      case (c_any, _, return true;),
+      case (c_ast, a, return !a;),
+      case (c_Type, t, return true;),
+      case (c_funct, f, return f && !f->block;),
+      default(return false;)
+  );
+}
 Type value_toType(EState *s, ast err_loc, value vv) {
   var_ v = value_acess(vv);
   tu_match(
@@ -974,12 +993,12 @@ Type value_toType(EState *s, ast err_loc, value vv) {
         tu_match(
             c,
             case (c_int, i, {
-              if (i) error_ast(err_loc, snprint(stdAlloc, "1:this is a value not a type"));
+              if (i) goto not_a_type;
               return typeof_int;
             }),
             case (c_any, a, { return typeof_any; }),
             case (c_ast, a, {
-              if (a) error_ast(err_loc, snprint(stdAlloc, "2:this is a value not a type"));
+              if (a) goto not_a_type;
               return typeof_ast;
             }),
             case (c_Type, t, return t ? t[0] : typeof_type;),
@@ -989,20 +1008,18 @@ Type value_toType(EState *s, ast err_loc, value vv) {
               defer { aFree(allocator, av, sizeof(*av)); };
               if (f && !f->block)
                 return Type__(s, (Type)tu_of(comptime, tu_of(c_funct, av)));
+              goto not_a_type;
             }),
-            default(error_ast(err_loc, snprint(stdAlloc, "3:this is a value not a type"));)
+            default({not_a_type : } error_ast(err_loc, snprint(stdAlloc, "3:this is a value not a type"));)
         );
       }),
       default(error_ast(err_loc, snprint(stdAlloc, "4:this is a value not a type"));)
   );
   error_ast(err_loc, snprint(stdAlloc, "5:this is a value not a type"));
 }
-value Type_toValue(EState *s, ast err_loc, Type t) {
-  var_ allocator = state_last_allocator(s);
-  var_ av = aValue(allocator, t);
-  defer { aFree(allocator, av, sizeof(*av)); };
 
-  return (value){0, Type__(s, Type_of(comptime, c_Type, av))}; // TODO
+value Type_toValue(EState *s, ast err_loc, Type t) {
+  return (value){0, Type__(s, Type_of(comptime, c_Type, TypeP__(s, t)))};
 }
 value eval(
     EState *evalState,
@@ -1055,7 +1072,7 @@ value eval_fncall(
 ) {
   var_ allocator = state_last_allocator(evalState);
 
-  AllocatorV arena = arena_new_ext(allocator, 1024);
+  AllocatorV arena = arena_new_ext(allocator, 128);
   defer { arena_clear(arena); };
 
   var_ argsList = ast_match(arena, args, fp("P+a"));
@@ -1102,9 +1119,9 @@ value eval_fncall(
     state_set(evalState, vla_params[0][i].name, value_acess(eval_args[i]));
 
   bool rflag = false;
-  var_ bb = (astBBlock){.stmts = f->block};
+  // var_ bb = (astBBlock){.stmts = f->block};
 
-  value res = eval(evalState, nullptr, (ast)tu_of(astBBlock, bb), &rflag);
+  value res = eval(evalState, nullptr, f->block[0], &rflag);
   coerce_value(evalState, &res, &ret_type);
 
   if_tu_is (var_ rt, runtime, value_acess(res).t) {
@@ -1130,51 +1147,48 @@ value state_getId(EState *s, astId id) {
   if (fptr_eq(id, "@uqot")) return /*  */ (value){0, (Type)tu_of(builtin, builtin_$expand)};
   if (fptr_eq(id, "struct")) return /* */ (value){0, (Type)tu_of(builtin, builtin_struct)};
   if (fptr_eq(id, "@while")) return /* */ (value){0, (Type)tu_of(builtin, builtin_$while)};
+  if (fptr_eq(id, "@if")) return /*    */ (value){0, (Type)tu_of(builtin, builtin_$if)};
   if (fptr_eq(id, "@ast")) return /*   */ (value){0, (Type)tu_of(builtin, builtin_$ast)};
   if (fptr_eq(id, "@int")) return /*   */ (value){0, (Type)tu_of(builtin, builtin_$int)};
   if (fptr_eq(id, "@uint")) return /*  */ (value){0, (Type)tu_of(builtin, builtin_$uint)};
   if (fptr_eq(id, "@sint")) return /*  */ (value){0, (Type)tu_of(builtin, builtin_$sint)};
   if (fptr_eq(id, "@any")) return /*   */ (value){0, (Type)tu_of(builtin, builtin_$any)};
   if (fptr_eq(id, "@type")) return /*  */ (value){0, (Type)tu_of(builtin, builtin_$type)};
+  if (fptr_eq(id, "@typeof")) return /**/ (value){0, (Type)tu_of(builtin, builtin_$typeof)};
   if (fptr_eq(id, "return")) return /* */ (value){0, (Type)tu_of(builtin, builtin_return)};
   if (fptr_eq(id, "fn")) return /*     */ (value){0, (Type)tu_of(builtin, builtin_fn)};
   if (fptr_eq(id, "struct")) return /* */ (value){0, (Type)tu_of(builtin, builtin_struct)};
   error_ast((ast)tu_of(astId, id), snprint(stdAlloc, "unidentified symbol '{slice(c8)}'", id));
 }
-// Type get_ast_type(EState *s, ast part) {
-//   var_ allocator = state_last_allocator(s);
-//   tu_match(
-//       part,
-//       case (astId, id, {var_ val =state_getId(s, id);  return value_acess(val).t; }),
-//       case (astNumber, n, return typeof_int;),
-//       case (astString, str, {
-//         var_ arrt = aValue(allocator, ((ptrstype(r_arr)){runtime_of(r_sint, 8), astStr_len(str)}));
-//         defer { aFree(allocator, arrt, sizeof(*arrt)); };
-//         return Type__(s, Type_of(runtime, r_arr, arrt));
-//       }),
-//       case (astOp, op, {
-//         if (op.number_rep == setOp.num) return get_ast_type(s, op.left[0]);
-//         if (EQUAL_ANY(op.number_rep, addOp.num, subOp.num, mulOp.num, divOp.num))
-//           return typeof_int;
-//         if (op.number_rep == callOp.num) {
-//           var_ fn_val = eval(s, nullptr, op.left[0], retflag);
-//           if_tu_is (var_ c, comptime, value_acess(fn_val).t)
-//             if_tu_is (var_ f, c_funct, c) {
-//               var_ sl = sentList_length(f->args, sizeof(*f->args));
-//               return sl ? f->args[sl - 1].t : typeof_void;
-//             }
-//         }
-//         return typeof_void;
-//       }),
-//       case (astBBlock, bb, {
-//         var_ vla = sentList_vla(bb.stmts);
-//         usize c = countof(vla[0]);
-//         if (c == 0) return typeof_void;
-//         return get_ast_type(s, vla[0][c - 1][0]);
-//       }),
-//       default(return typeof_void;)
-//   );
-// }
+Type Typeof_value(EState *s, value vv) {
+  var_ v = value_acess(vv);
+  tu_match(
+      v.t,
+      case (comptime, c, {
+        tu_match(
+            c,
+            case (c_int, _, return typeof_int;),
+            case (c_ast, _, return typeof_ast;),
+            case (c_Type, _, return typeof_type;),
+            case (c_any, _, return typeof_any;),
+
+            case (c_funct, f, {
+              if (!f || !f->block) return v.t;
+
+              var_ alloc = state_last_allocator(s);
+              var_ sig = aValue(alloc, *f);
+              defer { aFree(alloc, sig, sizeof(*sig)); };
+              sig->block = nullptr;
+              return Type__(s, Type_of(comptime, c_funct, sig));
+            }),
+
+            case (c_struct, _, return v.t;),
+            default(assertMessage(false, "unhandled comptime typeof");)
+        );
+      }),
+      default(return v.t;),
+  );
+}
 value eval_call(
     EState *evalState,
     value left,
@@ -1207,7 +1221,7 @@ value eval_call(
 
         var_ place = state_stack_current(evalState[0]);
 
-        var_ loop_arena = arena_new_ext(allocator, 1024);
+        var_ loop_arena = arena_new_ext(allocator, 128);
         defer { arena_cleanup(loop_arena); };
 
         while (true) {
@@ -1240,18 +1254,64 @@ value eval_call(
         }
         return (value){0, typeof_void};
       }
+      case builtin_$if: {
+        var_ argsList =
+            tu_catch(
+                astPBlock,
+                args,
+                error_ast(
+                    args,
+                    snprint(stdAlloc, "expected parenthesis with 2 statements")
+                )
+            )
+                .stmts;
+        if (sentList_length(argsList, sizeof(argsList[0])) != 2)
+          error_ast(args, snprint(stdAlloc, "expected 2 args"));
+
+        ast cond = argsList[0][0];
+        ast body = argsList[1][0];
+
+        // println("expect {Type} for {ast}", ctype, &cond);
+
+        var_ place = state_stack_current(evalState[0]);
+
+        var_ loop_arena = arena_new_ext(allocator, 128);
+        defer { arena_cleanup(loop_arena); };
+
+        var_ temp_scope = msHmap_init(loop_arena, rvalue);
+        mList_push(evalState->scopes, temp_scope);
+        defer { mList_pop(evalState->scopes); };
+
+        state_stack_set(evalState, place);
+        bool rf = false;
+
+        var_ cond_val = eval(evalState, &typeof_int, cond, &rf);
+        if (rf) {
+          *retflag = true;
+          return cond_val;
+        }
+
+        var_ cond_int = value_toI(loop_arena, evalState, cond_val);
+        if (!cond_int)
+          error_ast(cond, snprint(stdAlloc, "condition must evaluate to an integer"));
+
+        if (bigint_cmp(cond_int, nullptr)) {
+
+          value last_val = eval(evalState, &typeof_any, body, &rf);
+          if (rf) {
+            *retflag = true;
+            return last_val;
+          }
+        }
+
+        return (value){0, typeof_void};
+      }
+
       case builtin_$typeof: {
-        assertMessage(false, "unimplemented");
-        // var_ arena = arena_new_ext(allocator, 1024);
-        // defer { arena_clear(arena); };
-        //
-        // var_ argsList = ast_match(arena, args, fp("P+a"));
-        // if (!argsList || msList_len(argsList) != 1)
-        //   error_ast(args, snprint(stdAlloc, "@typeof expects exactly 1 argument"));
-        //
-        // var_ av = aValue(allocator, t);
-        // defer { aFree(allocator, av, sizeof(av)); };
-        // return (value){0, Type__(evalState, Type_of(comptime, c_Type, av))};
+        bool r2 = false;
+        value res = eval(evalState, nullptr, args, &r2);
+        assertMessage(!r2, "returned inside a typeof ");
+        return (value){0, Typeof_value(evalState, res)};
       }
       case builtin_$noExpand: {
         var_ pb = tu_catch(
@@ -1266,22 +1326,27 @@ value eval_call(
       }
       case builtin_$expand: {
         bool rf = false;
-        var_ evaled_arg = eval(evalState, nullptr, args, &rf);
+        var_ evaled_arg = eval(evalState, &typeof_ast, args, &rf);
         if (rf) {
           *retflag = true;
           return evaled_arg;
         }
 
         var_ val = value_acess(evaled_arg);
-        if_tu_is (var_ c_val, comptime, val.t) {
+        if_tu_is (var_ c_val, comptime, val.t)
           if_tu_is (var_ ast_ptr, c_ast, c_val) {
             if (!ast_ptr) error_ast(args, snprint(stdAlloc, "null ast passed to @uqot"));
             return eval(evalState, nullptr, *ast_ptr, retflag);
           }
-        } else
-          // println("couldnt get an ast, using {Type} ", value_acess(evaled_arg).t);
-          return evaled_arg;
-        error_ast(args, snprint(stdAlloc, "unreachable?"));
+
+        error_ast(
+            args,
+            snprint(
+                stdAlloc,
+                "error expanding {Type}",
+                val.t,
+            )
+        );
       }
       case builtin_$ast:
         return (value){0, typeof_ast};
@@ -1337,7 +1402,7 @@ value eval_call(
         return res;
       }
       case builtin_fn: {
-        AllocatorV arena = arena_new_ext(allocator, 1024);
+        AllocatorV arena = arena_new_ext(allocator, 128);
         defer { arena_clear(arena); };
 
         if_tu_is (var_ sts, astPBlock, args) {
@@ -1364,6 +1429,7 @@ value eval_call(
           var_ av = aValue(allocator, rfunc);
           defer { aFree(allocator, av, sizeof(*av)); };
           var_ rt = Type__(evalState, Type_of(comptime, c_funct, av));
+          // println("made function type : {Type}", rt);
           return (value){0, rt};
         } else error_ast(args, snprint(stdAlloc, "expected parenthesized args"));
       }
@@ -1376,13 +1442,12 @@ value eval_call(
         c_val,
         case (c_funct, f, {
           if (!f->block) {
-            if_tu_is (var_ bb, astBBlock, args) {
-              var_ rfunc = *f;
-              rfunc.block = tu_assert(astBBlock, args).stmts;
-              var_ av = aValue(allocator, rfunc);
-              defer { aFree(allocator, av, sizeof(*av)); };
-              return (value){0, Type__(evalState, Type_of(comptime, c_funct, av))};
-            }
+            var_ rfunc = *f;
+            rfunc.block = aValue(allocator, args);
+            var_ av = aValue(allocator, rfunc);
+            defer { aFree(allocator, av, sizeof(*av)); };
+
+            return (value){0, Type__(evalState, Type_of(comptime, c_funct, av))};
             error_ast(args, snprint(stdAlloc, "expected block for function body"));
           } else
             return eval_fncall(evalState, f, args);
@@ -1429,6 +1494,7 @@ value eval_call(
           .ptr
   );
 }
+
 value eval_op(
     EState *evalState,
 
@@ -1438,6 +1504,7 @@ value eval_op(
 
     bool retflag[1]
 ) {
+  // TODO switch to the actual operation as the name
   var_ all_operations = &(struct {char* name ; astOp_union un; }[]){
       {"call", {"()"}},
       {"dot", {"."}},
@@ -1502,7 +1569,7 @@ value eval_op(
     var_ rv = eval(evalState, &value_acess(*left).t, right, retflag);
     if (*retflag) return rv;
 
-    var_ arena = arena_new_ext(allocator, 1024);
+    var_ arena = arena_new_ext(allocator, 128);
     defer { arena_cleanup(arena); };
 
     var_ lb = (bigint)value_toI(arena, evalState, lv);
@@ -1543,9 +1610,26 @@ value eval_op(
     }
     println("{bigint}", lb);
     return (value){0, Type_of(comptime, c_int, bigint_copy(allocator, lb))};
+  } else if (EQUAL_ANY(op, notOp.num, bnotOp.num, )) {
+    assertMessage(!left, "not and bnot dont expect left");
+    var_ rv = eval(evalState, &typeof_int, right, retflag);
+    if (*retflag) return rv;
+
+    var_ arena = arena_new_ext(allocator, 128);
+    defer { arena_cleanup(arena); };
+
+    var_ rb = (bigint)value_toI(arena, evalState, rv);
+    var_ mem = msList_vla(rb);
+    if (op == bnotOp.num) {
+      foreach (var_ l, range(mem[0], mem[1]))
+        *l = ~*l;
+      return (value){0, Type_of(comptime, c_int, bigint_copy(allocator, rb))};
+    } else
+      return (value){0, Type_of(comptime, c_int, bigint_from(allocator, !bigint_cmp(rb, 0)))};
   } else if (op == dotOp.num) {
     assertMessage(left);
-    astId prop = tu_catch(astId, right, error_ast(right, snprint(stdAlloc, "dot operator only takes left id")));
+    astId prop = tu_catch(astString, right, error_ast(right, snprint(stdAlloc, "dot operator only takes left string")));
+    prop = slice_split(prop, (1, prop.len - 1))[0];
     // {fake ast operations
     if_tu_is (var_ ctv, comptime, value_ap(left)->t)
       if_tu_is (var_ astv, c_ast, ctv) {
@@ -1564,18 +1648,11 @@ value eval_op(
           var_ operation = tu_catch(
               astOp,
               aval,
-              error_ast(
-                  right,
-                  snprint(
-                      stdAlloc,
-                      "{astTag} is not an operation",
-                      aval.tag
-                  )
-              )
+              return (value){0, Type_of(comptime, c_int, bigint_from(allocator, 0))};
           );
           if (!isgeneralOp)
             if (operation.number_rep != all_operations[0][opIdx].un.num)
-              error_ast(right, snprint(stdAlloc, "expected {cstr} , got {cstr}", &all_operations[0][opIdx].un.num, &operation.number_rep));
+              return (value){0, Type_of(comptime, c_int, bigint_from(allocator, 0))};
 
           return (value){
               0,
@@ -1589,7 +1666,11 @@ value eval_op(
               ),
           };
         } else if (EQUAL_ANY(1, fptr_eq(prop, "left"), fptr_eq(prop, "right"))) {
-          var_ operation = tu_catch(astOp, aval);
+          var_ operation = tu_catch(
+              astOp,
+              aval,
+              return (value){0, Type_of(comptime, c_int, bigint_from(allocator, 0))}
+          );
           var_ wik =
               fptr_eq(prop, "left")
                   ? operation.left
@@ -1607,9 +1688,34 @@ value eval_op(
         }
       }
     // }
-    assertMessage(false, "unreachable op?");
+    assertMessage(false, "unreachable op?%s", &op);
+  } else if (op == eqOp.num || op == neqOp.num) {
+    assertMessage(left);
+    var_ rv = eval(evalState, nullptr, right, retflag);
+    if (*retflag) return rv;
+
+    var_ alloc = state_last_allocator(evalState);
+    bool is_eq = false;
+
+    Type lt = Typeof_value(evalState, *left);
+    Type rt = Typeof_value(evalState, rv);
+
+    if (value_isType(*left) && value_isType(rv)) {
+      is_eq = Type_eq(value_toType(evalState, right, *left), value_toType(evalState, right, rv));
+    } else {
+      var_ arena = arena_new_ext(alloc, 128);
+      defer { arena_cleanup(arena); };
+      var_ lb = value_toI(arena, evalState, *left);
+      var_ rb = value_toI(arena, evalState, rv);
+      if (lb && rb) {
+        is_eq = (bigint_cmp(lb, rb) == 0);
+      } else if (Type_eq(Typeof_value(evalState, *left), Typeof_value(evalState, rv)) && tu_is(runtime, value_acess(*left).t)) {
+        is_eq = !memcmp(state_fromVal(evalState, *left), state_fromVal(evalState, rv), Type_sizeof(value_acess(*left).t));
+      }
+    }
+    return (value){0, Type_of(comptime, c_int, bigint_from(alloc, op == eqOp.num ? is_eq : !is_eq))};
   }
-  assertMessage(false, "unreachable?");
+  assertMessage(false, "unreachable op %s", &op);
 }
 value eval(
     EState *evalState,
@@ -1666,21 +1772,18 @@ value eval(
         var_ type = (Type){};
         if (decl.type) {
           var_ t = eval(evalState, &typeof_type, decl.type[0], retflag);
-          if (*retflag) {
-            result = t;
-            goto coersion;
-          }
+          if (*retflag) return t;
           type = value_toType(evalState, decl.type[0], t);
         }
+
         var_ val = (value){};
         if (decl.value) {
           var_ v = eval(evalState, decl.type ? &type : nullptr, decl.value[0], retflag);
-          if (*retflag) {
-            result = v;
-            goto coersion;
-          }
+          if (*retflag) return v;
           val = v;
-        }
+        } else if (decl.type)
+          val = value_(state_create(evalState, type, false));
+
         value_acess(val).isConst = decl.is_const;
         state_set(evalState, tu_assert(astId, decl.name[0]), value_acess(val));
         result = val;
@@ -1697,7 +1800,7 @@ value eval(
           foreach (var_ st, vlap(vla)) {
             if (st)
               result = eval(evalState, expected, *st, retflag);
-            if (*retflag) goto coersion;
+            if (*retflag) return result;
           }
         }
       }),
@@ -1706,9 +1809,6 @@ value eval(
       }),
 
   );
-  {
-  coersion:
-  }
 
   // auto-uqot
   if (expected && !Type_eq(*expected, typeof_ast)) {

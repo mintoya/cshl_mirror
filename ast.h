@@ -92,24 +92,23 @@ static inline slice(u8) readFileAlloc(AllocatorV allocator, const char *filename
 }
 _Static_assert(sizeof((astOp *)NULL)->symLiteral == sizeof((astOp *)NULL)->number_rep);
 
+typedef enum token : u8 {
+  t_operator,
+  t_punctuation,
+  t_number,
+  t_string,
+
+  t_identifier,
+}token ;
 typedef struct Token {
   fptr s;
-  enum token : u8 {
-    t_operator,
-    t_punctuation,
-    t_number,
-    t_string,
-
-    t_identifier,
-  } kind;
+  enum token kind;
 } Token;
 
 sliceDef(Token);
 typedef slice(Token) slice_Tokens;
 sliceDef(slice_Tokens);
 typedef slice(slice_Tokens) Tokens_2d;
-
-typedef enum token token;
 
 REGISTER_PRINTER(Token, {
   switch (in.kind) {
@@ -254,7 +253,7 @@ struct {
 
     {"|>", 5},
 
-    {"=", 8},
+    {"=",  ~(usize)0 },
 
 };
 
