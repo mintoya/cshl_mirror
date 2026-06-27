@@ -35,6 +35,9 @@ REGISTER_PRINTER(builtin_id, {
       // clang-format off
     case builtin_none/*     */:PUTS("none/invalid")/**/;break;
 
+    case builtin_$int/*    */:PUTS("$int")/*     */;break;
+    case builtin_$typeof/* */:PUTS("$typeof")/*     */;break;
+    case builtin_$if/*     */:PUTS("$if")/*     */;break;
     case builtin_$any/*     */:PUTS("$any")/*     */;break;
     case builtin_$sint/*    */:PUTS("$sint")/*    */;break;
     case builtin_$uint/*    */:PUTS("$uint")/*    */;break;
@@ -511,6 +514,12 @@ bool comptime_type_eq(comptime a, comptime b) {
   if (fptr_eq(((fptr){sizeof(a), (u8 *)&a}), ((fptr){sizeof(b), (u8 *)&b}))) return true;
   tu_match(
       a,
+      case (c_invalid, _, {
+        return true; // TODO probably fine
+      }),
+      case (c_struct, _, {
+        assertMessage(false, "unimplemented"); // TODO
+      }),
       case (c_any, _, {
         return true; // TODO probably fine
       }),
@@ -1196,6 +1205,7 @@ value eval_call(
   assertMessage(retflag, "must have return flag");
   assertMessage(!*retflag, "return flag is already set?");
   var_ allocator = state_last_allocator(evalState);
+  // {builtins
   if_tu_is (var_ builtin, builtin, value_acess(left).t) {
     switch (builtin) {
       case builtin_$while: {
@@ -1435,6 +1445,8 @@ value eval_call(
         assertMessage(false, "unhandled builtin %i", builtin);
     }
   }
+  // }
+
   if_tu_is (var_ c_val, comptime, value_acess(left).t) {
     tu_match(
         c_val,
@@ -1456,6 +1468,7 @@ value eval_call(
           var_ td = (value){.value = {.t = t[0]}};
           return eval_call(evalState, td, args, retflag);
         }),
+        default(goto fail;),
     );
   }
   //
@@ -1574,7 +1587,7 @@ value eval_op(
     var_ rb = (bigint)value_toI(arena, evalState, rv);
     BInt.trim(&lb);
     BInt.trim(&rb);
-    print("{bigint} {cstr} {bigint}  = ", lb, (char *)&op, rb);
+    // print("{bigint} {cstr} {bigint}  = ", lb, (char *)&op, rb);
     if (!lb || !rb) error_ast(right, snprint(stdAlloc, "could'nt convert these to integers"));
     if (
         msList_len(lb) <= sizeof(umax) / sizeof(*lb) &&
@@ -1606,7 +1619,7 @@ value eval_op(
         lb = BInt.div(arena, lb, rb).mod;
       else assertMessage(false, "unreachable?");
     }
-    println("{bigint}", lb);
+    // println("{bigint}", lb);
     return (value){0, Type_of(comptime, c_int, bigint_copy(allocator, lb))};
   } else if (EQUAL_ANY(op, notOp.num, bnotOp.num, )) {
     assertMessage(!left, "not and bnot dont expect left");
