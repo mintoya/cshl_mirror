@@ -1,9 +1,9 @@
-#include "int.h"
 #include <stdlib.h>
 #include <wheels/cmdline_parser.h>
 #include <wheels/examples/includeAll.c>
 
 #include "ast.h"
+#include "int/int.h"
 #include "tok1.h"
 #include "tok2.h"
 

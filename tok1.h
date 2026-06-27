@@ -17,6 +17,7 @@ static inline bool isAlphaNum(u8 i) {
     case '_':
     case '$':
     case '?':
+    case '!':
       return true;
     default:
       return false;

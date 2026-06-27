@@ -13,13 +13,12 @@ u32:type:@uint(32);
 u16:type:@uint(16);
 u8 :type:@uint(8);
 
-if : fn((args : ast)) ;
-if = fn((args : ast)) {
+if! : fn((args : ast)) ;
+if! = fn((args : ast)) {
   call :: args."op"."call";
   cond :: call."left";
   bodies:: call."right";
 
-  
   has_else :: @typeof(bodies."not") == ast;
 
   @if(has_else, {
@@ -33,8 +32,18 @@ if = fn((args : ast)) {
   });
 };
 
+while! :: fn((args : ast)){
+  @while(
+    args."op"."call"."left",
+    args."op"."call"."right",
+  );
+};
 
 
-if (1) {
+
+if! (1) {
   5 * 10;
 };
+
+j := 5000;
+while! j {j = j - 1;};

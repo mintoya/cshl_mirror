@@ -1,5 +1,5 @@
-#include "ast.h"
-#include "form.h"
+#include "../ast.h"
+#include "../form.h"
 #include <assert.h>
 #include <string.h>
 #include <wheels/allocators/arenaAllocator.h>
@@ -10,7 +10,6 @@
 #include <wheels/shmap.h>
 #include <wheels/smallstream.h>
 #include <wheels/tu_macros.h>
-#define log(msg, ...) println("(log:{cstr})\t" msg, (char *)__FUNCTION__, __VA_ARGS__)
 // {types
 typedef enum builtin_enum : u8 {
   builtin_none,
@@ -692,7 +691,6 @@ u8 *state_fromVal(EState *s, value v) {
   return state_fromV(s, value_acess(v).rtvalue);
 }
 rvalue state_create(EState *s, Type type, bool isHeap) {
-  // log("creating : {Type}", type);
   usize size = lineup(Type_sizeof(type), alignof(myAlign));
   // assertMessage(!!isHeap ^ !!size);
   var_ res = (rvalue){
