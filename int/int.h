@@ -921,6 +921,10 @@ bigint value_toI(AllocatorV alloc, EState *evs, value vv) {
 }
 void coerce_value(EState *s, value *vv, Type *expected) {
   assertMessage(vv);
+  // if (vv->lvalue) {
+  //   vv->value = vv->lvalue[0];
+  //   vv->lvalue = 0;
+  // }
   if (!expected) return;
   // println("coercing {Type} to {Type}", value_acess(*vv).t, expected[0]);
   if (Type_eq(expected[0], typeof_any)) return;
@@ -947,7 +951,8 @@ void coerce_value(EState *s, value *vv, Type *expected) {
       var_ b = tu_assert(c_int, tu_assert(comptime, v->t));
       var_ alloc = state_last_allocator(s);
       usize bytes = Type_sizeof(*expected);
-      bigint_expand(alloc, &b, bytes / sizeof(*b) + 1);
+      if (msList_len(b) < bytes / sizeof(*b) + 1)
+        bigint_expand(alloc, &b, bytes / sizeof(*b) + 1);
 
       rvalue nv = state_create(s, *expected, false);
       memcpy(state_fromVal(s, value_(nv)), b, bytes);
@@ -1252,7 +1257,9 @@ value eval_call(
           if (!cond_int)
             error_ast(cond, snprint(stdAlloc, "condition must evaluate to an integer"));
 
-          if (!bigint_cmp(cond_int, nullptr)) break;
+          var_ cmp = bigint_cmp(cond_int, nullptr);
+          // println("comparing {bigint} to 0  : {i8} ", cond_int, cmp);
+          if (!cmp) break;
 
           value last_val = eval(evalState, &typeof_any, body, &rf);
           if (rf) {
@@ -1369,7 +1376,8 @@ value eval_call(
 
         var_ resn = astStr_ton(allocator, tu_assert(astNumber, mat[0][0]));
         defer { msList_deInit(allocator, resn); };
-        bigint_expand(allocator, &resn, sizeof(u16) / sizeof(*resn) + 1);
+        if (msList_len(resn) < sizeof(u16) / sizeof(*resn) + 1)
+          bigint_expand(allocator, &resn, sizeof(u16) / sizeof(*resn) + 1);
 
         u16 res = 0;
         memcpy(&res, resn, sizeof(res));
@@ -1587,7 +1595,7 @@ value eval_op(
     var_ rb = (bigint)value_toI(arena, evalState, rv);
     BInt.trim(&lb);
     BInt.trim(&rb);
-    // print("{bigint} {cstr} {bigint}  = ", lb, (char *)&op, rb);
+    print("{bigint} {cstr} {bigint}  = ", lb, (char *)&op, rb);
     if (!lb || !rb) error_ast(right, snprint(stdAlloc, "could'nt convert these to integers"));
     if (
         msList_len(lb) <= sizeof(umax) / sizeof(*lb) &&
@@ -1619,7 +1627,7 @@ value eval_op(
         lb = BInt.div(arena, lb, rb).mod;
       else assertMessage(false, "unreachable?");
     }
-    // println("{bigint}", lb);
+    println("{bigint}", lb);
     return (value){0, Type_of(comptime, c_int, bigint_copy(allocator, lb))};
   } else if (EQUAL_ANY(op, notOp.num, bnotOp.num, )) {
     assertMessage(!left, "not and bnot dont expect left");
