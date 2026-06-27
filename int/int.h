@@ -728,7 +728,7 @@ value state_create(EState *s, Type type, bool isHeap) {
   return value_of(res);
 }
 void state_destroy(EState *s, value vv) {
-  if(vv.lvalue)return;
+  if (vv.lvalue) return;
   var_ v = value_acess(vv);
   if (tu_is(runtime, v.t) && lineup(Type_sizeof(v.t), alignof(myAlign)))
     if (v.rtvalue < 0) state_heap_free(s, -v.rtvalue);
@@ -805,15 +805,6 @@ void state_push(EState *s) {
 void state_pop(EState *s) {
   var_ nextScope = mList_pop(s->scopes);
   var_ allocator = msHmap_allocator(nextScope);
-  var_ sb = msList_stackBuffer(struct {bigint ip;AllocatorV allocator; }[10]);
-  var_ tofree = msList_initBuffer(sb);
-  defer { msList_deInit(stdAlloc, tofree); };
-  foreach (var_ item, iter(mHmap_iterator(s->bigint_refs, bigint)))
-    if (allocator == item->val)
-      msList_push(stdAlloc, tofree, ((typeof(*tofree)){.allocator = item->val, .ip = item->key}));
-  foreach (var_ item, vlap(msList_vla(tofree)))
-    msList_deInit(item.allocator, item.ip);
-
   arena_cleanup(allocator);
 }
 void state_pushFn(EState *s, comptime_funct *fn) {
@@ -1131,7 +1122,7 @@ value eval_fncall(
   var_ allocator = state_last_allocator(evalState);
 
   AllocatorV arena = arena_new_ext(allocator, 128);
-  defer { arena_clear(arena); };
+  defer { arena_cleanup(arena); };
 
   var_ argsList = ast_match(arena, args, fp("P+a"));
   if (!argsList) {
@@ -1299,7 +1290,7 @@ value eval_call(
 
           var_ cond_int = value_toI(loop_arena, evalState, cond_val);
           if (!cond_int)
-            error_ast(cond, snprint(stdAlloc, "condition must evaluate to an integer")); // TODO actual types 
+            error_ast(cond, snprint(stdAlloc, "condition must evaluate to an integer")); // TODO actual types
           var_ cmp = bigint_cmp(cond_int, nullptr);
           if (!cmp) break;
 
