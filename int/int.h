@@ -448,14 +448,16 @@ typedef struct rvalue_struct {
 
 typedef struct value_struct {
   rvalue *lvalue;
-  rvalue value;
+  rvalue rvalue;
 } value; // a tagged union would be the same size anyway
 // rvalue value_acess(value v) { v.lvalue ? *v.lvalue : v.value; }
-#define value_acess(v) (*((v).lvalue ? (v).lvalue : &(v).value))
-#define value_ap(val) (val->lvalue ? val->lvalue : &val->value)
-value value_rvalue(rvalue r) { return (value){.value = r}; }
-value value_lvalue(rvalue *v) { return (value){.lvalue = v}; }
-#define value_(v) _Generic((typeof(v)){}, rvalue: value_rvalue, rvalue *: value_lvalue)(v)
+#define value_acess(v) (*((v).lvalue ? (v).lvalue : &(v).rvalue))
+#define value_ap(val) (val->lvalue ? val->lvalue : &val->rvalue)
+#define value_of(v)                                                 \
+  ((value){                                                         \
+      .lvalue = _Generic((v), rvalue *: (v), default: (rvalue *)0), \
+      .rvalue = _Generic((v), rvalue: (v), default: (rvalue){0})    \
+  })
 
 bool runtime_type_eq(runtime a, runtime b) {
   if (a.tag != b.tag) return false;
@@ -602,6 +604,7 @@ typedef struct eval_state {
   }) heap_state; // sorted
 
   mHmap(umax, msList(fptr)) buffers;
+  mHmap(bigint, AllocatorV) bigint_refs;
 } EState;
 EState state_init(AllocatorV allocator) {
   var_ l = mList_init(allocator, scope);
@@ -613,6 +616,7 @@ EState state_init(AllocatorV allocator) {
       .heap = msList_init(allocator, u8, 512),
       .heap_state = msList_init(allocator, ptrstype(itypeof(EState, heap_state))),
       .buffers = mHmap_init(allocator, umax, msList(fptr), 100),
+      .bigint_refs = mHmap_init(allocator, bigint, AllocatorV, 100),
   };
 }
 
@@ -699,9 +703,13 @@ u8 *state_fromV(EState *s, iptr place) {
 u8 *state_fromVal(EState *s, value v) {
   return state_fromV(s, value_acess(v).rtvalue);
 }
-rvalue state_create(EState *s, Type type, bool isHeap) {
+AllocatorV state_last_allocator(EState *s) {
+  assertMessage(mList_len(s->scopes));
+  return msHmap_allocator(mList_last(s->scopes));
+}
+
+value state_create(EState *s, Type type, bool isHeap) {
   usize size = lineup(Type_sizeof(type), alignof(myAlign));
-  // assertMessage(!!isHeap ^ !!size);
   var_ res = (rvalue){
       .t = type,
   };
@@ -710,18 +718,77 @@ rvalue state_create(EState *s, Type type, bool isHeap) {
         isHeap
             ? -state_heap_alloc(s, size)
             : state_stack_push(s, size);
-  return res;
+  if_tu_is (var_ vt, comptime, res.t)
+    if_tu_is (var_ inte, c_int, vt) {
+      var_ alloc = state_last_allocator(s);
+      var_ cpy = bigint_copy(alloc, inte);
+      res.t.comptime.c_int = cpy;
+      mHmap_set(s->bigint_refs, cpy, alloc);
+    }
+  return value_of(res);
 }
 void state_destroy(EState *s, value vv) {
+  if(vv.lvalue)return;
   var_ v = value_acess(vv);
   if (tu_is(runtime, v.t) && lineup(Type_sizeof(v.t), alignof(myAlign)))
     if (v.rtvalue < 0) state_heap_free(s, -v.rtvalue);
+  if_tu_is (var_ vt, comptime, v.t)
+    if_tu_is (var_ inte, c_int, vt) {
+      var_ alloc = mHmap_get(s->bigint_refs, inte);
+      assertMessage(alloc);
+      mHmap_rem(s->bigint_refs, inte);
+      msList_deInit(*alloc, inte);
+    }
 }
-AllocatorV state_last_allocator(EState *s) {
-  assertMessage(mList_len(s->scopes));
-  return msHmap_allocator(mList_last(s->scopes));
+value state_clone(EState *s, value v) {
+  tu_match(
+      value_acess(v).t,
+      case (comptime, ctim, {
+        return state_create(s, value_acess(v).t, false);
+      }),
+      case (runtime, rtim, {
+        var_ r = state_create(s, value_acess(v).t, false);
+        if (!tu_is(r_void, rtim)) {
+          var_ src = state_fromVal(s, v);
+          var_ dst = state_fromVal(s, r);
+          memcpy(dst, src, Type_sizeof(value_acess(v).t));
+        }
+        return r;
+      }),
+      case (builtin, bltin, { return v; }),
+  );
 }
-void state_set(EState *s, astId id, rvalue v) {
+void state_overwrite(EState *s, rvalue *to, value from) {
+  assertMessage(Type_eq(to->t, value_acess(from).t));
+  tu_match(
+      value_acess(from).t,
+      case (comptime, ctim, {
+        if_tu_is (var_ bint, c_int, ctim) {
+          var_ old_int = to->t.comptime.c_int;
+          var_ alloc = mHmap_get(s->bigint_refs, old_int);
+          var_ allocator = alloc ? *alloc : state_last_allocator(s);
+
+          if (alloc) {
+            mHmap_rem(s->bigint_refs, old_int);
+            msList_deInit(*alloc, old_int);
+          }
+
+          var_ new_int = bigint_copy(allocator, bint);
+          to->t.comptime.c_int = new_int;
+          mHmap_set(s->bigint_refs, new_int, allocator);
+        } else *to = value_acess(from);
+      }),
+      case (runtime, rtim, {
+        if (!tu_is(r_void, rtim)) {
+          var_ src = state_fromVal(s, from);
+          var_ dst = state_fromVal(s, value_of(to));
+          memcpy(dst, src, Type_sizeof(value_acess(from).t));
+        }
+      }),
+      default({ *to = value_acess(from); }),
+  );
+}
+void state_setStack(EState *s, astId id, rvalue v) {
   if (msHmap_get(mList_last(s->scopes), id))
     error_ast((ast)tu_of(astId, id), snprint(stdAlloc, "value in the same scope with the same name"));
   msHmap_set(mList_last(s->scopes), id, v);
@@ -738,6 +805,15 @@ void state_push(EState *s) {
 void state_pop(EState *s) {
   var_ nextScope = mList_pop(s->scopes);
   var_ allocator = msHmap_allocator(nextScope);
+  var_ sb = msList_stackBuffer(struct {bigint ip;AllocatorV allocator; }[10]);
+  var_ tofree = msList_initBuffer(sb);
+  defer { msList_deInit(stdAlloc, tofree); };
+  foreach (var_ item, iter(mHmap_iterator(s->bigint_refs, bigint)))
+    if (allocator == item->val)
+      msList_push(stdAlloc, tofree, ((typeof(*tofree)){.allocator = item->val, .ip = item->key}));
+  foreach (var_ item, vlap(msList_vla(tofree)))
+    msList_deInit(item.allocator, item.ip);
+
   arena_cleanup(allocator);
 }
 void state_pushFn(EState *s, comptime_funct *fn) {
@@ -755,6 +831,53 @@ comptime_funct *_Nullable state_last_callfn(EState *s) {
 }
 // }
 
+Type Type__(EState *s, Type t);
+bool value_isType(value vv) {
+  var_ v = value_acess(vv);
+  if (!tu_is(comptime, v.t)) return false;
+  var_ c = tu_catch(comptime, v.t, return false;);
+  tu_match(
+      c,
+      case (c_int, i, return !i;),
+      case (c_any, _, return true;),
+      case (c_ast, a, return !a;),
+      case (c_Type, t, return true;),
+      case (c_funct, f, return f && !f->block;),
+      default(return false;)
+  );
+}
+Type value_toType(EState *s, ast err_loc, value vv) {
+  var_ v = value_acess(vv);
+  tu_match(
+      v.t,
+      case (comptime, c, {
+        tu_match(
+            c,
+            case (c_int, i, {
+              if (i) goto not_a_type;
+              return typeof_int;
+            }),
+            case (c_any, a, { return typeof_any; }),
+            case (c_ast, a, {
+              if (a) goto not_a_type;
+              return typeof_ast;
+            }),
+            case (c_Type, t, return t ? t[0] : typeof_type;),
+            case (c_funct, f, {
+              var_ allocator = state_last_allocator(s);
+              var_ av = aValue(allocator, *f);
+              defer { aFree(allocator, av, sizeof(*av)); };
+              if (f && !f->block)
+                return Type__(s, (Type)tu_of(comptime, tu_of(c_funct, av)));
+              goto not_a_type;
+            }),
+            default({not_a_type : } error_ast(err_loc, snprint(stdAlloc, "3:this is a value not a type"));)
+        );
+      }),
+      default(error_ast(err_loc, snprint(stdAlloc, "4:this is a value not a type"));)
+  );
+  error_ast(err_loc, snprint(stdAlloc, "5:this is a value not a type"));
+}
 int fptr_cmp_bbs(const void *a, const void *b) {
   var_ af = *(fptr *)a;
   var_ bf = *(fptr *)b;
@@ -778,7 +901,7 @@ fptr fptr_store(EState *s, fptr f) {
 
   var_ i = bbsearch(&f, list, msList_len(list), sizeof(fptr), fptr_cmp_bbs);
   msList_ins(allocator, list, (fptr *)i.p - list, f);
-  mHmap_setManaged(s->buffers, 75, hash, list);
+  mHmap_setManaged(s->buffers, 40, 2, hash, list);
 
   return f;
 }
@@ -838,12 +961,11 @@ runtime runtime__(EState *s, runtime r) {
       default(assertMessage(false);),
   );
 }
-Type Type__(EState *s, Type t);
 comptime comptime__(EState *s, comptime c) {
   tu_match(
       c,
       case (c_invalid, _, return comptime_of(c_invalid, {});),
-      case (c_int, i, return comptime_of(c_int, i);), // TODO: bigints are never mutated
+      case (c_int, i, return comptime_of(c_int, i);),
       case (c_ast, a, return comptime_of(c_ast, a);),
       case (c_any, a, return comptime_of(c_any, {});),
       case (c_Type, t, {
@@ -885,6 +1007,7 @@ comptime comptime__(EState *s, comptime c) {
       default(assertMessage(false);),
   );
 }
+
 Type Type__(EState *s, Type t) {
   tu_match(
       t,
@@ -905,8 +1028,8 @@ bigint value_toI(AllocatorV alloc, EState *evs, value vv) {
       case (runtime, r, {
         tu_match(
             r,
-            case (r_sint, s, return BInt.from.bits(alloc, state_fromVal(evs, (value){.value = v}), Type_sizeof(v.t) * 8, true);),
-            case (r_uint, u, return BInt.from.bits(alloc, state_fromVal(evs, (value){.value = v}), Type_sizeof(v.t) * 8, false);),
+            case (r_sint, s, return BInt.from.bits(alloc, state_fromVal(evs, (value){.rvalue = v}), Type_sizeof(v.t) * 8, true);),
+            case (r_uint, u, return BInt.from.bits(alloc, state_fromVal(evs, (value){.rvalue = v}), Type_sizeof(v.t) * 8, false);),
             default(return nullptr;),
         );
       }),
@@ -921,113 +1044,36 @@ bigint value_toI(AllocatorV alloc, EState *evs, value vv) {
 }
 void coerce_value(EState *s, value *vv, Type *expected) {
   assertMessage(vv);
-  // if (vv->lvalue) {
-  //   vv->value = vv->lvalue[0];
-  //   vv->lvalue = 0;
-  // }
   if (!expected) return;
-  // println("coercing {Type} to {Type}", value_acess(*vv).t, expected[0]);
   if (Type_eq(expected[0], typeof_any)) return;
-  var_ v = value_ap(vv);
 
   if (Type_eq(typeof_void, expected[0])) {
-    *vv = (typeof(*vv)){.value = {.t = typeof_void}};
+    *vv = (typeof(*vv)){.rvalue = {.t = typeof_void}};
     return;
   }
-  if (Type_eq(v->t, *expected)) return;
-  if (Type_eq(typeof_type, expected[0])) {
-    if (Type_eq(typeof_any, v->t)) return;
-    if (Type_eq(typeof_ast, v->t)) return;
-    if (Type_eq(typeof_int, v->t)) return;
-    if_tu_is (var_ ct, comptime, v->t) // literal type of a thing
-      if_tu_is (var_ t, c_Type, ct) return;
-      else if_tu_is (var_ t, c_funct, ct)
-        if (!t->block) return;
-  }
-  // Comptime Int -> Runtime Int
-  if (Type_eq(typeof_int, v->t) && tu_is(runtime, expected[0])) {
-    var_ rt = tu_assert(runtime, *expected);
-    if (tu_is(r_sint, rt) || tu_is(r_uint, rt)) {
-      var_ b = tu_assert(c_int, tu_assert(comptime, v->t));
-      var_ alloc = state_last_allocator(s);
-      usize bytes = Type_sizeof(*expected);
-      if (msList_len(b) < bytes / sizeof(*b) + 1)
-        bigint_expand(alloc, &b, bytes / sizeof(*b) + 1);
+  if (Type_eq(value_ap(vv)->t, *expected)) return;
 
-      rvalue nv = state_create(s, *expected, false);
-      memcpy(state_fromVal(s, value_(nv)), b, bytes);
-      *v = nv;
-      return;
-    }
+  // TODO : check if this is fine
+  if (vv->lvalue) { // convert to rvalue
+    vv->rvalue = vv->lvalue[0];
+    vv->lvalue = 0;
   }
+  if (
+      Type_eq(typeof_type, expected[0]) &&
+      value_isType(*vv)
+  ) return;
 
-  // Runtime Int -> Comptime Int
-  if (tu_is(runtime, v->t) && Type_eq(typeof_int, *expected)) {
-    var_ rt = tu_assert(runtime, v->t);
-    if (tu_is(r_sint, rt) || tu_is(r_uint, rt)) {
-      var_ alloc = state_last_allocator(s);
-      var_ b = value_toI(alloc, s, value_(v));
-      *v = (rvalue){Type_of(comptime, c_int, b)};
-      return;
-    }
-  }
   {fail : } assertMessage(
       false,
       "unhandled coersion , %s",
       snprint(
           stdAlloc,
           "{Type}->{Type}",
-          v->t,
+          value_ap(vv)->t,
           expected[0]
       )
           .ptr
   );
-}
-bool value_isType(value vv) {
-  var_ v = value_acess(vv);
-  if (!tu_is(comptime, v.t)) return false;
-  var_ c = tu_catch(comptime, v.t, return false;);
-  tu_match(
-      c,
-      case (c_int, i, return !i;),
-      case (c_any, _, return true;),
-      case (c_ast, a, return !a;),
-      case (c_Type, t, return true;),
-      case (c_funct, f, return f && !f->block;),
-      default(return false;)
-  );
-}
-Type value_toType(EState *s, ast err_loc, value vv) {
-  var_ v = value_acess(vv);
-  tu_match(
-      v.t,
-      case (comptime, c, {
-        tu_match(
-            c,
-            case (c_int, i, {
-              if (i) goto not_a_type;
-              return typeof_int;
-            }),
-            case (c_any, a, { return typeof_any; }),
-            case (c_ast, a, {
-              if (a) goto not_a_type;
-              return typeof_ast;
-            }),
-            case (c_Type, t, return t ? t[0] : typeof_type;),
-            case (c_funct, f, {
-              var_ allocator = state_last_allocator(s);
-              var_ av = aValue(allocator, *f);
-              defer { aFree(allocator, av, sizeof(*av)); };
-              if (f && !f->block)
-                return Type__(s, (Type)tu_of(comptime, tu_of(c_funct, av)));
-              goto not_a_type;
-            }),
-            default({not_a_type : } error_ast(err_loc, snprint(stdAlloc, "3:this is a value not a type"));)
-        );
-      }),
-      default(error_ast(err_loc, snprint(stdAlloc, "4:this is a value not a type"));)
-  );
-  error_ast(err_loc, snprint(stdAlloc, "5:this is a value not a type"));
 }
 
 value Type_toValue(EState *s, ast err_loc, Type t) {
@@ -1128,7 +1174,7 @@ value eval_fncall(
   defer { state_stack_set(evalState, stack_checkpoint); };
 
   for (usize i = 0; i < arg_count; i++)
-    state_set(evalState, vla_params[0][i].name, value_acess(eval_args[i]));
+    state_setStack(evalState, vla_params[0][i].name, value_acess(eval_args[i]));
 
   bool rflag = false;
   // var_ bb = (astBBlock){.stmts = f->block};
@@ -1150,7 +1196,7 @@ value eval_fncall(
 value state_getId(EState *s, astId id) {
   foreach (var_ i, range(mList_len(s->scopes), 0))
     if_decl (var_ v, msHmap_get(mList_arr(s->scopes)[i - 1], id))
-      return value_(v);
+      return value_of(v);
 
   // if (fptr_eq(id, "@noexpand")) return /*   */ (value){0, (Type)tu_of(builtin, builtin_$noExpand)};
   // if (fptr_eq(id, "@expand")) return /*  */ (value){0, (Type)tu_of(builtin, builtin_$expand)};
@@ -1238,11 +1284,9 @@ value eval_call(
         defer { arena_cleanup(loop_arena); };
 
         while (true) {
+          state_push(evalState);
+          defer { state_pop(evalState); };
           arena_clear(loop_arena);
-
-          var_ temp_scope = msHmap_init(loop_arena, rvalue);
-          mList_push(evalState->scopes, temp_scope);
-          defer { mList_pop(evalState->scopes); };
 
           state_stack_set(evalState, place);
           bool rf = false;
@@ -1255,10 +1299,8 @@ value eval_call(
 
           var_ cond_int = value_toI(loop_arena, evalState, cond_val);
           if (!cond_int)
-            error_ast(cond, snprint(stdAlloc, "condition must evaluate to an integer"));
-
+            error_ast(cond, snprint(stdAlloc, "condition must evaluate to an integer")); // TODO actual types 
           var_ cmp = bigint_cmp(cond_int, nullptr);
-          // println("comparing {bigint} to 0  : {i8} ", cond_int, cmp);
           if (!cmp) break;
 
           value last_val = eval(evalState, &typeof_any, body, &rf);
@@ -1473,7 +1515,7 @@ value eval_call(
         }),
         case (c_Type, t, {
           assertMessage(t);
-          var_ td = (value){.value = {.t = t[0]}};
+          var_ td = (value){.rvalue = {.t = t[0]}};
           return eval_call(evalState, td, args, retflag);
         }),
         default(goto fail;),
@@ -1523,6 +1565,7 @@ value eval_op(
 
     bool retflag[1]
 ) {
+
   // TODO switch to the actual operation as the name
   var_ all_operations = &(struct {char* name ; astOp_union un; }[]){
       {"call", {"()"}},
@@ -1555,20 +1598,11 @@ value eval_op(
   var_ allocator = state_last_allocator(evalState);
 
   if (op == setOp.num) {
-    usize point = state_stack_current(evalState[0]);
-    defer { state_stack_set(evalState, point); };
     var_ rgh = eval(evalState, &value_acess(*left).t, right, retflag);
     if (*retflag) return rgh;
     if (value_acess(*left).isConst) error_ast(right, snprint(stdAlloc, "assigning to a const "));
-    tu_match(
-        value_acess(*left).t,
-        case (comptime, c, {
-          value_acess(*left).t = value_acess(rgh).t;
-          value_acess(*left).rtvalue = value_acess(rgh).rtvalue;
-        }),
-        case (runtime, r, memcpy(state_fromVal(evalState, left[0]), state_fromVal(evalState, rgh), Type_sizeof(value_acess(*left).t));),
-        case (builtin, b, error_ast(right, snprint(stdAlloc, "builtins cant be assigned to"));),
-    );
+    state_overwrite(evalState, value_ap(left), rgh);
+    state_destroy(evalState, rgh);
     return *left;
   } else if (op == callOp.num) {
     assertMessage(left);
@@ -1628,7 +1662,9 @@ value eval_op(
       else assertMessage(false, "unreachable?");
     }
     println("{bigint}", lb);
-    return (value){0, Type_of(comptime, c_int, bigint_copy(allocator, lb))};
+
+    return state_create(evalState, Type_of(comptime, c_int, lb), false);
+
   } else if (EQUAL_ANY(op, notOp.num, bnotOp.num, )) {
     assertMessage(!left, "not and bnot dont expect left");
     var_ rv = eval(evalState, &typeof_int, right, retflag);
@@ -1642,9 +1678,12 @@ value eval_op(
     if (op == bnotOp.num) {
       foreach (var_ l, range(mem[0], mem[1]))
         *l = ~*l;
-      return (value){0, Type_of(comptime, c_int, bigint_copy(allocator, rb))};
-    } else
-      return (value){0, Type_of(comptime, c_int, bigint_from(allocator, !bigint_cmp(rb, 0)))};
+      return state_create(evalState, Type_of(comptime, c_int, rb), false); // TODO dont return a bigint from this
+    } else {
+      var_ rv = bigint_from(allocator, !bigint_cmp(rb, 0));
+      defer { msList_deInit(allocator, rv); };
+      return state_create(evalState, Type_of(comptime, c_int, rv), false); // TODO same here
+    }
   } else if (op == dotOp.num) {
     assertMessage(left);
     astId prop = tu_catch(astString, right, error_ast(right, snprint(stdAlloc, "dot operator only takes left string")));
@@ -1667,11 +1706,11 @@ value eval_op(
           var_ operation = tu_catch(
               astOp,
               aval,
-              return (value){0, Type_of(comptime, c_int, bigint_from(allocator, 0))};
+              return state_create(evalState, Type_of(runtime, r_void, {}), false);
           );
           if (!isgeneralOp)
             if (operation.number_rep != all_operations[0][opIdx].un.num)
-              return (value){0, Type_of(comptime, c_int, bigint_from(allocator, 0))};
+              return state_create(evalState, Type_of(runtime, r_void, {}), false);
 
           return (value){
               0,
@@ -1680,7 +1719,7 @@ value eval_op(
                   Type_of(
                       comptime,
                       c_ast,
-                      aValue(allocator, (ast)tu_of(astOp, operation))
+                      aValue(allocator, (ast)tu_of(astOp, operation)) // TODO
                   )
               ),
           };
@@ -1688,7 +1727,7 @@ value eval_op(
           var_ operation = tu_catch(
               astOp,
               aval,
-              return (value){0, Type_of(comptime, c_int, bigint_from(allocator, 0))}
+              return state_create(evalState, Type_of(runtime, r_void, {}), false);
           );
           var_ wik =
               fptr_eq(prop, "left")
@@ -1732,7 +1771,10 @@ value eval_op(
         is_eq = !memcmp(state_fromVal(evalState, *left), state_fromVal(evalState, rv), Type_sizeof(value_acess(*left).t));
       }
     }
-    return (value){0, Type_of(comptime, c_int, bigint_from(alloc, op == eqOp.num ? is_eq : !is_eq))};
+
+    var_ ir = bigint_from(alloc, op == eqOp.num ? is_eq : !is_eq);
+    defer { msList_deInit(alloc, ir); };
+    return state_create(evalState, Type_of(comptime, c_int, ir), false);
   }
   assertMessage(false, "unreachable op %s", &op);
 }
@@ -1762,11 +1804,14 @@ value eval(
       //
       case (astEmptyStatement, _, {}),
       case (astId, id, result = state_getId(evalState, id);),
-      case (astNumber, n, result = (value){0, Type_of(comptime, c_int, astStr_ton(allocator, n))};),
+      case (astNumber, n, {
+        var_ in = astStr_ton(allocator, n);
+        result = state_create(evalState, Type_of(comptime, c_int, in), false);
+      }),
       case (astString, s, {
         usize l = astStr_len(s);
         var_ arrt = aValue(allocator, ((ptrstype(r_arr)){runtime_of(r_sint, 8), l})); // TODO: intern
-        result = value_(state_create(evalState, Type_of(runtime, r_arr, arrt), false));
+        result = state_create(evalState, Type_of(runtime, r_arr, arrt), false);
         var_ to = (fptr){l, state_fromV(evalState, value_acess(result).rtvalue)};
         astStr_tom(s, &to);
       }),
@@ -1801,10 +1846,10 @@ value eval(
           if (*retflag) return v;
           val = v;
         } else if (decl.type)
-          val = value_(state_create(evalState, type, false));
+          val = state_create(evalState, type, false);
 
         value_acess(val).isConst = decl.is_const;
-        state_set(evalState, tu_assert(astId, decl.name[0]), value_acess(val));
+        state_setStack(evalState, tu_assert(astId, decl.name[0]), value_acess(val));
         result = val;
       }),
       case (astBBlock, bb, {
