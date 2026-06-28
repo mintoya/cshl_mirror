@@ -13,23 +13,22 @@ u32:type:@uint(32);
 u16:type:@uint(16);
 u8 :type:@uint(8);
 
-if! : fn((args : ast)) ;
-if! = fn((args : ast)) {
+if! : fn((args : ast),any) ;
+if! = fn((args : ast),any) {
   call :: args."op"."call";
   cond :: call."left";
   bodies:: call."right";
 
   has_else :: @typeof(bodies."not") == ast;
 
-  @if(has_else, {
-    1000 * 1000;
+  @if(has_else, return @qot({
     @if(cond, @uqot(bodies."left"));
     @if(not cond, @uqot(bodies."right"));
-  });
+  }));
 
-  @if(not has_else, {
+  @if(not has_else, return @qot({
     @if(cond, @uqot(bodies));
-  });
+  }));
 };
 
 while! :: fn((args : ast)){
@@ -45,11 +44,18 @@ if! (1) {
   5 * 10;
 };
 
-j :=  1000*100;
-j = j - 1;
-j = j - 1;
-j = j - 1;
-j = j - 1;
-j = j - 1;
-j = j - 1;
-while! j {j = j - 1;};
+f :: 1;
+
+if! (f) 10 + 10;
+if! (not f) 12 + 10;
+
+fib :: fn(( i : int), int){
+  if!(i == 0) {return 1;};
+  if!(i == 1) {return 1;};
+  
+  a::fib(i - 1);
+  b::fib(i - 2);
+  return a + b;
+};
+
+fib(5) + 6767;

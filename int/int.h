@@ -1012,6 +1012,35 @@ Type *TypeP__(EState *s, Type t) {
   return (Type *)fptr_store(s, (fptr){sizeof(Type), (u8 *)REF(Type__(s, t))}).ptr;
 }
 
+Type Typeof_value(EState *s, value vv) {
+  var_ v = value_acess(vv);
+  tu_match(
+      v.t,
+      case (comptime, c, {
+        tu_match(
+            c,
+            case (c_int, _, return typeof_int;),
+            case (c_ast, _, return typeof_ast;),
+            case (c_Type, _, return typeof_type;),
+            case (c_any, _, return typeof_any;),
+
+            case (c_funct, f, {
+              if (!f || !f->block) return v.t;
+
+              var_ alloc = state_last_allocator(s);
+              var_ sig = aValue(alloc, *f);
+              defer { aFree(alloc, sig, sizeof(*sig)); };
+              sig->block = nullptr;
+              return Type__(s, Type_of(comptime, c_funct, sig));
+            }),
+
+            case (c_struct, _, return v.t;),
+            default(assertMessage(false, "unhandled comptime typeof");)
+        );
+      }),
+      default(return v.t;),
+  );
+}
 bigint value_toI(AllocatorV alloc, EState *evs, value vv) {
   var_ v = value_acess(vv);
   tu_match(
@@ -1053,7 +1082,37 @@ void coerce_value(EState *s, value *vv, Type *expected) {
       Type_eq(typeof_type, expected[0]) &&
       value_isType(*vv)
   ) return;
-
+  /*
+    if (
+        Type_eq(typeof_int, expected[0])
+    ) {
+      if_tu_is (var_ rtime, runtime, value_acess(*vv).t)
+        if (tu_is(r_sint, rtime) || tu_is(r_uint, rtime)) {
+          var_ allocator = state_last_allocator(s);
+          var_ b_val = value_toI(allocator, s, *vv);
+          defer { msList_deInit(allocator, b_val); };
+          *vv = state_create(s, Type_of(comptime, c_int, b_val), false);
+          return;
+        }
+    } else if (
+        Type_eq(typeof_int, value_acess(*vv).t)
+    ) {
+      if_tu_is (var_ rtime, runtime, expected[0])
+        if (tu_is(r_sint, rtime) || tu_is(r_uint, rtime)) {
+          var_ result = state_create(s, expected[0], false);
+          usize bits =
+              tu_is(r_sint, rtime)
+                  ? tu_assert(r_sint, rtime)
+                  : tu_assert(r_uint, rtime);
+          usize bytes = lineup(bits, 8) / 8;
+          u8 *loc = state_fromVal(s, result);
+          var_ b_val = tu_assert(c_int, tu_assert(comptime, value_acess(*vv).t));
+          if (b_val) memcpy(loc, b_val, bytes);
+          else memset(loc, 0, bytes);
+          *vv = result;
+          return;
+        }
+    }*/
   {fail : } assertMessage(
       false,
       "unhandled coersion , %s",
@@ -1208,35 +1267,6 @@ value state_getId(EState *s, astId id) {
   if (fptr_eq(id, "fn")) return /*     */ (value){0, (Type)tu_of(builtin, builtin_fn)};
   if (fptr_eq(id, "struct")) return /* */ (value){0, (Type)tu_of(builtin, builtin_struct)};
   error_ast((ast)tu_of(astId, id), snprint(stdAlloc, "unidentified symbol '{slice(c8)}'", id));
-}
-Type Typeof_value(EState *s, value vv) {
-  var_ v = value_acess(vv);
-  tu_match(
-      v.t,
-      case (comptime, c, {
-        tu_match(
-            c,
-            case (c_int, _, return typeof_int;),
-            case (c_ast, _, return typeof_ast;),
-            case (c_Type, _, return typeof_type;),
-            case (c_any, _, return typeof_any;),
-
-            case (c_funct, f, {
-              if (!f || !f->block) return v.t;
-
-              var_ alloc = state_last_allocator(s);
-              var_ sig = aValue(alloc, *f);
-              defer { aFree(alloc, sig, sizeof(*sig)); };
-              sig->block = nullptr;
-              return Type__(s, Type_of(comptime, c_funct, sig));
-            }),
-
-            case (c_struct, _, return v.t;),
-            default(assertMessage(false, "unhandled comptime typeof");)
-        );
-      }),
-      default(return v.t;),
-  );
 }
 value eval_call(
     EState *evalState,
