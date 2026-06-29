@@ -278,7 +278,10 @@ ast *parseOperations(AllocatorV allocator, ast *current, slice(Token) * backp) {
   while (msList_len(opsList)) {
     usize min = msList_len(opsList);
     usize mp = -1;
-    foreach (var_ op, pair(i, *msList_vla(opsList))) {
+    var_ list = msList_vla(opsList);
+    foreach (var_ opp, span(*list, countof(*list))) {
+      var_ op = *opp;
+      var_ i = opp - *list;
       usize p = getPrec(op);
       var_ mo = mp > p;
       if (EQUAL_ANY(1, Token_equal(op, t_equals), ))

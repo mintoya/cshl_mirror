@@ -788,7 +788,7 @@ void state_overwrite(EState *s, rvalue *to, value from) {
       default({ *to = value_acess(from); }),
   );
 }
-void state_setStack(EState *s, astId id, rvalue v) {
+void state_setVal(EState *s, astId id, rvalue v) {
   if (msHmap_get(mList_last(s->scopes), id))
     error_ast((ast)tu_of(astId, id), snprint(stdAlloc, "value in the same scope with the same name"));
   msHmap_set(mList_last(s->scopes), id, v);
@@ -1224,7 +1224,7 @@ value eval_fncall(
   defer { state_stack_set(evalState, stack_checkpoint); };
 
   for (usize i = 0; i < arg_count; i++)
-    state_setStack(evalState, vla_params[0][i].name, value_acess(eval_args[i]));
+    state_setVal(evalState, vla_params[0][i].name, value_acess(eval_args[i]));
 
   bool rflag = false;
   // var_ bb = (astBBlock){.stmts = f->block};
@@ -1870,7 +1870,7 @@ value eval(
           val = state_create(evalState, type, false);
 
         value_acess(val).isConst = decl.is_const;
-        state_setStack(evalState, tu_assert(astId, decl.name[0]), value_acess(val));
+        state_setVal(evalState, tu_assert(astId, decl.name[0]), value_acess(val));
         result = val;
       }),
       case (astBBlock, bb, {
