@@ -1,7 +1,7 @@
 type:@type():@type();
 any:type: @any();
 ast:type: @ast();
-int:type: @int(); // signed bigint
+int:type: @int();
 
 i64:type:@sint(64);
 i32:type:@sint(32);
@@ -13,49 +13,38 @@ u32:type:@uint(32);
 u16:type:@uint(16);
 u8 :type:@uint(8);
 
-if! : fn((args : ast),any) ;
-if! = fn((args : ast),any) {
+macro::fn((args:ast),ast);
+
+if! : macro : {
   call :: args."op"."call";
   cond :: call."left";
   bodies:: call."right";
 
   has_else :: @typeof(bodies."not") == ast;
 
-  @if(has_else, return @qot({
-    @if(cond, @uqot(bodies."left"));
-    @if(not cond, @uqot(bodies."right"));
-  }));
+  @if(
+    has_else,
+    return @qot({
+      @if(cond, bodies."left");
+      @if(not cond, bodies."right");
+    })
+  );
 
-  @if(not has_else, return @qot({
-    @if(cond, @uqot(bodies));
-  }));
+  return @qot({
+    @if(cond, bodies);
+  });
 };
 
-while! :: fn((args : ast)){
-  @while(
+while! :: macro{
+  return @qot(@while(
     args."op"."call"."left",
     args."op"."call"."right",
-  );
+  ));
 };
 
 
 
-if! (1) {
-  5 * 10;
-};
+if! 1 { 5 * 10;};
+i := 68;
+while! i {i = i - 1;};
 
-f :: 1;
-
-if! (f) 10 + 10;
-if! (not f) 12 + 10;
-
-fib :: fn(( i : int), int){
-  if!(i == 0) {return 1;};
-  if!(i == 1) {return 1;};
-  
-  a::fib(i - 1);
-  b::fib(i - 2);
-  return a + b;
-};
-
-fib(5) + 6767;

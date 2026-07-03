@@ -7,14 +7,14 @@
   #include <wheels/print.h>
   #include <wheels/smallstream.h>
   #include <wheels/smallstreams/smallfiles.h>
-  #include <wheels/tu_macros.h>
   #if !defined(_Nullable)
     #define _Nullable
   #endif
 
-typedef struct ast ast;
-
 void error_at(u8 *location, slice(c8) message);
+//
+// ast {
+typedef struct ast ast;
 tu_def(
     (ast, u8),
     // Identifier
@@ -69,62 +69,6 @@ REGISTER_SPECIAL_PRINTER("astTag", itypeof(ast, tag), {
       case (astEmptyStatement, _, PUTS("astEmpty");),
   );
 });
-
-static inline slice(u8) readFileAlloc(AllocatorV allocator, const char *filename) {
-  var_ fileptr = file_stream_open(
-      allocator,
-      filename,
-      (fileopenflags){
-          .access.read = 1,
-          .status.sync = 1
-      }
-  );
-  assertMessage(fileptr);
-  defer { file_stream_close(allocator, fileptr); };
-
-  assertMessage(fileptr->tell_max);
-  usize len = *fileptr->tell_max;
-
-  var_ resp = &aCreate(allocator, u8, len ?: 1);
-  usize len2 = sGetsf(fileptr, ((fptr){sizeof(*resp), *resp}));
-  assertMessage(len2 == len);
-  return (slice(u8)){len, resp[0]};
-}
-_Static_assert(sizeof((astOp *)NULL)->symLiteral == sizeof((astOp *)NULL)->number_rep);
-
-typedef enum token : u8 {
-  t_operator,
-  t_punctuation,
-  t_number,
-  t_string,
-
-  t_identifier,
-}token ;
-typedef struct Token {
-  fptr s;
-  enum token kind;
-} Token;
-
-sliceDef(Token);
-typedef slice(Token) slice_Tokens;
-sliceDef(slice_Tokens);
-typedef slice(slice_Tokens) Tokens_2d;
-
-REGISTER_PRINTER(Token, {
-  switch (in.kind) {
-      // clang-format off
-case t_operator    :PUTS("op ");break;
-case t_punctuation :PUTS("pun");break;
-case t_number      :PUTS("num");break;
-case t_string      :PUTS("str");break;
-case t_identifier  :PUTS("id ");break;
-      // clang-format on
-  }
-  PUTS("'");
-  USENAMEDPRINTER("slice(c8)", in.s);
-  PUTS("'");
-});
-
 static inline void print_ast_indent(int indent, outputFunction put, void *_arb) {
   for (int i = 0; i < indent; i++)
     PUTS("  ");
@@ -209,6 +153,77 @@ static void print_ast_recursive(ast *node, int indent, outputFunction put, void 
            }));
 }
 REGISTER_SPECIAL_PRINTER("ast", ast *, { print_ast_recursive(in, 0, put, _arb); });
+// }
+//
+__attribute__((noreturn)) void error_ast(ast a, slice(c8) message) {
+  tu_match(
+      a,
+      case (astId, s, { error_at(s.ptr, message); }),
+      case (astNumber, s, { error_at(s.ptr, message); }),
+      case (astString, s, { error_at(s.ptr, message); }),
+
+      case (astDecl, d, { error_ast(d.name[0], message); }),
+      case (astOp, o, { error_ast(o.right[0], message); }),
+
+      case (astPBlock, b, { error_at(b.loc, message); }),
+      case (astBBlock, b, { error_at(b.loc, message); }),
+      case (astABlock, b, { error_at(b.loc, message); }),
+
+      default(error_at(nullptr, message);),
+  );
+  unreachable();
+}
+
+static inline slice(u8) readFileAlloc(AllocatorV allocator, const char *filename) {
+  var_ fileptr = file_stream_open(
+      allocator,
+      filename,
+      (fileopenflags){
+          .access.read = 1,
+          .status.sync = 1
+      }
+  );
+  assertMessage(fileptr);
+  defer { file_stream_close(allocator, fileptr); };
+
+  assertMessage(fileptr->tell_max);
+  usize len = *fileptr->tell_max;
+
+  var_ resp = &aCreate(allocator, u8, len ?: 1);
+  usize len2 = sGetsf(fileptr, ((fptr){sizeof(*resp), *resp}));
+  assertMessage(len2 == len);
+  return (slice(u8)){len, resp[0]};
+}
+
+//
+// tokenizer defs {
+typedef enum token : u8 {
+  t_operator,
+  t_punctuation,
+  t_number,
+  t_string,
+
+  t_identifier,
+} token;
+typedef struct Token {
+  fptr s;
+  enum token kind;
+} Token;
+sliceDef(Token);
+REGISTER_PRINTER(Token, {
+  switch (in.kind) {
+      // clang-format off
+case t_operator    :PUTS("op ");break;
+case t_punctuation :PUTS("pun");break;
+case t_number      :PUTS("num");break;
+case t_string      :PUTS("str");break;
+case t_identifier  :PUTS("id ");break;
+      // clang-format on
+  }
+  PUTS("'");
+  USENAMEDPRINTER("slice(c8)", in.s);
+  PUTS("'");
+});
 
 c8 *punctuations[] = {
     ":",
@@ -221,8 +236,10 @@ c8 *punctuations[] = {
     "[",
     "]",
 };
+// }
+//
 
-struct {
+struct { // operator precidence
   c8 *name;
   usize prec;
 } operations[] = {
@@ -235,14 +252,14 @@ struct {
     {"+", 2},
     {"-", 2},
 
-    {"and", 3},
-    {"not", 3},
-    {"or", 3},
-    {"band", 3},
-    {"bnot", 3},
-    {"bor", 3},
-    {"shr", 3},
-    {"shl", 3},
+    {"and" /* */, 3},
+    {"not" /* */, 3},
+    {"or" /*  */, 3},
+    {"band" /**/, 3},
+    {"bnot" /**/, 3},
+    {"bor" /* */, 3},
+    {"shr" /* */, 3},
+    {"shl" /* */, 3},
 
     {"<", 4},
     {">", 4},
@@ -253,8 +270,13 @@ struct {
 
     {"|>", 5},
 
-    {"=",  ~(usize)0 },
+    {"=", ~(usize)0},
 
 };
 
+//
+// types {
+typedef struct Type Type;
+// }
+//
 #endif
