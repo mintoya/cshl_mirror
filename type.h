@@ -45,9 +45,10 @@ tu_def( // type
     (r_uint /*       */, u16),
     (r_sint /*       */, u16),
     (r_ptr /*        */, Type *),
-    (r_arr /*        */, struct { Type *type; usize count; } ),
+    (r_arr /*        */, struct { Type *type; usize count; }),
     (r_struct /*     */, mList(r_struct_item)),
     (r_bitfield /*   */, mList(r_bitf_item)),
+    (r_func /*       */, mList(Type)),
     // compile time
     // they could all be nothing_t's, i'd rather show here what they a re but also
     // not have them take up any storage space
@@ -56,7 +57,6 @@ tu_def( // type
     (c_ast /*        */, typeof(ast *[0])),
 
     (func /*         */, typeof(mList(function_arg)[0])),
-    (func_type /*    */, typeof(mList(Type)[0])),
 );
 typedef struct r_struct_item {
   fptr name;
@@ -72,4 +72,57 @@ typedef struct function_arg {
   fptr name;
   Type type;
 } function_arg;
+REGISTER_PRINTER(Type, {
+  tu_match(
+      in,
+      case (builtin, builtin, {
+        PUTS("builtin:");
+        USETYPEPRINTER(builtin_id, builtin);
+      }),
+      case (r_void, _, PUTS("void");),
+      case (r_uint, bits, PUTS("u"); USETYPEPRINTER(usize, bits);),
+      case (r_sint, bits, PUTS("i"); USETYPEPRINTER(usize, bits);),
+      case (r_ptr, type, {
+        PUTS("[*]");
+        USETYPEPRINTER(Type, *type);
+      }),
+      case (r_arr, arr, {
+        PUTS("[");
+        USETYPEPRINTER(usize, arr.count);
+        PUTS("]");
+        USETYPEPRINTER(Type, *arr.type);
+      }),
+      case (r_struct, st, {
+        PUTS("struct{");
+        defer { PUTS("}"); }
+        foreach (var_ type, span(mList_arr(st), mList_len(st))) {
+          if (type != mList_arr(st)) PUTS(",");
+
+          USENAMEDPRINTER("slice(c8)", type->name);
+          PUTS("@");
+          USETYPEPRINTER(usize, type->offset);
+          PUTS(":");
+          USETYPEPRINTER(Type, type->type);
+        }
+      }),
+      case (r_bitfield, st, {
+        PUTS("struct{");
+        defer { PUTS("}"); }
+        foreach (var_ type, span(mList_arr(st), mList_len(st))) {
+          if (type != mList_arr(st)) PUTS(",");
+
+          USENAMEDPRINTER("slice(c8)", type->name);
+          PUTS("@");
+          USETYPEPRINTER(usize, type->offset);
+          PUTS("+");
+          USETYPEPRINTER(usize, type->width);
+          PUTS(":");
+          USETYPEPRINTER(Type, type->type);
+        }
+      }),
+      case (c_int, i, PUTS("int");),
+      case (c_type, t, PUTS("type");),
+      case (c_ast, t, PUTS("ast");),
+  );
+});
 #endif
