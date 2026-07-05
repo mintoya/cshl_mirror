@@ -6,6 +6,7 @@
   #include <wheels/macros.h>
   #include <wheels/mytypes.h>
   #include <wheels/sList.h>
+  #include <wheels/mylist.h>
 
 typedef struct Type Type;
 typedef struct r_struct_item r_struct_item;
@@ -75,24 +76,24 @@ typedef struct function_arg {
 REGISTER_PRINTER(Type, {
   tu_match(
       in,
-      case (builtin, builtin, {
+      (builtin, builtin, {
         PUTS("builtin:");
         USETYPEPRINTER(builtin_id, builtin);
       }),
-      case (r_void, _, PUTS("void");),
-      case (r_uint, bits, PUTS("u"); USETYPEPRINTER(usize, bits);),
-      case (r_sint, bits, PUTS("i"); USETYPEPRINTER(usize, bits);),
-      case (r_ptr, type, {
+      (r_void, _, PUTS("void");),
+      (r_uint, bits, PUTS("u"); USETYPEPRINTER(usize, bits);),
+      (r_sint, bits, PUTS("i"); USETYPEPRINTER(usize, bits);),
+      (r_ptr, type, {
         PUTS("[*]");
         USETYPEPRINTER(Type, *type);
       }),
-      case (r_arr, arr, {
+      (r_arr, arr, {
         PUTS("[");
         USETYPEPRINTER(usize, arr.count);
         PUTS("]");
         USETYPEPRINTER(Type, *arr.type);
       }),
-      case (r_struct, st, {
+      (r_struct, st, {
         PUTS("struct{");
         defer { PUTS("}"); }
         foreach (var_ type, span(mList_arr(st), mList_len(st))) {
@@ -105,7 +106,7 @@ REGISTER_PRINTER(Type, {
           USETYPEPRINTER(Type, type->type);
         }
       }),
-      case (r_bitfield, st, {
+      (r_bitfield, st, {
         PUTS("struct{");
         defer { PUTS("}"); }
         foreach (var_ type, span(mList_arr(st), mList_len(st))) {
@@ -120,9 +121,9 @@ REGISTER_PRINTER(Type, {
           USETYPEPRINTER(Type, type->type);
         }
       }),
-      case (c_int, i, PUTS("int");),
-      case (c_type, t, PUTS("type");),
-      case (c_ast, t, PUTS("ast");),
+      (c_int, i, PUTS("int");),
+      (c_type, t, PUTS("type");),
+      (c_ast, t, PUTS("ast");),
   );
 });
 #endif

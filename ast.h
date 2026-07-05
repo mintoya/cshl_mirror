@@ -58,15 +58,15 @@ tu_def(
 REGISTER_SPECIAL_PRINTER("astTag", itypeof(ast, tag), {
   tu_match(
       ((ast){.tag = in}),
-      case (astId, _, PUTS("astId");),
-      case (astNumber, _, PUTS("astNum");),
-      case (astString, _, PUTS("astStr");),
-      case (astDecl, _, PUTS("astDecl");),
-      case (astOp, _, PUTS("astOp");),
-      case (astBBlock, _, PUTS("astBBlock");),
-      case (astPBlock, _, PUTS("astPBlock");),
-      case (astABlock, _, PUTS("astABlock");),
-      case (astEmptyStatement, _, PUTS("astEmpty");),
+      (astId, _, PUTS("astId")),
+      (astNumber, _, PUTS("astNum")),
+      (astString, _, PUTS("astStr")),
+      (astDecl, _, PUTS("astDecl")),
+      (astOp, _, PUTS("astOp")),
+      (astBBlock, _, PUTS("astBBlock")),
+      (astPBlock, _, PUTS("astPBlock")),
+      (astABlock, _, PUTS("astABlock")),
+      (astEmptyStatement, _, PUTS("astEmpty")),
   );
 });
 static inline void print_ast_indent(int indent, outputFunction put, void *_arb) {
@@ -79,78 +79,79 @@ static void print_ast_recursive(ast *node, int indent, outputFunction put, void 
     return;
   }
 
-  tu_match(*node, case (astId, id, {
-    PUTS("Id '");
-    USENAMEDPRINTER("slice(c8)", id);
-    PUTS("'\n");
-  }),
-           case (astNumber, num, {
-             PUTS("Number '");
-             USENAMEDPRINTER("slice(c8)", num);
-             PUTS("'\n");
-           }),
-           case (astString, str, {
-             PUTS("String \"");
-             USENAMEDPRINTER("slice(c8)", str);
-             PUTS("\"\n");
-           }),
-           case (astDecl, decl, {
-             PUTS("Decl");
-             if (decl.is_const) {
-               PUTS(" [const]");
-             }
-             PUTS("\n");
+  tu_match(
+      (*node),
+      (astId, id, {
+        PUTS("Id '");
+        USENAMEDPRINTER("slice(c8)", id);
+        PUTS("'\n");
+      }),
+      (astNumber, num, {
+        PUTS("Number '");
+        USENAMEDPRINTER("slice(c8)", num);
+        PUTS("'\n");
+      }),
+      (astString, str, {
+        PUTS("String \"");
+        USENAMEDPRINTER("slice(c8)", str);
+        PUTS("\"\n");
+      }),
+      (astDecl, decl, {
+        PUTS("Decl");
+        if (decl.is_const) {
+          PUTS(" [const]");
+        }
+        PUTS("\n");
 
-             print_ast_indent(indent + 1, put, _arb);
-             PUTS("name: ");
-             print_ast_recursive(decl.name, indent + 1, put, _arb);
+        print_ast_indent(indent + 1, put, _arb);
+        PUTS("name: ");
+        print_ast_recursive(decl.name, indent + 1, put, _arb);
 
-             print_ast_indent(indent + 1, put, _arb);
-             PUTS("type: ");
-             print_ast_recursive(decl.type, indent + 1, put, _arb);
+        print_ast_indent(indent + 1, put, _arb);
+        PUTS("type: ");
+        print_ast_recursive(decl.type, indent + 1, put, _arb);
 
-             print_ast_indent(indent + 1, put, _arb);
-             PUTS("value: ");
-             print_ast_recursive(decl.value, indent + 1, put, _arb);
-           }),
-           case (astOp, op, {
-             PUTS("Op '");
-             USENAMEDPRINTER("cstr", (char *)op.symLiteral);
-             PUTS("'\n");
+        print_ast_indent(indent + 1, put, _arb);
+        PUTS("value: ");
+        print_ast_recursive(decl.value, indent + 1, put, _arb);
+      }),
+      (astOp, op, {
+        PUTS("Op '");
+        USENAMEDPRINTER("cstr", (char *)op.symLiteral);
+        PUTS("'\n");
 
-             print_ast_indent(indent + 1, put, _arb);
-             PUTS("l: ");
-             print_ast_recursive(op.left, indent + 1, put, _arb);
+        print_ast_indent(indent + 1, put, _arb);
+        PUTS("l: ");
+        print_ast_recursive(op.left, indent + 1, put, _arb);
 
-             print_ast_indent(indent + 1, put, _arb);
-             PUTS("r: ");
-             print_ast_recursive(op.right, indent + 1, put, _arb);
-           }),
-           case (astPBlock, block, {
-             PUTS("PBlock\n");
-             for (ast **stmt = (ast **)block.stmts; stmt && *stmt; stmt++) {
-               print_ast_indent(indent + 1, put, _arb);
-               print_ast_recursive(*stmt, indent + 1, put, _arb);
-             }
-           }),
-           case (astBBlock, block, {
-             PUTS("BBlock\n");
-             for (ast **stmt = (ast **)block.stmts; stmt && *stmt; stmt++) {
-               print_ast_indent(indent + 1, put, _arb);
-               print_ast_recursive(*stmt, indent + 1, put, _arb);
-             }
-           }),
-           case (astABlock, block, {
-             PUTS("ABlock\n");
-             for (ast **item = (ast **)block.items; item && *item; item++) {
-               print_ast_indent(indent + 1, put, _arb);
-               print_ast_recursive(*item, indent + 1, put, _arb);
-             }
-           }),
-           case (astEmptyStatement, _, { PUTS("Empty"); }),
-           default({
-             unreachable();
-           }));
+        print_ast_indent(indent + 1, put, _arb);
+        PUTS("r: ");
+        print_ast_recursive(op.right, indent + 1, put, _arb);
+      }),
+      (astPBlock, block, {
+        PUTS("PBlock\n");
+        for (ast **stmt = (ast **)block.stmts; stmt && *stmt; stmt++) {
+          print_ast_indent(indent + 1, put, _arb);
+          print_ast_recursive(*stmt, indent + 1, put, _arb);
+        }
+      }),
+      (astBBlock, block, {
+        PUTS("BBlock\n");
+        for (ast **stmt = (ast **)block.stmts; stmt && *stmt; stmt++) {
+          print_ast_indent(indent + 1, put, _arb);
+          print_ast_recursive(*stmt, indent + 1, put, _arb);
+        }
+      }),
+      (astABlock, block, {
+        PUTS("ABlock\n");
+        for (ast **item = (ast **)block.items; item && *item; item++) {
+          print_ast_indent(indent + 1, put, _arb);
+          print_ast_recursive(*item, indent + 1, put, _arb);
+        }
+      }),
+      (astEmptyStatement, _, { PUTS("Empty"); }),
+      (default, unreachable())
+  );
 }
 REGISTER_SPECIAL_PRINTER("ast", ast *, { print_ast_recursive(in, 0, put, _arb); });
 // }
@@ -158,18 +159,18 @@ REGISTER_SPECIAL_PRINTER("ast", ast *, { print_ast_recursive(in, 0, put, _arb); 
 __attribute__((noreturn)) void error_ast(ast a, slice(c8) message) {
   tu_match(
       a,
-      case (astId, s, { error_at(s.ptr, message); }),
-      case (astNumber, s, { error_at(s.ptr, message); }),
-      case (astString, s, { error_at(s.ptr, message); }),
+      (astId, s, error_at(s.ptr, message)),
+      (astNumber, s, error_at(s.ptr, message)),
+      (astString, s, error_at(s.ptr, message)),
 
-      case (astDecl, d, { error_ast(d.name[0], message); }),
-      case (astOp, o, { error_ast(o.right[0], message); }),
+      (astDecl, d, error_ast(d.name[0], message)),
+      (astOp, o, error_ast(o.right[0], message)),
 
-      case (astPBlock, b, { error_at(b.loc, message); }),
-      case (astBBlock, b, { error_at(b.loc, message); }),
-      case (astABlock, b, { error_at(b.loc, message); }),
+      (astPBlock, b, error_at(b.loc, message)),
+      (astBBlock, b, error_at(b.loc, message)),
+      (astABlock, b, error_at(b.loc, message)),
 
-      default(error_at(nullptr, message);),
+      (default, error_at(nullptr, message)),
   );
   unreachable();
 }
