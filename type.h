@@ -1,12 +1,11 @@
-#if !defined(TYPES)
-  #define TYPES (1)
-  #include "ast.h"
-  #include <wheels/bigint.h>
-  #include <wheels/fptr.h>
-  #include <wheels/macros.h>
-  #include <wheels/mytypes.h>
-  #include <wheels/sList.h>
-  #include <wheels/mylist.h>
+#pragma once
+#include "ast.h"
+#include <wheels/bigint.h>
+#include <wheels/fptr.h>
+#include <wheels/macros.h>
+#include <wheels/mylist.h>
+#include <wheels/mytypes.h>
+#include <wheels/sList.h>
 
 typedef struct Type Type;
 typedef struct r_struct_item r_struct_item;
@@ -14,14 +13,17 @@ typedef struct r_bitf_item r_bitf_item;
 typedef struct function_arg function_arg;
 typedef enum : u8 {
   builtin_if,
+  builtin_while,
+
   builtin_fn,
   builtin_ast,
   builtin_int,
   builtin_uint,
   builtin_type,
-  builtin_while,
-  builtin_return,
   builtin_typeof,
+
+  builtin_return,
+  builtin_break,
 } builtin_id;
 REGISTER_PRINTER(builtin_id, {
   switch (in) {
@@ -35,6 +37,7 @@ REGISTER_PRINTER(builtin_id, {
     case(builtin_while):PUTS("while");break;
     case(builtin_return):PUTS("return");break;
     case(builtin_typeof):PUTS("typeof");break;
+    case(builtin_break):PUTS("break");break;
       // clang-format on
   }
 });
@@ -56,9 +59,19 @@ tu_def( // type
     (c_int /*        */, typeof(bigint[0])),
     (c_type /*       */, typeof(Type *[0])),
     (c_ast /*        */, typeof(ast *[0])),
-
-    (func /*         */, typeof(mList(function_arg)[0])),
+    (c_func /*       */, typeof(mList(function_arg)[0])),
 );
+inline bool Type_comptime(Type t) {
+  return tu_match(
+      t,
+      (c_int, _, true),
+      (c_ast, _, true),
+      (c_type, _, true),
+      (c_func, _, true),
+      (default, false)
+  );
+}
+
 typedef struct r_struct_item {
   fptr name;
   Type type;
@@ -73,6 +86,7 @@ typedef struct function_arg {
   fptr name;
   Type type;
 } function_arg;
+
 REGISTER_PRINTER(Type, {
   tu_match(
       in,
@@ -121,9 +135,21 @@ REGISTER_PRINTER(Type, {
           USETYPEPRINTER(Type, type->type);
         }
       }),
+      (r_func, fn, {
+        PUTS("fn((");
+        foreach (var_ it, span(mList_arr(fn), mList_len(fn))) {
+          if (it != (typeof(it))mList_arr(fn)) {
+            if (it != (typeof(it))mList_arr(fn) + mList_len(fn) - 1)
+              PUTS(")");
+            else PUTS(",");
+          }
+          USETYPEPRINTER(Type, *it);
+        }
+        PUTS(")");
+      }),
       (c_int, i, PUTS("int");),
       (c_type, t, PUTS("type");),
       (c_ast, t, PUTS("ast");),
+      (c_func, f, PUTS("function");),
   );
 });
-#endif

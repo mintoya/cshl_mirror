@@ -13,6 +13,7 @@ u32:type:@uint(32);
 u16:type:@uint(16);
 u8 :type:@uint(8);
 
+
 macro::fn((args:ast),ast);
 
 if! : macro : {

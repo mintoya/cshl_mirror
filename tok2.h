@@ -1,18 +1,16 @@
-#include <limits.h>
-#if !defined(TOKENIZER_H1)
-  #define TOKENIZER_H1 (1)
-  #include "ast.h"
-  #include <wheels/macros.h>
-  #include <wheels/mytypes.h>
-  #include <wheels/sList.h>
+#pragma once
+#include "ast.h"
+#include <wheels/macros.h>
+#include <wheels/mytypes.h>
+#include <wheels/sList.h>
 
-  #define __musttail___ __attribute__((musttail))
+#define __musttail___ __attribute__((musttail))
 
-  #if defined(_WIN32) && defined(__clang__)
-    #define TCO_ABI __attribute__((sysv_abi))
-  #else
-    #define TCO_ABI
-  #endif
+#if defined(_WIN32) && defined(__clang__)
+  #define TCO_ABI __attribute__((sysv_abi))
+#else
+  #define TCO_ABI
+#endif
 
 __attribute__((noreturn)) void error_Tok(Token t, slice(c8) msg) {
   error_at(t.s.ptr, msg);
@@ -481,4 +479,3 @@ ast *parseBlock(AllocatorV allocator, slice(Token) tokens) {
   error_Tok(tokens.ptr[0], snprint(stdAlloc, "expected block start token"));
   return nullptr;
 }
-#endif

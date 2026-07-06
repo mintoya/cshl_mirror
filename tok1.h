@@ -1,11 +1,10 @@
-#if !defined(TOKENIZER_H)
-  #define TOKENIZER_H (1)
-  #include "ast.h"
-  #include "wheels/macros.h"
-  #include "wheels/shmap.h"
-  #include <wheels/fptr.h>
-  #include <wheels/print.h>
-  #include <wheels/sList.h>
+#pragma once
+#include "ast.h"
+#include "wheels/macros.h"
+#include "wheels/shmap.h"
+#include <wheels/fptr.h>
+#include <wheels/print.h>
+#include <wheels/sList.h>
 
 static inline bool isNum(u8 i) { return i >= '0' && i <= '9'; };
 static inline bool isAlphaNum(u8 i) {
@@ -154,4 +153,3 @@ static msList(Token) tokenize(AllocatorV allocator, fptr input) {
 
   return res;
 }
-#endif

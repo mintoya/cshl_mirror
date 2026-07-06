@@ -1,15 +1,15 @@
-#if !defined(AST_H)
-  #define AST_H
-  #include <wheels/allocator.h>
-  #include <wheels/assertMessage.h>
-  #include <wheels/fptr.h>
-  #include <wheels/macros.h>
-  #include <wheels/print.h>
-  #include <wheels/smallstream.h>
-  #include <wheels/smallstreams/smallfiles.h>
-  #if !defined(_Nullable)
-    #define _Nullable
-  #endif
+#pragma once
+#include <string.h>
+#include <wheels/allocator.h>
+#include <wheels/assertMessage.h>
+#include <wheels/fptr.h>
+#include <wheels/macros.h>
+#include <wheels/print.h>
+#include <wheels/smallstream.h>
+#include <wheels/smallstreams/smallfiles.h>
+#if !defined(_Nullable)
+  #define _Nullable
+#endif
 
 void error_at(u8 *location, slice(c8) message);
 //
@@ -40,7 +40,7 @@ tu_def(
     // normal math operations, but also function calls and the dot operator
     // nullable cause in  structtype[.f] left is nullable
     // literal operators like bor bxor bnor ...
-    (astOp, struct { ast* _Nullable left ;ast*right;union{c8 symLiteral[8]; u64 number_rep;}; }),
+    (astOp, struct { ast* _Nullable left ;ast*right;union{c8 symLiteral[sizeof(u32)]; u32 number_rep;}; }),
 
     // PBlocks
     // whatever is inside ()
@@ -117,7 +117,9 @@ static void print_ast_recursive(ast *node, int indent, outputFunction put, void 
       }),
       (astOp, op, {
         PUTS("Op '");
-        USENAMEDPRINTER("cstr", (char *)op.symLiteral);
+        char s[countof(op.symLiteral) + 1] = {};
+        memcpy(s, op.symLiteral, sizeof(op.symLiteral));
+        USENAMEDPRINTER("cstr", (char *)s);
         PUTS("'\n");
 
         print_ast_indent(indent + 1, put, _arb);
@@ -274,10 +276,3 @@ struct { // operator precidence
     {"=", ~(usize)0},
 
 };
-
-//
-// types {
-typedef struct Type Type;
-// }
-//
-#endif
