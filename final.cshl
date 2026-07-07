@@ -14,6 +14,18 @@ u16:type:@uint(16);
 u8 :type:@uint(8);
 
 
+(fn((x : ast),ast)
+  {
+    @if(
+      @typeof(@uqot(x)) == @typeof(1) , 
+      return x
+    );
+    @compileError("unexpected");
+    return "";
+  } 
+)( 1 + 2 );
+
+
 macro::fn((args:ast),ast);
 
 if! : macro : {
@@ -21,10 +33,8 @@ if! : macro : {
   cond :: call."left";
   bodies:: call."right";
 
-  has_else :: @typeof(bodies."not") == ast;
-
   @if(
-    has_else,
+    @typeof(bodies."not") == ast,
     return @qot({
       @if(cond, bodies."left");
       @if(not cond, bodies."right");

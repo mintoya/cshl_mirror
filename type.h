@@ -61,17 +61,6 @@ tu_def( // type
     (c_ast /*        */, typeof(ast *[0])),
     (c_func /*       */, typeof(mList(function_arg)[0])),
 );
-inline bool Type_comptime(Type t) {
-  return tu_match(
-      t,
-      (c_int, _, true),
-      (c_ast, _, true),
-      (c_type, _, true),
-      (c_func, _, true),
-      (default, false)
-  );
-}
-
 typedef struct r_struct_item {
   fptr name;
   Type type;
@@ -86,6 +75,17 @@ typedef struct function_arg {
   fptr name;
   Type type;
 } function_arg;
+
+inline bool Type_comptime(Type t) {
+  return tu_match(
+      t,
+      (c_int, _, true),
+      (c_ast, _, true),
+      (c_type, _, true),
+      (c_func, _, true),
+      (default, false)
+  );
+}
 
 REGISTER_PRINTER(Type, {
   tu_match(

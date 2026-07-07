@@ -1,27 +1,40 @@
 #include "ast.h"
 #include "wheels/macros.h"
 #include "wheels/mytypes.h"
+#include "wheels/sList.h"
 #include <assert.h>
 #include <wheels/mylist.h>
 static_assert(
     sizeof(itypeof(astOp, symLiteral)) <=
     sizeof(u32)
 );
-
-#include "type.h"
 tu_def(
+    // r   : right
+    // l   : left
+    // d   : destination/result
     (OCode, u8),
-    (OBuiltin /**/, ast),       // thing to return
-    (ORet /*    */, u32),       // thing to return
-    (OPush /*   */, nothing_t), //
-    (OPop /*    */, u32),       // thing to remain
-    (ODot /*    */, struct { fptr s; u32 r; }),
-    (OCall /*   */, struct { u32 r, l; }),
-    (OOp /*     */, struct { u32 r, l, result, op; }),
+    (OSet /*    */, struct { u32 r, d; }),
+    // s   : arguments list
+    (OCall /*   */, struct { u32 r, d; msList(u32) s; }),
+    // o   : operation (as char literals all fit in a u32)
+    (OOp /*     */, struct { u32 o, r, l, d; }),
+    (OPushS /*  */, nothing_t),
+    (OPopS /*   */, nothing_t),
+    // dir : jump direction
+    (OJmp /*    */, struct { i32 dir; }),
+    (OJmpZ /*   */, struct { i32 dir, r; }),
+    // (JmpNZ, ),
 );
-typedef arrstype(c_func) funct;
-typedef struct {
-  mList(funct) functions;
-} program;
-int i = sizeof(OCode);
-OCode emit() {}
+usize tu_code_example(OCode o) {
+  return tu_match(
+      o,
+      (OSet, s, sizeof(s)),
+      (OCall, c, sizeof(c) + sizeof(*msList_vla(c.s))),
+      (OOp, o, sizeof(o)),
+      (OPushS, _, sizeof(_)),
+      (OPopS, _, sizeof(_)),
+      (OJmp, _, sizeof(_)),
+      (OJmpZ, _, sizeof(_)),
+      (default, unreachable(); (usize)0),
+  );
+}
