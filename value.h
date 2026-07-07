@@ -18,15 +18,46 @@ typedef struct value {
   typed_value rvalue;
 } value;
 
-#define value_access(value) (*({             \
-  var_ _value_ptr = &(value);                \
+#define value_access(value) (*({                  \
+  var_ _value_ptr = &(value);                     \
   _value_ptr->lvalue ?: &_value_ptr->typed_value; \
 }))
-#define value_typed_value(value) ({         \
+#define value_value(value) ({          \
   var_ _value = (value);               \
-  _value.typed_value = _value.lvalue        \
+  _value.rvalue = _value.lvalue        \
                       ? *_value.lvalue \
-                      : _value.typed_value; \
+                      : _value.rvalue; \
   _value.lvalue = nullptr;             \
   _value;                              \
 })
+
+REGISTER_PRINTER(typed_value, {
+  PUTS("{ t: ");
+  USETYPEPRINTER(Type, in.t);
+  PUTS(", v: ");
+
+  tu_match(
+      in.t,
+      (c_int, _, USENAMEDPRINTER("bigint", in.c_int)),
+      (c_ast, _, USENAMEDPRINTER("ast", in.c_ast)),
+      (c_type, _, USETYPEPRINTER(Type, *in.c_type)),
+      (c_func, _, PUTS("<c_func>")),
+      (default, {
+        PUTS("<ptr:");
+        USENAMEDPRINTER("ptr", (usize)in.value);
+        PUTS(">");
+      })
+  );
+
+  PUTS(" }");
+});
+
+REGISTER_PRINTER(value, {
+  if (in.lvalue) {
+    PUTS("lvalue: ");
+    USETYPEPRINTER(typed_value, *in.lvalue);
+  } else {
+    PUTS("rvalue: ");
+    USETYPEPRINTER(typed_value, in.rvalue);
+  }
+});

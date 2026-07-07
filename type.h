@@ -1,5 +1,6 @@
 #pragma once
 #include "ast.h"
+#include "op.h"
 #include <wheels/bigint.h>
 #include <wheels/fptr.h>
 #include <wheels/macros.h>
@@ -59,7 +60,15 @@ tu_def( // type
     (c_int /*        */, typeof(bigint[0])),
     (c_type /*       */, typeof(Type *[0])),
     (c_ast /*        */, typeof(ast *[0])),
-    (c_func /*       */, typeof(mList(function_arg)[0])),
+    // clang-format off
+    (
+      c_func ,
+      typeof(struct {
+        mList(function_arg) args ;
+        mList(OCode) code;
+      }[0])
+    ),
+    // clang-format on
 );
 typedef struct r_struct_item {
   fptr name;
