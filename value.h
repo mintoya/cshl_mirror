@@ -2,6 +2,7 @@
 #include "ast.h"
 #include "type.h"
 #include "wheels/macros.h"
+#include <wheels/smap.h>
 
 typedef struct {
   Type t;
@@ -32,16 +33,26 @@ typedef struct value {
 })
 
 REGISTER_PRINTER(typed_value, {
-  PUTS("{ t: ");
+  PUTS("{t:");
   USETYPEPRINTER(Type, in.t);
-  PUTS(", v: ");
+  PUTS(",v:");
 
   tu_match(
       in.t,
       (c_int, _, USENAMEDPRINTER("bigint", in.c_int)),
       (c_ast, _, USENAMEDPRINTER("ast", in.c_ast)),
       (c_type, _, USETYPEPRINTER(Type, *in.c_type)),
-      (c_func, _, PUTS("<c_func>")),
+      (c_func, _, {
+        PUTS("fn :(");
+        foreach (var_ item, mList_iter(in.c_func.args)) {
+          USENAMEDPRINTER("slice(c8)", item.name);
+          PUTS(":");
+          USETYPEPRINTER(Type, item.type);
+          PUTS(",");
+        }
+        PUTS(")");
+        USENAMEDPRINTER("ptr", in.c_func.code);
+      }),
       (default, {
         PUTS("<ptr:");
         USENAMEDPRINTER("ptr", (usize)in.value);
@@ -49,15 +60,13 @@ REGISTER_PRINTER(typed_value, {
       })
   );
 
-  PUTS(" }");
+  PUTS("}");
 });
 
 REGISTER_PRINTER(value, {
-  if (in.lvalue) {
-    PUTS("lvalue: ");
-    USETYPEPRINTER(typed_value, *in.lvalue);
-  } else {
-    PUTS("rvalue: ");
-    USETYPEPRINTER(typed_value, in.rvalue);
-  }
+  PUTS("{");
+  if (in.lvalue) PUTS("lvalue: ");
+  else PUTS("rvalue: ");
+  USETYPEPRINTER(typed_value, value_value(in).rvalue);
+  PUTS("}");
 });

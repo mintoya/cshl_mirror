@@ -20,7 +20,7 @@ tu_def(
 
     (OStr /*   */, fptr),
     (ONum /*   */, bigint),
-
+    (ODot /* */, struct { u32 l, d; fptr name; }),
     (OSet /*    */, struct { u32 r, d; }),
     // s   : arguments list
     (OCall /*   */, struct { u32 r, d; msList(u32) s; }),
@@ -61,9 +61,9 @@ REGISTER_PRINTER(
             USETYPEPRINTER(usize, o.l);
             PUTS(",\t");
             {
-              char x[sizeof(u32) + 1];
+              char x[sizeof(u32) + 1] = {};
               memcpy(x, &o.o, ((char *)&o.o)[sizeof(u32) - 1] ? sizeof(u32) : strlen((char *)&o.o));
-              USETYPEPRINTER(cstr, (char *)x);
+              USETYPEPRINTER(cstr, (cstr)x);
             }
             PUTS(", ");
             USETYPEPRINTER(usize, o.r);
