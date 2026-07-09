@@ -55,7 +55,7 @@ tu_def(
     // always comma-separated
     (astABlock, struct {u8* loc ; sentList_t(ast *) items; }),
 );
-REGISTER_SPECIAL_PRINTER("astTag", itypeof(ast, tag), {
+typePrinter("astTag", itypeof(ast, tag)) {
   tu_match(
       ((ast){.tag = in}),
       (astId, _, PUTS("astId")),
@@ -68,7 +68,7 @@ REGISTER_SPECIAL_PRINTER("astTag", itypeof(ast, tag), {
       (astABlock, _, PUTS("astABlock")),
       (astEmptyStatement, _, PUTS("astEmpty")),
   );
-});
+}
 static inline void print_ast_indent(int indent, outputFunction put, void *_arb) {
   for (int i = 0; i < indent; i++)
     PUTS("  ");
@@ -155,7 +155,7 @@ static void print_ast_recursive(ast *node, int indent, outputFunction put, void 
       (default, unreachable())
   );
 }
-REGISTER_SPECIAL_PRINTER("ast", ast *, { print_ast_recursive(in, 0, put, _arb); });
+typePrinter("ast", ast *) { print_ast_recursive(in, 0, put, _arb); }
 // }
 //
 __attribute__((noreturn)) void error_ast(ast a, slice(c8) message) {
@@ -213,7 +213,7 @@ typedef struct Token {
   enum token kind;
 } Token;
 sliceDef(Token);
-REGISTER_PRINTER(Token, {
+typePrinter(Token) {
   switch (in.kind) {
       // clang-format off
 case t_operator    :PUTS("op ");break;
@@ -226,7 +226,7 @@ case t_identifier  :PUTS("id ");break;
   PUTS("'");
   USENAMEDPRINTER("slice(c8)", in.s);
   PUTS("'");
-});
+}
 
 c8 *punctuations[] = {
     ":",

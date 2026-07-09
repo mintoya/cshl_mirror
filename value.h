@@ -32,7 +32,7 @@ typedef struct value {
   _value;                              \
 })
 
-REGISTER_PRINTER(typed_value, {
+typePrinter(typed_value) {
   PUTS("{t:");
   USETYPEPRINTER(Type, in.t);
   PUTS(",v:");
@@ -54,19 +54,17 @@ REGISTER_PRINTER(typed_value, {
         USENAMEDPRINTER("ptr", in.c_func.code);
       }),
       (default, {
-        PUTS("<ptr:");
-        USENAMEDPRINTER("ptr", (usize)in.value);
-        PUTS(">");
+        USETYPEPRINTER(fptr, ((fptr){Type_rsize(in.t), in.value}));
       })
   );
 
   PUTS("}");
-});
+}
 
-REGISTER_PRINTER(value, {
+typePrinter(value) {
   PUTS("{");
   if (in.lvalue) PUTS("lvalue: ");
   else PUTS("rvalue: ");
   USETYPEPRINTER(typed_value, value_value(in).rvalue);
   PUTS("}");
-});
+}

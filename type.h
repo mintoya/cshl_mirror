@@ -26,7 +26,7 @@ typedef enum : u8 {
   builtin_return,
   builtin_break,
 } builtin_id;
-REGISTER_PRINTER(builtin_id, {
+typePrinter(builtin_id) {
   switch (in) {
       // clang-format off
     case(builtin_if):PUTS("if");break;
@@ -41,7 +41,7 @@ REGISTER_PRINTER(builtin_id, {
     case(builtin_break):PUTS("break");break;
       // clang-format on
   }
-});
+}
 tu_def( // type
     (Type, u8),
     (builtin /*      */, builtin_id),
@@ -73,19 +73,25 @@ tu_def( // type
 typedef struct r_struct_item {
   fptr name;
   Type type;
-  usize offset;
+  usize alignment, offset;
+  void *init;
+  bool isconst;
 } r_struct_item;
 typedef struct r_bitf_item {
-  fptr name;
   Type type;
-  usize offset, width;
+  fptr name;
+  usize width;
+  void *init;
+  bool isconst;
 } r_bitf_item;
 typedef struct function_arg {
-  fptr name;
   Type type;
+  fptr name;
+  void *init;
+  bool isconst;
 } function_arg;
 
-inline bool Type_comptime(Type t) {
+inline bool Type_isComptime(Type t) {
   return tu_match(
       t,
       (c_int, _, true),
@@ -96,7 +102,53 @@ inline bool Type_comptime(Type t) {
   );
 }
 
-REGISTER_PRINTER(Type, {
+inline usize Type_ralig(Type t) {
+  return tu_match(
+      t,
+      (r_void, _, (usize)1),
+      (r_uint, u, lineup(u, 8) / 8), // TODO
+      (r_sint, u, lineup(u, 8) / 8), // TODO
+      (r_ptr, p, Type_ralig((Type)tu_of(r_uint, 64))),
+      (r_arr, a, assertMessage(a.type); Type_ralig(a.type[0]) * a.count),
+      (r_bitfield, b, ({
+         usize s = 0;
+         foreach (var_ b, mList_iter(b))
+           s += b.width;
+         Type_ralig((Type)tu_of(r_uint, s));
+       })),
+      (r_struct, s, ({
+         usize a = 1;
+         foreach (var_ i, mList_iter(s))
+           a = MAX$(i.alignment, a);
+         a;
+       })),
+      (default, (usize)0)
+  );
+}
+inline usize Type_rsize(Type t) {
+  return tu_match(
+      t,
+      (r_void, _, (usize)0),
+      (r_uint, u, lineup(u, 8) / 8),
+      (r_sint, u, lineup(u, 8) / 8),
+      (r_ptr, p, Type_rsize((Type)tu_of(r_uint, 64))),
+      (r_arr, a, assertMessage(a.type); Type_rsize(a.type[0]) * a.count),
+      (r_bitfield, b, ({
+         usize s = 0;
+         foreach (var_ b, mList_iter(b))
+           s += b.width;
+         Type_rsize((Type)tu_of(r_uint, s));
+       })),
+      (r_struct, s, ({
+         usize sz = 0;
+         foreach (var_ i, mList_iter(s))
+           sz = MAX$(i.offset + Type_rsize(i.type), sz);
+         lineup(sz, Type_ralig(t));
+       })),
+      (default, (usize)0)
+  );
+}
+typePrinter(Type) {
   tu_match(
       in,
       (builtin, builtin, {
@@ -136,9 +188,7 @@ REGISTER_PRINTER(Type, {
           if (type != mList_arr(st)) PUTS(",");
 
           USENAMEDPRINTER("slice(c8)", type->name);
-          PUTS("@");
-          USETYPEPRINTER(usize, type->offset);
-          PUTS("+");
+          PUTS("|");
           USETYPEPRINTER(usize, type->width);
           PUTS(":");
           USETYPEPRINTER(Type, type->type);
@@ -161,4 +211,4 @@ REGISTER_PRINTER(Type, {
       (c_ast, t, PUTS("ast");),
       (c_func, f, PUTS("function");),
   );
-});
+}
