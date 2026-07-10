@@ -32,7 +32,6 @@ tu_def(
     // dir : jump direction
     (OJmp /*   */, struct { i32 dir; }),
     (OJmpZ /*  */, struct { i32 dir, r; }),
-    // (JmpNZ, ),
 );
 typePrinter(OCode) {
   tu_match(

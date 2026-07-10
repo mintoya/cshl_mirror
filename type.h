@@ -53,22 +53,12 @@ tu_def( // type
     (r_arr /*        */, struct { Type *type; usize count; }),
     (r_struct /*     */, mList(r_struct_item)),
     (r_bitfield /*   */, mList(r_bitf_item)),
-    (r_func /*       */, mList(Type)),
     // compile time
     // they could all be nothing_t's, i'd rather show here what they a re but also
     // not have them take up any storage space
     (c_int /*        */, typeof(bigint[0])),
     (c_type /*       */, typeof(Type *[0])),
     (c_ast /*        */, typeof(ast *[0])),
-    // clang-format off
-    (
-      c_func ,
-      typeof(struct {
-        mList(function_arg) args ;
-        mList(OCode) code;
-      }[0])
-    ),
-    // clang-format on
 );
 typedef struct r_struct_item {
   fptr name;
@@ -82,14 +72,7 @@ typedef struct r_bitf_item {
   fptr name;
   usize width;
   void *init;
-  bool isconst;
 } r_bitf_item;
-typedef struct function_arg {
-  Type type;
-  fptr name;
-  void *init;
-  bool isconst;
-} function_arg;
 
 inline bool Type_isComptime(Type t) {
   return tu_match(
@@ -97,7 +80,6 @@ inline bool Type_isComptime(Type t) {
       (c_int, _, true),
       (c_ast, _, true),
       (c_type, _, true),
-      (c_func, _, true),
       (default, false)
   );
 }
@@ -119,7 +101,7 @@ inline usize Type_ralig(Type t) {
       (r_struct, s, ({
          usize a = 1;
          foreach (var_ i, mList_iter(s))
-           a = MAX$(i.alignment, a);
+           a = MAX$(i.isconst ? 1 : i.alignment, a);
          a;
        })),
       (default, (usize)0)
@@ -142,7 +124,7 @@ inline usize Type_rsize(Type t) {
       (r_struct, s, ({
          usize sz = 0;
          foreach (var_ i, mList_iter(s))
-           sz = MAX$(i.offset + Type_rsize(i.type), sz);
+           sz = MAX$(i.isconst ? 0 : i.offset + Type_rsize(i.type), sz);
          lineup(sz, Type_ralig(t));
        })),
       (default, (usize)0)
@@ -194,21 +176,8 @@ typePrinter(Type) {
           USETYPEPRINTER(Type, type->type);
         }
       }),
-      (r_func, fn, {
-        PUTS("fn((");
-        foreach (var_ it, span(mList_arr(fn), mList_len(fn))) {
-          if (it != (typeof(it))mList_arr(fn)) {
-            if (it != (typeof(it))mList_arr(fn) + mList_len(fn) - 1)
-              PUTS(")");
-            else PUTS(",");
-          }
-          USETYPEPRINTER(Type, *it);
-        }
-        PUTS(")");
-      }),
       (c_int, i, PUTS("int");),
       (c_type, t, PUTS("type");),
       (c_ast, t, PUTS("ast");),
-      (c_func, f, PUTS("function");),
   );
 }

@@ -13,6 +13,9 @@ u32:type:@uint(32);
 u16:type:@uint(16);
 u8 :type:@uint(8);
 
+a[1];
+[]u65;
+[*]u65;
 
 (fn((x : ast),ast)
   {
