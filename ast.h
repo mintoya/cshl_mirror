@@ -74,11 +74,7 @@ static inline void print_ast_indent(int indent, outputFunction put, void *_arb) 
     PUTS("  ");
 }
 static void print_ast_recursive(ast *node, int indent, outputFunction put, void *_arb) {
-  if (!node) {
-    PUTS("null\n");
-    return;
-  }
-
+  if (!node) return PUTS("null\n");
   tu_match(
       (*node),
       (astId, id, {

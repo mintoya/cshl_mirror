@@ -3,9 +3,10 @@
 #include <wheels/examples/includeAll.c>
 
 #include "ast.h"
-#include "pool.h"
 #include "tok1.h"
 #include "tok2.h"
+#include "top.h"
+#include "wheels/mytypes.h"
 
 fptr *filectx = nullptr;
 __attribute__((noreturn)) void error_at(u8 *location, slice(c8) message) {
@@ -85,11 +86,14 @@ cmd_main(
   if (echo_ast)
     println("{ast}", ast);
 
+  sliceDef(OCode);
   if (execute) {
-    assertMessage(false, "unimplemented");
-    // var_ state = state_init(allocator);
-    // eval(&state, nullptr, *ast, REF(false));
-    // println("stack place : {}", msList_len(state.stack));
+    var_ state = EState_new(allocator);
+    var_ l = emit(allocator, state, ast[0]);
+    println(
+        "instructions : \n{slice:OCode}",
+        ((slice(OCode)){mList_len(l), mList_arr(l)})
+    );
   }
 
   return 0;
