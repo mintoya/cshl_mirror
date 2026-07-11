@@ -272,3 +272,4 @@ struct { // operator precidence
     {"=", ~(usize)0},
 
 };
+// ast *ast_clone(AllocatorV allocator, ast a) {}

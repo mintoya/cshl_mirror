@@ -26,6 +26,7 @@ typedef enum : u8 {
   builtin_return,
   builtin_break,
 } builtin_id;
+typedef struct Env Env;
 typedef struct func_value {
   mList(struct {
     fptr name;
@@ -33,8 +34,8 @@ typedef struct func_value {
     // the type is in there
     struct typed_value *init;
   }) params;
-  ast *body;
-  struct Env *es;
+
+  Env *es;
 } func_value;
 tu_def( // type
     (Type, u8),
@@ -56,35 +57,36 @@ tu_def( // type
     (c_ast /*        */, typeof(ast *[0])),
     (c_func /*      */, typeof(func_value[0])),
 );
+typedef union {
+  void *value;
+
+  arrstype(c_int) c_int;
+  arrstype(c_ast) c_ast;
+  arrstype(c_type) c_type;
+  arrstype(c_func) c_func;
+} value_store;
 typedef struct r_struct_item {
   fptr name;
   Type type;
   usize alignment, offset;
-  struct typed_value *init;
+  value_store init;
   bool isconst;
 } r_struct_item;
 typedef struct r_bitf_item {
-  Type type;
   fptr name;
+  Type type;
   usize width;
-  struct typed_value *init;
+  value_store init;
 } r_bitf_item;
-
 typedef struct typed_value {
   Type t;
-  union {
-    void *value;
-    arrstype(c_int) c_int;
-    arrstype(c_ast) c_ast;
-    arrstype(c_type) c_type;
-    arrstype(c_func) c_func;
-  };
+  value_store v;
 } typed_value;
 typedef struct value {
   typed_value *lvalue;
   typed_value rvalue;
 } value;
-
+//{value macros
 #define value_access(value) (*({             \
   var_ _value_ptr = &(value);                \
   _value_ptr->lvalue ?: &_value_ptr->rvalue; \
@@ -98,6 +100,7 @@ typedef struct value {
   _value.lvalue = nullptr;    \
   _value;                     \
 })
+//}
 inline bool Type_isComptime(Type t) {
   return tu_match(
       t,
@@ -108,8 +111,7 @@ inline bool Type_isComptime(Type t) {
       (default, false)
   );
 }
-
-inline usize Type_ralig(Type t) {
+static inline usize Type_ralig(Type t) {
   return tu_match(
       t,
       (r_void, _, (usize)1),
@@ -132,7 +134,7 @@ inline usize Type_ralig(Type t) {
       (default, (usize)0)
   );
 }
-inline usize Type_rsize(Type t) {
+static inline usize Type_rsize(Type t) {
   return tu_match(
       t,
       (r_void, _, (usize)0),
@@ -155,6 +157,7 @@ inline usize Type_rsize(Type t) {
       (default, (usize)0)
   );
 }
+
 typePrinter(builtin_id) {
   switch (in) {
       // clang-format off
@@ -237,26 +240,22 @@ typePrinter(typed_value) {
   PUTS("{t:");
   USETYPEPRINTER(Type, in.t);
   PUTS(",v:");
-
   tu_match(
       in.t,
-      (c_int, _, USENAMEDPRINTER("bigint", in.c_int)),
-      (c_ast, _, USENAMEDPRINTER("ast", in.c_ast)),
-      (c_type, _, USETYPEPRINTER(Type, *in.c_type)),
+      (c_int, _, USENAMEDPRINTER("bigint", in.v.c_int)),
+      (c_ast, _, USENAMEDPRINTER("ast", in.v.c_ast)),
+      (c_type, _, USETYPEPRINTER(Type, *in.v.c_type)),
       (c_func, fn, {
         TODO();
         PUTS("fn @");
-        // USENAMEDPRINTER("ast", &in.c_func.body);
-        USENAMEDPRINTER("ptr", in.c_func.es);
+        USENAMEDPRINTER("ptr", in.v.c_func.es);
       }),
       (default, {
-        USETYPEPRINTER(fptr, ((fptr){Type_rsize(in.t), in.value}));
+        USETYPEPRINTER(fptr, ((fptr){Type_rsize(in.t), in.v.value}));
       })
   );
-
   PUTS("}");
 }
-
 typePrinter(value) {
   PUTS("{");
   in.lvalue ? PUTS("lvalue:") : PUTS("rvalue:");

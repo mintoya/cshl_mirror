@@ -86,14 +86,9 @@ cmd_main(
   if (echo_ast)
     println("{ast}", ast);
 
-  sliceDef(OCode);
+  println("{*:*:i32}", (int **)(REF((int *)REF(56))));
   if (execute) {
-    var_ state = EState_new(allocator);
-    var_ l = emit(allocator, state, ast[0]);
-    println(
-        "instructions : \n{slice:OCode}",
-        ((slice(OCode)){mList_len(l), mList_arr(l)})
-    );
+    TODO();
   }
 
   return 0;
