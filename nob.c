@@ -14,15 +14,28 @@
 
   #if defined(_WIN32)
     // #define COMMON_CFLAGS "-std=c23", "-fdefer-ts" , "-ldbghelp"
-    #define COMMON_CFLAGS "-std=c23", "-fdefer-ts", "-DnoAssertMessage"
+    #define COMMON_CFLAGS "-std=c23", "-fdefer-ts", "-DnoAssertMessage", "-I", "deps"
   #else
-    #define COMMON_CFLAGS "-std=gnu23", "-fdefer-ts", "-D__PRETTY_FUNCTION__=__FUNCTION__", "-fno-sanitize=vla-bound", "-rdynamic"
+    #define COMMON_CFLAGS "-std=gnu23", "-fdefer-ts", "-D__PRETTY_FUNCTION__=__FUNCTION__", "-fno-sanitize=vla-bound", "-rdynamic", "-I", "deps"
   #endif
 
 bool build_main(Cmd *cmd, Procs *procs) {
   if (!mkdir_if_not_exists("build"))
     return false;
-  cmd_append(cmd, CC, COMMON_CFLAGS, "-o", "build/compiler" EXTENSION, "main.c", "-I", "deps", "-w", "-g", );
+  cmd_append(cmd, CC, COMMON_CFLAGS, "-o", "build/compiler" EXTENSION, "main.c", );
+  if (!cmd_run(cmd, .async = procs))
+    return false;
+  return true;
+}
+
+bool build_tests(Cmd *cmd, Procs *procs) {
+  if (!mkdir_if_not_exists("build"))
+    return false;
+  #if defined(_WIN32)
+  cmd_append(cmd, CC, COMMON_CFLAGS, "-o", "build/compiler" EXTENSION, "tests.c", "deps/wheels/c11threads/c11threads_win32.c");
+  #else
+  cmd_append(cmd, CC, COMMON_CFLAGS, "-o", "build/compiler" EXTENSION, "tests.c", );
+  #endif
   if (!cmd_run(cmd, .async = procs))
     return false;
   return true;
@@ -34,7 +47,9 @@ void usage(const char *program) {
                 "    help                   \n"
                 "        Print this message \n"
                 "    run [args]             \n"
-                "        Build and run the compiler\n");
+                "        Build and run the compiler\n"
+                "    test [args]             \n"
+                "        Build and run the tests\n");
 }
 
 int main(int argc, char **argv) {
@@ -67,6 +82,17 @@ int main(int argc, char **argv) {
     cmd_append(&cmd, "./build/compiler" EXTENSION);
     for (int i = 0; i < argc; ++i)
       cmd_append(&cmd, argv[i]);
+    if (!cmd_run_sync(cmd))
+      return 1;
+    return 0;
+  } else if (!strcmp(subcmd, "test")) {
+    if (!build_tests(&cmd, &procs))
+      return 1;
+    if (!nob_procs_wait(procs))
+      return 1;
+
+    cmd.count = 0;
+    cmd_append(&cmd, "./build/compiler" EXTENSION);
     if (!cmd_run_sync(cmd))
       return 1;
     return 0;
