@@ -65,23 +65,21 @@ typedef union {
   arrstype(c_type) c_type;
   arrstype(c_func) c_func;
 } value_store;
-typedef struct r_struct_item {
-  fptr name;
-  Type type;
-  usize alignment, offset;
-  value_store init;
-  bool isconst;
-} r_struct_item;
-typedef struct r_bitf_item {
-  fptr name;
-  Type type;
-  usize width;
-  value_store init;
-} r_bitf_item;
 typedef struct typed_value {
   Type t;
   value_store v;
 } typed_value;
+typedef struct r_struct_item {
+  fptr name;
+  typed_value init; // type in here
+  usize alignment, offset;
+  bool isconst;
+} r_struct_item;
+typedef struct r_bitf_item {
+  typed_value init; // type in here
+  fptr name;
+  usize width;
+} r_bitf_item;
 typedef struct value {
   typed_value *lvalue;
   typed_value rvalue;
@@ -151,7 +149,7 @@ static inline usize Type_rsize(Type t) {
       (r_struct, s, ({
          usize sz = 0;
          foreach (var_ i, mList_iter(s))
-           sz = MAX$(i.isconst ? 0 : i.offset + Type_rsize(i.type), sz);
+           sz = MAX$(i.isconst ? 0 : i.offset + Type_rsize(i.init.t), sz);
          lineup(sz, Type_ralig(t));
        })),
       (default, (usize)0)
@@ -204,7 +202,7 @@ typePrinter(Type) {
           PUTS("@");
           USETYPEPRINTER(usize, type->offset);
           PUTS(":");
-          USETYPEPRINTER(Type, type->type);
+          USETYPEPRINTER(Type, type->init.t);
         }
       }),
       (r_bitfield, st, {
@@ -217,7 +215,7 @@ typePrinter(Type) {
           PUTS("|");
           USETYPEPRINTER(usize, type->width);
           PUTS(":");
-          USETYPEPRINTER(Type, type->type);
+          USETYPEPRINTER(Type, type->init.t);
         }
       }),
       (r_func, fn, {
