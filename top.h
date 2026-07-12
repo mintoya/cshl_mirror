@@ -301,8 +301,53 @@ u64 Type_hash_hash(const void *t) { return Type_hash(*(Type *)t); }
   }                                        \
   _res;                                    \
 })
-fptr Env_store(Env *env, fptr mem) { TODO(); }
-value *Env_storeValue(Env *env, value val) { TODO(); }
+fptr Env_store(Env *env, fptr mem) {
+  var_ allocator = ((hxmap *)env->names)->allocator;
+  if_decl (var_ f, mxmap_get(env->internal_buffers, mem))
+    return *f;
+  var_ rp = (fptr){
+      .len = mem.len,
+      .ptr = (u8 *)memcpy(aCreate(allocator, u8, mem.len), mem.ptr, mem.len)
+  };
+  mxmap_set(env->internal_buffers, mem, rp);
+  return rp;
+}
+Type *Type_intern(Env *env, Type t);
+typed_value *Env_storeValue(Env *env, typed_value val) {
+  var_ allocator = ((hxmap *)env->names)->allocator;
+  val.t = *Type_intern(env, val.t);
+
+  tu_match(
+      val.t,
+      (c_type, _, {
+        if (val.v.c_type)
+          val.v.c_type = Type_intern(env, *val.v.c_type);
+      }),
+      (c_int, _, val.v.c_int = bigint_copy(allocator, val.v.c_int);), // TODO check if it already exists
+      (c_func, _, {
+        val.v.c_func.params = mList_map(
+            allocator,
+            val.v.c_func.params,
+            (typeof($)){
+                .name = Env_store(env, $.name),
+                .init = $.init ? Env_storeValue(env, *$.init) : nullptr,
+            }
+        );
+      }),
+      (default, {
+        usize rsize = Type_rsize(val.t);
+        if (rsize) {
+          if (val.v.value) {
+            var_ mem = aCreate(allocator, u8, rsize);
+            memcpy(mem, val.v.value, rsize);
+            val.v.value = mem;
+          }
+        }
+      })
+  );
+
+  return (typeof(val) *)Env_store(env, (fptr){sizeof(val), (u8 *)&val}).ptr;
+}
 Type *Type_intern(Env *env, Type t) {
   var_ allocator = ((hxmap *)env->names)->allocator;
   if_decl (var_ it, mxmap_get(env->internal_types1, t))
@@ -335,7 +380,7 @@ Type *Type_intern(Env *env, Type t) {
                       .isconst = $.isconst,
                       .name = Env_store(env, $.name),
                       .offset = $.offset,
-                      .init = (TODO(), $.init)
+                      .init = *Env_storeValue(env, $.init),
                   }
               )
           )
@@ -349,7 +394,7 @@ Type *Type_intern(Env *env, Type t) {
                   allocator,
                   s,
                   (typeof($)){
-                      .init = (TODO(), $.init),
+                      .init = *Env_storeValue(env, $.init),
                       .name = Env_store(env, $.name),
                       .width = $.width,
                   }
@@ -375,13 +420,13 @@ Type value_asType(value v) {
   );
 }
 Type typeof_value(value v) { return value_access(v).t; }
-value Type_asValue(Type t) {
+value Type_asValue(Env *env, Type t) {
   static msxmap(Type *) map;
   return (value){
       {},
       {
           .t = (Type)tu_of(c_type, {}),
-          .v = {.c_type = aValue(stdAlloc, t)}, // TODO
+          .v = {.c_type = Type_intern(env, t)},
       },
   };
 }
@@ -403,24 +448,23 @@ typePrinter(Env) {
 test_fn(typeof_test) {
   var_ ints = arena_new_ext(allocator, 1024);
   defer { arena_cleanup(ints); };
+  var_ env = Env_new(allocator, nullptr);
+  defer { Env_free(env); };
+
   value integer = (value){
       .rvalue = {.t = (Type)tu_of(c_int, {}), .v.c_int = BInt.from.i64(ints, 0)},
   };
   value integer2 = (value){
       .rvalue = {.t = (Type)tu_of(c_int, {}), .v.c_int = BInt.from.i64(ints, 1)},
   };
-  value integer3 = (value){
-      .lvalue = &integer2.rvalue,
-  };
-  // println("{value}", integer);
-  // println("{value}", integer2);
-  // println("{value}", integer3);
+  value integer3 = (value){.lvalue = &integer2.rvalue};
+
   test_assert(Type_equal(typeof_value(integer), typeof_value(integer2)));
   test_assert(Type_equal(typeof_value(integer), typeof_value(integer3)));
 
-  var_ at = typeof_value(Type_asValue(typeof_value(integer)));
+  var_ at = typeof_value(Type_asValue(env, typeof_value(integer)));
   test_assert(!Type_equal(typeof_value(integer), at));
-  var_ bt = typeof_value(Type_asValue(at));
+  var_ bt = typeof_value(Type_asValue(env, at));
   test_assert(Type_equal(bt, at));
   test_pass();
 }
