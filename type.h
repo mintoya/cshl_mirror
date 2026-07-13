@@ -249,7 +249,9 @@ typePrinter(typed_value) {
         USENAMEDPRINTER("ptr", in.v.c_func.es);
       }),
       (default, {
-        USETYPEPRINTER(fptr, ((fptr){Type_rsize(in.t), in.v.value}));
+        if (in.v.value)
+          USETYPEPRINTER(fptr, ((fptr){Type_rsize(in.t), in.v.value}));
+        else PUTS("empty poiner field?");
       })
   );
   PUTS("}");

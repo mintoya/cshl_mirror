@@ -272,4 +272,45 @@ struct { // operator precidence
     {"=", ~(usize)0},
 
 };
-// ast *ast_clone(AllocatorV allocator, ast a) {}
+
+
+ast ast_clone(AllocatorV allocator, ast a);
+ast *ast_cloneP(AllocatorV allocator, ast *a) { return a ? aValue(allocator, ast_clone(allocator, a[0])) : nullptr; }
+ast ast_clone(AllocatorV allocator, ast a) {
+  sliceDef(int);
+  return tu_match(
+      a,
+      (astEmptyStatement, e, (ast)tu_of(astEmptyStatement, {})),
+      (astId, i, (ast)tu_of(astId, slice_clone(allocator, i))),
+      (astNumber, i, (ast)tu_of(astNumber, slice_clone(allocator, i))),
+      (astString, i, (ast)tu_of(astString, slice_clone(allocator, i))),
+      (
+          astOp,
+          op,
+          (ast)tu_of(
+              astOp,
+              {
+                  .left = ast_cloneP(allocator, op.left),
+                  .right = ast_cloneP(allocator, op.right),
+                  .number_rep = op.number_rep,
+              }
+          )
+      ),
+      (
+          astDecl,
+          dec,
+          (ast)tu_of(
+              astDecl,
+              {
+                  .name = ast_cloneP(allocator, dec.name),
+                  .type = ast_cloneP(allocator, dec.type),
+                  .value = ast_cloneP(allocator, dec.value),
+                  .is_const = dec.is_const,
+              }
+          )
+      ),
+      (astBBlock, bb, (ast)tu_of(astBBlock, {nullptr, sentlist_clone(allocator, bb.stmts)})),
+      (astPBlock, bb, (ast)tu_of(astPBlock, {nullptr, sentlist_clone(allocator, bb.stmts)})),
+      (astABlock, bb, (ast)tu_of(astABlock, {nullptr, sentlist_clone(allocator, bb.items)})),
+  );
+}

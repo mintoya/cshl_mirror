@@ -1,12 +1,11 @@
 #pragma once
 #include "ast.h"
 #include "type.h"
-#include "wheels/allocators/fbaAllocator.h"
-#include "wheels/macros.h"
-#include "wheels/mytypes.h"
-#include "wheels/print.h"
-#include "wheels/sList.h"
-#include <string.h>
+#include <wheels/allocators/fbaAllocator.h>
+#include <wheels/macros.h>
+#include <wheels/mytypes.h>
+#include <wheels/print.h>
+#include <wheels/sList.h>
 tu_def(
     (Operation, u8),
     // l : left
@@ -92,6 +91,7 @@ typedef struct Env {
   msList(Operation) ops;
   msxmap(u32) names;
 
+  AllocatorV buffer_arena;
   mxmap(Type, Type *) internal_types1;
   mxmap(fptr, fptr) internal_buffers;
 
@@ -107,6 +107,7 @@ Env *Env_new(AllocatorV allocator, Env *parent) {
           msList_init(allocator, value),
           msList_init(allocator, Operation),
           msxmap_init(allocator, u32),
+          arena_new_ext(allocator, 1024),
           mxmap_init(allocator, Type, Type *, 32, Type_hash_hash, Type_cmp_hash),
           mxmap_init(allocator, fptr, fptr, 32, hashfptr, cmpfptr),
           parent,
@@ -120,6 +121,7 @@ void Env_free(Env *env) {
   msxmap_deinit(env->names);
   mxmap_deinit(env->internal_types1);
   mxmap_deinit(env->internal_buffers);
+  arena_cleanup(env->buffer_arena);
   aFree(allocator, env, sizeof(*env));
 }
 u32 Env_find(Env *env, fptr n) {
@@ -141,9 +143,7 @@ value Env_findI(Env *env, u32 idx) {
   return it->values[idx - it->start - 1];
 }
 u32 Env_addValue(Env *env, fptr name, Type val) {
-  var_ allocator = ((hxmap *)env->names)->allocator;
-  TODO();
-  // msList_push(allocator, env->values, val);
+  TODO(duplicate values into allocator);
   if (name.len) msxmap_set(env->names, name, msList_len(env->values));
   return msList_len(env->values) + env->start + 1;
 }
@@ -156,7 +156,7 @@ i8 icmp(isize a, isize b) {
              : 0;
 }
 i8 Type_cmp(Type a, Type b) {
-  if (!memcmp(&a, &b, sizeof(a)))
+  if (!mcmp(a, b))
     return 0;
   if (a.tag < b.tag) return -1;
   if (a.tag > b.tag) return 1;
@@ -165,13 +165,16 @@ i8 Type_cmp(Type a, Type b) {
       (builtin, id, {
         var_ id2 = tu_catch(builtin, b);
         if (id < id2) return -1;
-        if (id > id2) return -1;
+        if (id > id2) return 1;
         return 0;
       }),
+
       (r_void, _, return 0;),
       (c_int, _, return 0;),
       (c_ast, _, return 0;),
       (c_type, _, return 0;),
+      (c_func, _, return 0;),
+
       (r_uint, ai, { return icmp(ai, tu_catch(r_uint, b)); }),
       (r_sint, ai, { return icmp(ai, tu_catch(r_sint, b)); }),
       (r_ptr, ai, { return Type_cmp(ai[0], tu_catch(r_ptr, b)[0]); }),
@@ -231,7 +234,6 @@ i8 Type_cmp(Type a, Type b) {
         }
         return 0;
       }),
-      (c_func, _, { TODO(); }),
   );
 }
 i8 Type_cmp_hash(const void *a, const void *b) { return Type_cmp(*(Type *)a, *(Type *)b); }
@@ -286,47 +288,29 @@ u64 Type_hash(Type a) {
 u64 Type_hash_hash(const void *t) { return Type_hash(*(Type *)t); }
 //}
 
-#define mList_map(allocator, list, ...) ({ \
-  var_ _res =                              \
-      mList_init(                          \
-          allocator,                       \
-          typeof(({                        \
-            mList_iType(list) $;           \
-            __VA_ARGS__;                   \
-          })),                             \
-          mList_len(list)                  \
-      );                                   \
-  foreach (var_ $, mList_iter(list)) {     \
-    mList_push(_res, __VA_ARGS__);         \
-  }                                        \
-  _res;                                    \
-})
 fptr Env_store(Env *env, fptr mem) {
-  var_ allocator = ((hxmap *)env->names)->allocator;
   if_decl (var_ f, mxmap_get(env->internal_buffers, mem))
     return *f;
   var_ rp = (fptr){
       .len = mem.len,
-      .ptr = (u8 *)memcpy(aCreate(allocator, u8, mem.len), mem.ptr, mem.len)
+      .ptr = (u8 *)memcpy(aCreate(env->buffer_arena, u8, mem.len), mem.ptr, mem.len)
   };
   mxmap_set(env->internal_buffers, mem, rp);
   return rp;
 }
 Type *Type_intern(Env *env, Type t);
 typed_value *Env_storeValue(Env *env, typed_value val) {
-  var_ allocator = ((hxmap *)env->names)->allocator;
   val.t = *Type_intern(env, val.t);
-
   tu_match(
       val.t,
       (c_type, _, {
         if (val.v.c_type)
           val.v.c_type = Type_intern(env, *val.v.c_type);
       }),
-      (c_int, _, val.v.c_int = bigint_copy(allocator, val.v.c_int);), // TODO check if it already exists
+      (c_int, _, val.v.c_int = bigint_copy(env->buffer_arena, val.v.c_int);), // TODO check if it already exists
       (c_func, _, {
         val.v.c_func.params = mList_map(
-            allocator,
+            env->buffer_arena,
             val.v.c_func.params,
             (typeof($)){
                 .name = Env_store(env, $.name),
@@ -338,7 +322,7 @@ typed_value *Env_storeValue(Env *env, typed_value val) {
         usize rsize = Type_rsize(val.t);
         if (rsize) {
           if (val.v.value) {
-            var_ mem = aCreate(allocator, u8, rsize);
+            var_ mem = aCreate(env->buffer_arena, u8, rsize);
             memcpy(mem, val.v.value, rsize);
             val.v.value = mem;
           }
@@ -349,7 +333,6 @@ typed_value *Env_storeValue(Env *env, typed_value val) {
   return (typeof(val) *)Env_store(env, (fptr){sizeof(val), (u8 *)&val}).ptr;
 }
 Type *Type_intern(Env *env, Type t) {
-  var_ allocator = ((hxmap *)env->names)->allocator;
   if_decl (var_ it, mxmap_get(env->internal_types1, t))
     return *it;
   t = tu_match(
@@ -366,14 +349,14 @@ Type *Type_intern(Env *env, Type t) {
       (r_sint, s, (Type)tu_of(r_sint, s)),
       (r_ptr, p, (Type)tu_of(r_ptr, Type_intern(env, *p))),
       (r_arr, a, (Type)tu_of(r_arr, {Type_intern(env, *a.type), a.count})),
-      (r_func, f, (Type)tu_of(r_func, mList_map(allocator, f, *Type_intern(env, $)))),
+      (r_func, f, (Type)tu_of(r_func, mList_map(env->buffer_arena, f, *Type_intern(env, $)))),
       (
           r_struct,
           s,
           (Type)tu_of(
               r_struct,
               mList_map(
-                  allocator,
+                  env->buffer_arena,
                   s,
                   (typeof($)){
                       .alignment = $.alignment,
@@ -391,7 +374,7 @@ Type *Type_intern(Env *env, Type t) {
           (Type)tu_of(
               r_bitfield,
               mList_map(
-                  allocator,
+                  env->buffer_arena,
                   s,
                   (typeof($)){
                       .init = *Env_storeValue(env, $.init),
@@ -403,7 +386,7 @@ Type *Type_intern(Env *env, Type t) {
       )
   );
 
-  var_ res = aValue(allocator, t);
+  var_ res = (typeof(t) *)Env_store(env, (fptr){sizeof(t), (u8 *)&t}).ptr;
   mxmap_set(env->internal_types1, t, res);
   return res;
 }
@@ -446,6 +429,7 @@ typePrinter(Env) {
 }
 
 test_fn(typeof_test) {
+
   var_ ints = arena_new_ext(allocator, 1024);
   defer { arena_cleanup(ints); };
   var_ env = Env_new(allocator, nullptr);
@@ -466,5 +450,26 @@ test_fn(typeof_test) {
   test_assert(!Type_equal(typeof_value(integer), at));
   var_ bt = typeof_value(Type_asValue(env, at));
   test_assert(Type_equal(bt, at));
+  println("{*:Env}", env);
+  test_pass();
+}
+test_fn(pointers) {
+  var_ ints = arena_new_ext(allocator, 1024);
+  defer { arena_cleanup(ints); };
+  var_ env = Env_new(allocator, nullptr);
+  defer { Env_free(env); };
+
+  value integer = (value){
+      .rvalue = {.t = (Type)tu_of(c_int, {}), .v.c_int = BInt.from.i64(ints, 0)},
+  };
+
+  value iptr = (value){
+      .rvalue = {
+          .t = (Type)tu_of(r_ptr, Type_intern(env, (Type)tu_of(c_int, {}))),
+          .v = {.value = &integer.rvalue.v.c_int}
+      }
+  };
+  print("{value}", iptr);
+
   test_pass();
 }
