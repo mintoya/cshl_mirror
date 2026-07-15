@@ -66,17 +66,17 @@ tu_def(
     (astABlock, struct {u8* loc ; sentList_t(ast *) items; }),
 );
 typePrinter("astTag", itypeof(ast, tag)) {
-  tu_match(
+  tu_match_void(
       ((ast){.tag = in}),
-      (astId, _, PUTS("astId")),
-      (astNumber, _, PUTS("astNum")),
-      (astString, _, PUTS("astStr")),
-      (astDecl, _, PUTS("astDecl")),
-      (astOp, _, PUTS("astOp")),
-      (astBBlock, _, PUTS("astBBlock")),
-      (astPBlock, _, PUTS("astPBlock")),
-      (astABlock, _, PUTS("astABlock")),
-      (astEmptyStatement, _, PUTS("astEmpty")),
+      (astId, _, PUTS("astId");),
+      (astNumber, _, PUTS("astNum");),
+      (astString, _, PUTS("astStr");),
+      (astDecl, _, PUTS("astDecl");),
+      (astOp, _, PUTS("astOp");),
+      (astBBlock, _, PUTS("astBBlock");),
+      (astPBlock, _, PUTS("astPBlock");),
+      (astABlock, _, PUTS("astABlock");),
+      (astEmptyStatement, _, PUTS("astEmpty");),
   );
 }
 static inline void print_ast_indent(int indent, outputFunction put, void *_arb) {
@@ -85,7 +85,7 @@ static inline void print_ast_indent(int indent, outputFunction put, void *_arb) 
 }
 static void print_ast_recursive(ast *node, int indent, outputFunction put, void *_arb) {
   if (!node) return PUTS("null\n");
-  tu_match(
+  tu_match_void(
       (*node),
       (astId, id, {
         PUTS("Id '");
@@ -165,20 +165,20 @@ typePrinter("ast", ast *) { print_ast_recursive(in, 0, put, _arb); }
 // }
 //
 __attribute__((noreturn)) void error_ast(ast a, slice(c8) message) {
-  tu_match(
+  tu_match_void(
       a,
-      (astId, s, error_at(s.ptr, message)),
-      (astNumber, s, error_at(s.ptr, message)),
-      (astString, s, error_at(s.ptr, message)),
+      (astId, s, error_at(s.ptr, message);),
+      (astNumber, s, error_at(s.ptr, message);),
+      (astString, s, error_at(s.ptr, message);),
 
-      (astDecl, d, error_ast(d.name[0], message)),
-      (astOp, o, error_ast(o.right[0], message)),
+      (astDecl, d, error_ast(d.name[0], message);),
+      (astOp, o, error_ast(o.right[0], message);),
 
-      (astPBlock, b, error_at(b.loc, message)),
-      (astBBlock, b, error_at(b.loc, message)),
-      (astABlock, b, error_at(b.loc, message)),
+      (astPBlock, b, error_at(b.loc, message);),
+      (astBBlock, b, error_at(b.loc, message);),
+      (astABlock, b, error_at(b.loc, message);),
 
-      (default, error_at(nullptr, message)),
+      (default, error_at(nullptr, message);),
   );
   unreachable();
 }
@@ -342,7 +342,7 @@ ast ast_clone(AllocatorV allocator, ast a);
 ast *ast_cloneP(AllocatorV allocator, ast *a) { return a ? aValue(allocator, ast_clone(allocator, a[0])) : nullptr; }
 ast ast_clone(AllocatorV allocator, ast a) {
   sliceDef(int);
-  return tu_match(
+  return tu_match_exp(
       a,
       (astEmptyStatement, e, (ast)tu_of(astEmptyStatement, {})),
       (astId, i, (ast)tu_of(astId, slice_clone(allocator, i))),

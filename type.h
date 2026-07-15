@@ -87,7 +87,7 @@ r_func cf_convert(
   return mList_map(allocator, v.params, $.init->t);
 }
 static inline usize Type_ralig(Type t) {
-  return tu_match(
+  return tu_match_exp(
       t,
       (r_void, _, (usize)1),
       (r_uint, u, lineup(u, 8) / 8), // TODO
@@ -110,7 +110,7 @@ static inline usize Type_ralig(Type t) {
   );
 }
 static inline usize Type_rsize(Type t) {
-  return tu_match(
+  return tu_match_exp(
       t,
       (r_void, _, (usize)0),
       (r_uint, u, lineup(u, 8) / 8),
@@ -144,7 +144,7 @@ i8 Type_cmp(Type a, Type b) {
     return 0;
   if (a.tag < b.tag) return -1;
   if (a.tag > b.tag) return 1;
-  tu_match(
+  tu_match_void(
       a,
       (builtin, id, {
         var_ id2 = tu_catch(builtin, b);
@@ -222,18 +222,18 @@ i8 Type_cmp(Type a, Type b) {
 }
 i8 Type_cmp_hash(const void *a, const void *b) { return Type_cmp(*(Type *)a, *(Type *)b); }
 u64 Type_hash(Type a) {
-  tu_match(
+  tu_match_void(
       a,
-      (builtin, b, return b + 6),
-      (r_void, _, return 0),
-      (c_int, _, return 1),
-      (c_type, _, return 2),
-      (c_ast, _, return 3),
-      (c_func, _, return 4),
-      (r_uint, v, return (u64)v ^ 0x1000),
-      (r_sint, v, return (u64)v ^ 0x2000),
-      (r_ptr, p, return Type_hash(*p) ^ 0x3000),
-      (r_arr, arr, return (Type_hash(*arr.type) * 31) ^ arr.count ^ 0x4000),
+      (builtin, b, return b + 6;),
+      (r_void, _, return 0;),
+      (c_int, _, return 1;),
+      (c_type, _, return 2;),
+      (c_ast, _, return 3;),
+      (c_func, _, return 4;),
+      (r_uint, v, return (u64)v ^ 0x1000;),
+      (r_sint, v, return (u64)v ^ 0x2000;),
+      (r_ptr, p, return Type_hash(*p) ^ 0x3000;),
+      (r_arr, arr, return (Type_hash(*arr.type) * 31) ^ arr.count ^ 0x4000;),
       (r_struct, l, {
         u64 h = 0x5000;
         var_ len = mList_len(l);
@@ -310,7 +310,7 @@ typePrinter(builtin_id) {
   }
 }
 typePrinter(Type) {
-  tu_match(
+  tu_match_void(
       in,
       (builtin, builtin, {
         PUTS("builtin:");
@@ -365,21 +365,21 @@ typePrinter(Type) {
         if (mList_len(fn)) USETYPEPRINTER(Type, mList_last(fn));
         PUTS(")");
       }),
-      (c_func, f, PUTS("fn")),
-      (c_int, i, PUTS("int")),
-      (c_type, t, PUTS("type")),
-      (c_ast, t, PUTS("ast")),
+      (c_func, f, PUTS("fn");),
+      (c_int, i, PUTS("int");),
+      (c_type, t, PUTS("type");),
+      (c_ast, t, PUTS("ast");),
   );
 }
 typePrinter(typed_value) {
   PUTS("{t:");
   USETYPEPRINTER(Type, in.t);
   PUTS(",v:");
-  tu_match(
+  tu_match_void(
       in.t,
-      (c_int, _, USENAMEDPRINTER("bigint", in.v.c_int)),
-      (c_ast, _, USENAMEDPRINTER("ast", in.v.c_ast)),
-      (c_type, _, USETYPEPRINTER(Type, *in.v.c_type)),
+      (c_int, _, USENAMEDPRINTER("bigint", in.v.c_int);),
+      (c_ast, _, USENAMEDPRINTER("ast", in.v.c_ast);),
+      (c_type, _, USETYPEPRINTER(Type, *in.v.c_type);),
       (c_func, fn, {
         PUTS("fn @");
         USENAMEDPRINTER("ptr", in.v.c_func.es);

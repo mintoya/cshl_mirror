@@ -134,7 +134,7 @@ void env_push(IrBuilder *b) {
 void env_pop(IrBuilder *b) { b->env = scope_parent(b->env); }
 u32 env_addOp(IrBuilder *b, opcode o) {
   mList_push(b->code, o);
-  return tu_match(
+  return tu_match_exp(
       o,
       (ostr, _, ++b->next_reg),
       (oint, _, TODO(copy the int?);++b->next_reg),
@@ -148,7 +148,7 @@ u32 env_addOp(IrBuilder *b, opcode o) {
 
 u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
   assertMessage(node);
-  return tu_match(
+  return tu_match_exp(
       (*node),
       (astDecl, decl, ({
          u32 val_reg = 0;
@@ -193,7 +193,7 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
            var_ list = b->code;
            var_ offset = mList_len(list);
            var_ len = 0;
-           tu_match(
+           tu_match_void(
                *op.right,
                (astPBlock, bb, {
                  len = sentList_len(bb.stmts);
