@@ -12,14 +12,16 @@
 #endif
 
 __attribute__((noreturn)) void error_at(u8 *location, fptr message);
-#define error_at(loc, message) (error_at)(               \
-    loc,                                                 \
-    match_type(                                          \
-        message,                                         \
-        (char *, x, slice_clone(stdAlloc, fp(message))), \
-        (default, fp(message))                           \
-    )                                                    \
-)
+__attribute__((noreturn)) void error_at_sc8(u8 *loc, slice(c8) message) { error_at(loc, (fptr){message.len, (u8 *)message.ptr}); };
+__attribute__((noreturn)) void error_at_str(u8 *loc, char *messag) { error_at(loc, fptr_CSP(messag)); };
+#define error_at(loc, message) \
+  _Generic(                    \
+      message,                 \
+      char *: error_at_str,    \
+      slice(c8): error_at_sc8, \
+      default: error_at        \
+  )(loc, message)
+
 //
 // ast {
 typedef struct ast ast;

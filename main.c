@@ -3,6 +3,7 @@
 #include <wheels/examples/includeAll.c>
 
 #include "ast.h"
+#include "operations.h"
 #include "tok1.h"
 #include "tok2.h"
 #include "wheels/mytypes.h"

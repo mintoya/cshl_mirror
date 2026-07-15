@@ -19,6 +19,22 @@
     #define COMMON_CFLAGS "-std=gnu23", "-fdefer-ts", "-D__PRETTY_FUNCTION__=__FUNCTION__", "-fno-sanitize=vla-bound", "-rdynamic", "-I", "deps"
   #endif
 
+bool update_deps() {
+  Cmd cmd = {0};
+
+  nob_log(INFO, "Pulling deps/nob.h...");
+  cmd_append(&cmd, "git", "-C", "deps/nob.h", "pull", "--autostash");
+  if (!cmd_run_sync(cmd))
+    return false;
+
+  cmd.count = 0;
+  nob_log(INFO, "Pulling deps/wheels...");
+  cmd_append(&cmd, "git", "-C", "deps/wheels", "pull", "--autostash");
+  if (!cmd_run_sync(cmd))
+    return false;
+
+  return true;
+}
 bool build_main(Cmd *cmd, Procs *procs) {
   if (!mkdir_if_not_exists("build"))
     return false;
@@ -72,6 +88,13 @@ int main(int argc, char **argv) {
     usage(program);
     return 0;
   }
+
+  do {
+    if (!update_deps())
+      return 1;
+    if (!nob_procs_wait(procs))
+      return 1;
+  } while (0);
 
   if (!strcmp(subcmd, "run")) {
     if (!build_main(&cmd, &procs))
