@@ -3,32 +3,6 @@ any:type: @any();
 ast:type: @ast();
 int:type: @int();
 
-i64:type:@sint(64);
-i32:type:@sint(32);
-i16:type:@sint(16);
-i8 :type:@sint(8);
-
-u64:type:@uint(64);
-u32:type:@uint(32);
-u16:type:@uint(16);
-u8 :type:@uint(8);
-
-a[1];
-[]u65;
-[*]u65;
-
-(fn((x : ast),ast)
-  {
-    @if(
-      @typeof(@uqot(x)) == @typeof(1) , 
-      return x
-    );
-    @compileError("unexpected");
-    return "";
-  } 
-)( 1 + 2 );
-
-
 macro::fn((args:ast),ast);
 
 if! : macro : {
@@ -59,6 +33,7 @@ while! :: macro{
 
 
 if! 1 { 5 * 10;};
+if!(1( { 5 * 10;}));
 i := 68;
 while! i {i = i - 1;};
 

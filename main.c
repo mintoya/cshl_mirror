@@ -5,11 +5,10 @@
 #include "ast.h"
 #include "tok1.h"
 #include "tok2.h"
-#include "top.h"
 #include "wheels/mytypes.h"
 
 fptr *filectx = nullptr;
-__attribute__((noreturn)) void error_at(u8 *location, slice(c8) message) {
+__attribute__((noreturn)) void(error_at)(u8 *location, fptr message) {
   assertMessage(filectx);
   usize loc = (u8 *)location - filectx->ptr;
   assertMessage(loc <= filectx->len);
@@ -36,11 +35,12 @@ void on_allocation(allocationType *t) {
 cmd_main(
     int nargs,
     char **args,
-    (bool, help, ("-h", "--help"), "print help message", false),
-    (bool, echo_ast, ("--log-ast"), "log the ast", false),
-    (bool, echo_file, ("--log-file"), "echo read file", false),
-    (bool, log_tokens, ("--log-tokens"), "emmit list of tokens", false),
-    (bool, execute, ("-r", "--run"), "interpret the ast", false)
+    (bool, help /*      */, ("-h", "--help") /**/, "print help message" /*  */, false),
+    (bool, execute /*   */, ("-r", "--run") /* */, "interpret the ast" /*   */, false),
+
+    (bool, echo_ast /*  */, ("--log-ast") /*   */, "log the ast" /*         */, false),
+    (bool, echo_file /* */, ("--log-file") /*  */, "echo read file" /*      */, false),
+    (bool, log_tokens /**/, ("--log-tokens") /**/, "emmit list of tokens" /**/, false),
 ) {
   var_ allocator = arena_new_ext(stdAlloc, 1024);
   defer {
@@ -86,7 +86,6 @@ cmd_main(
   if (echo_ast)
     println("{ast}", ast);
 
-  println("{*:*:i32}", (int **)(REF((int *)REF(56))));
   if (execute) {
     TODO();
   }

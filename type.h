@@ -9,9 +9,6 @@
 #include <wheels/mytypes.h>
 #include <wheels/sList.h>
 
-typedef struct Type Type;
-typedef struct r_struct_item r_struct_item;
-typedef struct r_bitf_item r_bitf_item;
 typedef enum : u8 {
   builtin_if,
   builtin_while,
@@ -26,6 +23,10 @@ typedef enum : u8 {
   builtin_return,
   builtin_break,
 } builtin_id;
+//{type
+typedef struct Type Type;
+typedef struct r_struct_item r_struct_item;
+typedef struct r_bitf_item r_bitf_item;
 typedef struct Env Env;
 typedef struct func_value {
   mList(struct {
@@ -34,7 +35,6 @@ typedef struct func_value {
     // the type is in there
     struct typed_value *init;
   }) params;
-
   Env *es;
 } func_value;
 tu_def( // type
@@ -80,34 +80,11 @@ typedef struct r_bitf_item {
   fptr name;
   usize width;
 } r_bitf_item;
-typedef struct value {
-  typed_value *lvalue;
-  typed_value rvalue;
-} value;
-//{value macros
-#define value_access(value) (*({             \
-  var_ _value_ptr = &(value);                \
-  _value_ptr->lvalue ?: &_value_ptr->rvalue; \
-}))
-#define value_value(value) ({ \
-  var_ _value = (value);      \
-  _value.rvalue =             \
-      _value.lvalue           \
-          ? *_value.lvalue    \
-          : _value.rvalue;    \
-  _value.lvalue = nullptr;    \
-  _value;                     \
-})
-//}
-inline bool Type_isComptime(Type t) {
-  return tu_match(
-      t,
-      (c_int, _, true),
-      (c_ast, _, true),
-      (c_type, _, true),
-      (c_func, _, true),
-      (default, false)
-  );
+r_func cf_convert(
+    AllocatorV allocator,
+    itypeof(itypeof(typed_value, v), c_func) v
+) {
+  return mList_map(allocator, v.params, $.init->t);
 }
 static inline usize Type_ralig(Type t) {
   return tu_match(
@@ -155,6 +132,166 @@ static inline usize Type_rsize(Type t) {
       (default, (usize)0)
   );
 }
+i8 icmp(isize a, isize b) {
+  return a > b
+             ? -1
+         : a < b
+             ? 1
+             : 0;
+}
+i8 Type_cmp(Type a, Type b) {
+  if (!mcmp(a, b))
+    return 0;
+  if (a.tag < b.tag) return -1;
+  if (a.tag > b.tag) return 1;
+  tu_match(
+      a,
+      (builtin, id, {
+        var_ id2 = tu_catch(builtin, b);
+        if (id < id2) return -1;
+        if (id > id2) return 1;
+        return 0;
+      }),
+
+      (r_void, _, return 0;),
+      (c_int, _, return 0;),
+      (c_ast, _, return 0;),
+      (c_type, _, return 0;),
+      (c_func, _, return 0;),
+
+      (r_uint, ai, { return icmp(ai, tu_catch(r_uint, b)); }),
+      (r_sint, ai, { return icmp(ai, tu_catch(r_sint, b)); }),
+      (r_ptr, ai, { return Type_cmp(ai[0], tu_catch(r_ptr, b)[0]); }),
+      (r_arr, ai, {
+        var_ bi = tu_catch(r_arr, b);
+        return Type_cmp(ai.type[0], bi.type[0])
+                   ?: icmp(ai.count, bi.count);
+      }),
+      (r_func, ai, {
+        var_ bi = tu_catch(r_func, b);
+        var_ la = mList_len(ai);
+        var_ lb = mList_len(bi);
+        if (la != lb) return icmp(la, lb);
+        foreach (var_ i, range(0, la)) {
+          var_ a = mList_arr(ai)[i];
+          var_ b = mList_arr(bi)[i];
+          var_ cmp = Type_cmp(a, b);
+          if (cmp) return cmp;
+        }
+        return 0;
+      }),
+      (r_bitfield, ai, {
+        var_ bi = tu_catch(r_bitfield, b);
+        var_ la = mList_len(ai);
+        var_ lb = mList_len(bi);
+        if (la != lb) return icmp(la, lb);
+        foreach (var_ i, range(0, la)) {
+          var_ a = mList_arr(ai)[i];
+          var_ b = mList_arr(bi)[i];
+          if_decl (var_ cmp, Type_cmp(a.init.t, b.init.t))
+            return cmp;
+          if_decl (var_ cmp, fptr_cmp(a.name, b.name))
+            return cmp;
+          if_decl (var_ cmp, icmp(a.width, b.width))
+            return cmp;
+        }
+        return 0;
+      }),
+      (r_struct, ai, {
+        var_ bi = tu_catch(r_struct, b);
+        var_ la = mList_len(ai);
+        var_ lb = mList_len(bi);
+        if (la != lb) return icmp(la, lb);
+        foreach (var_ i, range(0, la)) {
+          var_ a = mList_arr(ai)[i];
+          var_ b = mList_arr(bi)[i];
+          if_decl (var_ cmp, Type_cmp(a.init.t, b.init.t))
+            return cmp;
+          if_decl (var_ cmp, fptr_cmp(a.name, b.name))
+            return cmp;
+          if_decl (var_ cmp, icmp(a.isconst, b.isconst))
+            return cmp;
+          if_decl (var_ cmp, icmp(a.alignment, b.alignment))
+            return cmp;
+          if_decl (var_ cmp, icmp(a.offset, b.offset))
+            return cmp;
+        }
+        return 0;
+      }),
+  );
+}
+i8 Type_cmp_hash(const void *a, const void *b) { return Type_cmp(*(Type *)a, *(Type *)b); }
+u64 Type_hash(Type a) {
+  tu_match(
+      a,
+      (builtin, b, return b + 6),
+      (r_void, _, return 0),
+      (c_int, _, return 1),
+      (c_type, _, return 2),
+      (c_ast, _, return 3),
+      (c_func, _, return 4),
+      (r_uint, v, return (u64)v ^ 0x1000),
+      (r_sint, v, return (u64)v ^ 0x2000),
+      (r_ptr, p, return Type_hash(*p) ^ 0x3000),
+      (r_arr, arr, return (Type_hash(*arr.type) * 31) ^ arr.count ^ 0x4000),
+      (r_struct, l, {
+        u64 h = 0x5000;
+        var_ len = mList_len(l);
+        foreach (var_ i, range(0, len)) {
+          var_ item = mList_arr(l)[i];
+          h = (h * 31) ^ Type_hash(item.init.t);
+          h = (h * 31) ^ fptr_hash(item.name);
+          h = (h * 31) ^ item.isconst;
+          h = (h * 31) ^ item.alignment;
+          h = (h * 31) ^ item.offset;
+        }
+        return h;
+      }),
+      (r_bitfield, l, {
+        u64 h = 0x6000;
+        var_ len = mList_len(l);
+        foreach (var_ i, range(0, len)) {
+          var_ item = mList_arr(l)[i];
+          h = (h * 31) ^ Type_hash(item.init.t);
+          h = (h * 31) ^ fptr_hash(item.name);
+          h = (h * 31) ^ item.width;
+        }
+        return h;
+      }),
+      (r_func, l, {
+        u64 h = 0x7000;
+        var_ len = mList_len(l);
+        foreach (var_ i, range(0, len)) {
+          var_ t = mList_arr(l)[i];
+          h = (h * 31) ^ Type_hash(t);
+        }
+        return h;
+      })
+  );
+}
+u64 Type_hash_hash(const void *t) { return Type_hash(*(Type *)t); }
+//}
+//{value
+typedef struct value {
+  typed_value *lvalue;
+  typed_value rvalue;
+} value;
+//{value macros
+#define value_access(value) (*({             \
+  var_ _value_ptr = &(value);                \
+  _value_ptr->lvalue ?: &_value_ptr->rvalue; \
+}))
+#define value_value(value) ({ \
+  var_ _value = (value);      \
+  _value.rvalue =             \
+      _value.lvalue           \
+          ? *_value.lvalue    \
+          : _value.rvalue;    \
+  _value.lvalue = nullptr;    \
+  _value;                     \
+})
+//}
+//}
 
 typePrinter(builtin_id) {
   switch (in) {
@@ -244,7 +381,6 @@ typePrinter(typed_value) {
       (c_ast, _, USENAMEDPRINTER("ast", in.v.c_ast)),
       (c_type, _, USETYPEPRINTER(Type, *in.v.c_type)),
       (c_func, fn, {
-        TODO();
         PUTS("fn @");
         USENAMEDPRINTER("ptr", in.v.c_func.es);
       }),

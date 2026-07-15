@@ -11,7 +11,27 @@
   #define _Nullable
 #endif
 
-void error_at(u8 *location, slice(c8) message);
+__attribute__((noreturn)) void error_at(u8 *location, fptr message);
+// #define error_at(loc, message) (error_at)(               \
+//     loc,                                                 \
+//     match_type(                                          \
+//         message,                                         \
+//         (char *, x, slice_clone(stdAlloc, fp(message))), \
+//         (default, fp(message))                           \
+//     )                                                    \
+// )
+#define error_at(loc, message) (error_at)(               \
+    loc,                                                 \
+    ({                                                   \
+      typeof(message) _msg[1] = {};                      \
+      _msg[0] = message;                                 \
+      match_type(                                        \
+          (*_msg),                                       \
+          (char *, x, slice_clone(stdAlloc, fp(*_msg))), \
+          (default, fp(*_msg))                           \
+      );                                                 \
+    })                                                   \
+)
 //
 // ast {
 typedef struct ast ast;
@@ -272,7 +292,61 @@ struct { // operator precidence
     {"=", ~(usize)0},
 
 };
-
+static struct { // opNumbers
+  u32
+      call,
+      dot,
+      mul,
+      div,
+      mod,
+      plus,
+      minus,
+      oand,
+      onot,
+      oor,
+      oband,
+      obnot,
+      obor,
+      shr,
+      shl,
+      mor,
+      les,
+      moq,
+      leq,
+      eq,
+      neq,
+      pipe,
+      set;
+} opNumbers = {};
+[[gnu::constructor]] void initOpNumbers() {
+  typedef union {
+    char s[sizeof(u32)];
+    u32 n;
+  } opS;
+  opNumbers.call = /* */ ((opS){"()"}).n;
+  opNumbers.dot = /*  */ ((opS){"."}).n;
+  opNumbers.mul = /*  */ ((opS){"*"}).n;
+  opNumbers.div = /*  */ ((opS){"/"}).n;
+  opNumbers.mod = /*  */ ((opS){"%"}).n;
+  opNumbers.plus = /* */ ((opS){"+"}).n;
+  opNumbers.minus = /**/ ((opS){"-"}).n;
+  opNumbers.oand = /* */ ((opS){"and"}).n;
+  opNumbers.onot = /* */ ((opS){"not"}).n;
+  opNumbers.oor = /*  */ ((opS){"or"}).n;
+  opNumbers.oband = /**/ ((opS){"band"}).n;
+  opNumbers.obnot = /**/ ((opS){"bnot"}).n;
+  opNumbers.obor = /* */ ((opS){"bor"}).n;
+  opNumbers.shr = /*  */ ((opS){"shr"}).n;
+  opNumbers.shl = /*  */ ((opS){"shl"}).n;
+  opNumbers.mor = /*  */ ((opS){">"}).n;
+  opNumbers.les = /*  */ ((opS){"<"}).n;
+  opNumbers.moq = /*  */ ((opS){">="}).n;
+  opNumbers.leq = /*  */ ((opS){"<="}).n;
+  opNumbers.eq = /*   */ ((opS){"=="}).n;
+  opNumbers.neq = /*  */ ((opS){"!="}).n;
+  opNumbers.pipe = /* */ ((opS){"|>"}).n;
+  opNumbers.set = /*  */ ((opS){"="}).n;
+}
 
 ast ast_clone(AllocatorV allocator, ast a);
 ast *ast_cloneP(AllocatorV allocator, ast *a) { return a ? aValue(allocator, ast_clone(allocator, a[0])) : nullptr; }

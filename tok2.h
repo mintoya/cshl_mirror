@@ -4,17 +4,7 @@
 #include <wheels/mytypes.h>
 #include <wheels/sList.h>
 
-#define __musttail___ __attribute__((musttail))
-
-#if defined(_WIN32) && defined(__clang__)
-  #define TCO_ABI __attribute__((sysv_abi))
-#else
-  #define TCO_ABI
-#endif
-
-__attribute__((noreturn)) void error_Tok(Token t, slice(c8) msg) {
-  error_at(t.s.ptr, msg);
-}
+__attribute__((noreturn)) void error_Tok(Token t, slice(c8) msg) { error_at(t.s.ptr, msg); }
 
 CONST_EXPR Token t_comma = (Token){(fptr){1, (u8[]){','}}, t_punctuation};
 CONST_EXPR Token t_semi = (Token){(fptr){1, (u8[]){';'}}, t_punctuation};
@@ -228,8 +218,8 @@ ast *popVal(AllocatorV allocator, slice(Token) * backptr) {
     error_Tok(back.ptr[0], snprint(stdAlloc, "compiler expected value here"));
   return nullptr;
 }
-TCO_ABI ast *parseExprPartial(AllocatorV allocator, ast *_Nullable current, slice(Token) back);
-TCO_ABI ast *parseExpr(AllocatorV allocator, slice(Token) tokens) {
+ast *parseExprPartial(AllocatorV allocator, ast *_Nullable current, slice(Token) back);
+ast *parseExpr(AllocatorV allocator, slice(Token) tokens) {
   if_decl (var_ eq_tok, next_tok_balanced(allocator, tokens, t_equals)) {
     usize idx = eq_tok - tokens.ptr;
     var_ s = slice_split(tokens, (0, idx), (idx + 1, -1));
@@ -243,6 +233,7 @@ TCO_ABI ast *parseExpr(AllocatorV allocator, slice(Token) tokens) {
     memcpy(opNode->astOp.symLiteral, eq_tok->s.ptr, eq_tok->s.len);
     return opNode;
   } else return parseExprPartial(allocator, nullptr, tokens);
+  unreachable();
 }
 ast *parseOperations(AllocatorV allocator, ast *current, slice(Token) * backp) {
   assertMessage(backp);
@@ -301,7 +292,7 @@ ast *parseOperations(AllocatorV allocator, ast *current, slice(Token) * backp) {
   *backp = back;
   return astList[0];
 }
-TCO_ABI ast *parseExprPartial(AllocatorV allocator, ast *_Nullable current, slice(Token) back) {
+ast *parseExprPartial(AllocatorV allocator, ast *_Nullable current, slice(Token) back) {
   if (!back.len) return current ?: aValue(allocator, (ast)tu_of(astEmptyStatement, {}));
   if (!current) {
     if (back.ptr[0].kind == t_operator && Token_nullable_left(back.ptr[0])) {
@@ -324,7 +315,7 @@ TCO_ABI ast *parseExprPartial(AllocatorV allocator, ast *_Nullable current, slic
 
   if (back.ptr[0].kind == t_operator) {
     ast *nc = parseOperations(allocator, current, &back);
-    __musttail___ return parseExprPartial(allocator, nc, back);
+    return parseExprPartial(allocator, nc, back);
   }
 
   if (isVal(back.ptr[0]) || isBlockStart(back.ptr[0])) {
