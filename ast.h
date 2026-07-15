@@ -12,25 +12,13 @@
 #endif
 
 __attribute__((noreturn)) void error_at(u8 *location, fptr message);
-// #define error_at(loc, message) (error_at)(               \
-//     loc,                                                 \
-//     match_type(                                          \
-//         message,                                         \
-//         (char *, x, slice_clone(stdAlloc, fp(message))), \
-//         (default, fp(message))                           \
-//     )                                                    \
-// )
 #define error_at(loc, message) (error_at)(               \
     loc,                                                 \
-    ({                                                   \
-      typeof(message) _msg[1] = {};                      \
-      _msg[0] = message;                                 \
-      match_type(                                        \
-          (*_msg),                                       \
-          (char *, x, slice_clone(stdAlloc, fp(*_msg))), \
-          (default, fp(*_msg))                           \
-      );                                                 \
-    })                                                   \
+    match_type(                                          \
+        message,                                         \
+        (char *, x, slice_clone(stdAlloc, fp(message))), \
+        (default, fp(message))                           \
+    )                                                    \
 )
 //
 // ast {
