@@ -1,6 +1,7 @@
 #include "ast.h"
-#include "wheels/macros.h"
+#include "type.h"
 #include <wheels/bigint.h>
+#include <wheels/macros.h>
 #include <wheels/sList.h>
 // 0 in any location is null
 tu_def(
@@ -8,6 +9,9 @@ tu_def(
     // create an integer
     // creates
     (oint, bigint),
+    // create a builtin
+    // creates
+    (obin, builtin_id),
     // create an []i8
     // creates
     (ostr, fptr),
@@ -40,6 +44,7 @@ tu_def(
 );
 #define ocode_of(...) match_type(          \
     (__VA_ARGS__),                         \
+    (obin, y, (opcode)tu_of(obin, y)),     \
     (ostr, y, (opcode)tu_of(ostr, y)),     \
     (oast, y, (opcode)tu_of(oast, y)),     \
     (oint, y, (opcode)tu_of(oint, y)),     \
@@ -76,6 +81,44 @@ typedef struct {
   u32 next_reg;
   scope *env;
 } IrBuilder;
+
+u32 env_addOp(IrBuilder *b, opcode o);
+void env_bind(IrBuilder *b, fptr id, u32 reg);
+void env_push(IrBuilder *b);
+
+IrBuilder IrBuilder_init(AllocatorV allocator) {
+  var_ res = (IrBuilder){
+      .alloc = allocator,
+      .code = mList_init(allocator, opcode),
+      .next_reg = 0,
+      .env = nullptr,
+  };
+  // TODO();
+  env_push(&res);
+  struct {
+    char *name;
+    builtin_id id;
+  } builtins[] = {
+      {"@if", builtin_if},
+      {"@while", builtin_while},
+      {"@ast", builtin_ast},
+      {"@any", builtin_any},
+      {"@int", builtin_int},
+      {"@uint", builtin_uint},
+      {"@type", builtin_type},
+      {"@typeof", builtin_typeof},
+      {"@break", builtin_break},
+      {"@qot", builtin_qot},
+      {"@uqot", builtin_uqot},
+      {"return", builtin_return},
+      {"fn", builtin_fn},
+  };
+  foreach (var_ it, vla(builtins))
+    env_bind(&res, fp(it.name), env_addOp(&res, ocode_of(it.id)));
+
+  return res;
+}
+void IrBuilder_deinit(IrBuilder *b) { TODO("not super important"); }
 
 #include <wheels/mylist.h>
 
@@ -136,10 +179,11 @@ u32 env_addOp(IrBuilder *b, opcode o) {
   mList_push(b->code, o);
   return tu_match_exp(
       o,
+      (obin, _, ++b->next_reg),
       (ostr, _, ++b->next_reg),
-      (oint, _, TODO(copy the int?);++b->next_reg),
+      (oint, _, ; ++b->next_reg),
       (onew, _, ++b->next_reg),
-      (oast, _, TODO(copy the ast?);++b->next_reg),
+      (oast, _, ; ++b->next_reg),
       (olelem, _, ++b->next_reg),
       (default, (u32)0),
 
@@ -155,7 +199,11 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
 
          if (decl.value || decl.type) {
            val_reg = env_addOp(b, ocode_of((onew){decl.type ? emit_ir(b, decl.type, 0) : 0}));
-           env_addOp(b, ocode_of((omov){.l = emit_ir(b, decl.value, ctx), .r = val_reg}));
+           if (decl.value) {
+             u32 rhs_reg = 0;
+             rhs_reg = env_addOp(b, ocode_of(decl.value));
+             env_addOp(b, ocode_of((omov){.l = rhs_reg, .r = val_reg}));
+           }
          } else val_reg = env_addOp(b, ocode_of((onew){.l = 0}));
 
          if (decl.is_const) env_addOp(b, ocode_of((oconst){val_reg}));
@@ -181,7 +229,7 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
          );
        })),
       (astString, str, ({
-         TODO(string includes "" and escapes, remove those);
+         // TODO(string includes "" and escapes, remove those);
          env_addOp(b, ocode_of(str));
        })),
       (astId, id, lookup_variable_register(b, id)),
@@ -250,3 +298,131 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
 
   );
 }
+
+//
+// opcode printer {
+typePrinter("opcodeTag", itypeof(opcode, tag)) {
+  tu_match_void(
+      ((opcode){.tag = in}),
+      (obin, _, PUTS("obin");),
+      (oint, _, PUTS("oint");),
+      (ostr, _, PUTS("ostr");),
+      (oast, _, PUTS("oast");),
+      (onew, _, PUTS("onew");),
+      (oconst, _, PUTS("oconst");),
+      (ojif, _, PUTS("ojif");),
+      (ocall, _, PUTS("ocall");),
+      (oop, _, PUTS("oop");),
+      (oret, _, PUTS("oret");),
+      (omov, _, PUTS("omov");),
+      (ocpy, _, PUTS("ocpy");),
+      (olelem, _, PUTS("olelem");),
+      (oselem, _, PUTS("oselem");),
+  );
+}
+
+static void print_reg(u32 r, outputFunction put, void *_arb, fptr args) {
+  if (!r) PUTS("null");
+  else {
+    PUTS("%");
+    USETYPEPRINTER(u32, r);
+  }
+}
+
+static void print_opcode(opcode o, outputFunction put, void *_arb, fptr args) {
+  USENAMEDPRINTER("opcodeTag", o.tag);
+  PUTS(" ");
+  tu_match_void(
+      o,
+      (oint, v, USETYPEPRINTER(bigint, v);),
+      (ostr, v, USENAMEDPRINTER("slice(c8)", v);),
+      (oast, v, USENAMEDPRINTER("ast", v);),
+      (obin, b, USETYPEPRINTER(builtin_id, b);),
+      (onew, v, {
+        PUTS("l=");
+        print_reg(v.l, put, _arb, args);
+      }),
+      (oconst, v, {
+        PUTS("l=");
+        print_reg(v.l, put, _arb, args);
+      }),
+      (ojif, v, {
+        PUTS("l=");
+        print_reg(v.l, put, _arb, args);
+        PUTS(" d=");
+        USETYPEPRINTER(u32, v.d);
+      }),
+      (ocall, v, {
+        PUTS("l=");
+        print_reg(v.l, put, _arb, args);
+        PUTS(" off=");
+        USETYPEPRINTER(u32, v.off);
+        PUTS(" len=");
+        USETYPEPRINTER(u32, v.len);
+        PUTS(" d=");
+        print_reg(v.d, put, _arb, args);
+      }),
+      (oop, v, {
+        char sym[sizeof(u32) + 1] = {};
+        memcpy(sym, &v.o, sizeof(v.o));
+        PUTS("l=");
+        print_reg(v.l, put, _arb, args);
+        PUTS(" r=");
+        print_reg(v.r, put, _arb, args);
+        PUTS(" o='");
+        USENAMEDPRINTER("cstr", (char *)sym);
+        PUTS("' d=");
+        print_reg(v.d, put, _arb, args);
+      }),
+      (oret, v, {
+        PUTS("l=");
+        print_reg(v.l, put, _arb, args);
+      }),
+      (omov, v, {
+        PUTS("l=");
+        print_reg(v.l, put, _arb, args);
+        PUTS(" r=");
+        print_reg(v.r, put, _arb, args);
+      }),
+      (ocpy, v, {
+        PUTS("l=");
+        print_reg(v.l, put, _arb, args);
+        PUTS(" r=");
+        print_reg(v.r, put, _arb, args);
+      }),
+      (olelem, v, {
+        PUTS("l=");
+        print_reg(v.l, put, _arb, args);
+        PUTS(" name='");
+        USENAMEDPRINTER("slice(c8)", v.name);
+        PUTS("'");
+      }),
+      (oselem, v, {
+        PUTS("l=");
+        print_reg(v.l, put, _arb, args);
+        PUTS(" name='");
+        USENAMEDPRINTER("slice(c8)", v.name);
+        PUTS("' d=");
+        print_reg(v.d, put, _arb, args);
+      }),
+  );
+}
+typePrinter("opcode", opcode) { print_opcode(in, put, _arb, args); }
+
+typePrinter("ir", mList(opcode)) {
+  for (usize i = 0; i < mList_len(in); i++) {
+    USETYPEPRINTER(u32, (u32)i);
+    PUTS(": ");
+    USENAMEDPRINTER("opcode", mList_arr(in)[i]);
+    PUTC((char)'\n');
+  }
+}
+typePrinter(IrBuilder) {
+  PUTS("IrBuilder { next_reg: ");
+  USETYPEPRINTER(u32, in.next_reg);
+  PUTS(", code:\n");
+  USENAMEDPRINTER("ir", in.code);
+  PUTS("}\n");
+}
+// }
+//

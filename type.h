@@ -15,6 +15,7 @@ typedef enum : u8 {
 
   builtin_fn,
   builtin_ast,
+  builtin_any,
   builtin_int,
   builtin_uint,
   builtin_type,
@@ -22,6 +23,8 @@ typedef enum : u8 {
 
   builtin_return,
   builtin_break,
+  builtin_qot,
+  builtin_uqot,
 } builtin_id;
 //{type
 typedef struct Type Type;
@@ -299,6 +302,7 @@ typePrinter(builtin_id) {
     case(builtin_if):PUTS("if");break;
     case(builtin_fn):PUTS("fn");break;
     case(builtin_ast):PUTS("ast");break;
+    case(builtin_any):PUTS("any");break;
     case(builtin_int):PUTS("int");break;
     case(builtin_uint):PUTS("uint");break;
     case(builtin_type):PUTS("type");break;
@@ -306,6 +310,8 @@ typePrinter(builtin_id) {
     case(builtin_return):PUTS("return");break;
     case(builtin_typeof):PUTS("typeof");break;
     case(builtin_break):PUTS("break");break;
+    case(builtin_qot):PUTS("qot");break;
+    case(builtin_uqot):PUTS("uqot");break;
       // clang-format on
   }
 }

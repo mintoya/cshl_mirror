@@ -24,14 +24,12 @@ bool update_deps() {
 
   nob_log(INFO, "Pulling deps/nob.h...");
   cmd_append(&cmd, "git", "-C", "deps/nob.h", "pull", "--autostash");
-  if (!cmd_run_sync(cmd))
-    return false;
+  cmd_run_sync(cmd);
 
   cmd.count = 0;
   nob_log(INFO, "Pulling deps/wheels...");
   cmd_append(&cmd, "git", "-C", "deps/wheels", "pull", "--autostash");
-  if (!cmd_run_sync(cmd))
-    return false;
+  cmd_run_sync(cmd);
 
   return true;
 }

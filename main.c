@@ -1,12 +1,13 @@
 #include <stdlib.h>
 #include <wheels/cmdline_parser.h>
-#include <wheels/examples/includeAll.c>
+#include <wheels/macros.h>
 
 #include "ast.h"
 #include "operations.h"
 #include "tok1.h"
 #include "tok2.h"
-#include "wheels/mytypes.h"
+#include <wheels/allocators/debugallocator.h>
+#include <wheels/mytypes.h>
 
 fptr *filectx = nullptr;
 __attribute__((noreturn)) void(error_at)(u8 *location, fptr message) {
@@ -25,7 +26,7 @@ __attribute__((noreturn)) void(error_at)(u8 *location, fptr message) {
     i++;
   }
   col = i;
-  println("error : {} , at line {} column {}", message, line + 1, col + 1);
+  println("error : {slice(c8)} , at line {} column {}", message, line + 1, col + 1);
   exit(1);
 }
 
@@ -50,7 +51,6 @@ cmd_main(
     println("total mem : {}", arena_totalMem(allocator));
     arena_cleanup(allocator);
   };
-  // var_ allocator = stdAlloc;
 
   char *progname = nargs ? *args : "cshl";
 
@@ -88,8 +88,13 @@ cmd_main(
     println("{ast}", ast);
 
   if (execute) {
-    TODO();
+    var_ builder = IrBuilder_init(allocator);
+    defer { IrBuilder_deinit(&builder); };
+    env_push(&builder);
+    emit_ir(&builder, ast, 0);
+    println("{IrBuilder}", builder);
   }
 
   return 0;
 }
+#include <wheels/wheels.h>
