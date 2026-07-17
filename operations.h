@@ -3,6 +3,7 @@
 #include <wheels/bigint.h>
 #include <wheels/macros.h>
 #include <wheels/sList.h>
+typedef struct scope *scopeptr;
 // 0 in any location is null
 tu_def(
     (opcode, u8),
@@ -18,6 +19,9 @@ tu_def(
     // create value of ast
     // creates
     (oast, /*  */ ast *),
+    // creates
+    // evaluate whatever is inside scope then return that
+    (oscop, scopeptr),
     // create value of tpye l
     // l is nullable
     // creates
@@ -42,23 +46,7 @@ tu_def(
     // store element named name in l into d
     (oselem, struct {u32 l , d ; fptr name; }),
 );
-#define ocode_of(...) match_type(          \
-    (__VA_ARGS__),                         \
-    (obin, y, (opcode)tu_of(obin, y)),     \
-    (ostr, y, (opcode)tu_of(ostr, y)),     \
-    (oast, y, (opcode)tu_of(oast, y)),     \
-    (oint, y, (opcode)tu_of(oint, y)),     \
-    (onew, y, (opcode)tu_of(onew, y)),     \
-    (oconst, y, (opcode)tu_of(oconst, y)), \
-    (ojif, y, (opcode)tu_of(ojif, y)),     \
-    (ocall, y, (opcode)tu_of(ocall, y)),   \
-    (oop, y, (opcode)tu_of(oop, y)),       \
-    (oret, y, (opcode)tu_of(oret, y)),     \
-    (omov, y, (opcode)tu_of(omov, y)),     \
-    (ocpy, y, (opcode)tu_of(ocpy, y)),     \
-    (olelem, y, (opcode)tu_of(olelem, y)), \
-    (oselem, y, (opcode)tu_of(oselem, y)), \
-)
+#define ocode_of(type, ...) (opcode) tu_of(type, __VA_ARGS__)
 
 //
 // whatever
@@ -67,14 +55,12 @@ tu_def(
 #include <wheels/mylist.h>
 
 typedef struct scope scope;
-typedef struct scope *scopeptr;
 sliceDef(scopeptr);
 
 struct scope {
   msList(scopeptr) relatives;
   msxmap(u32) locals;
 };
-
 typedef struct {
   AllocatorV alloc;
   mList(opcode) code;
@@ -114,7 +100,7 @@ IrBuilder IrBuilder_init(AllocatorV allocator) {
       {"fn", builtin_fn},
   };
   foreach (var_ it, vla(builtins))
-    env_bind(&res, fp(it.name), env_addOp(&res, ocode_of(it.id)));
+    env_bind(&res, fp(it.name), env_addOp(&res, ocode_of(obin, it.id)));
 
   return res;
 }
@@ -179,6 +165,7 @@ u32 env_addOp(IrBuilder *b, opcode o) {
   mList_push(b->code, o);
   return tu_match_exp(
       o,
+      (oscop, _, TODO(push the thing); ++b->next_reg),
       (obin, _, ++b->next_reg),
       (ostr, _, ++b->next_reg),
       (oint, _, ; ++b->next_reg),
@@ -198,15 +185,15 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
          u32 val_reg = 0;
 
          if (decl.value || decl.type) {
-           val_reg = env_addOp(b, ocode_of((onew){decl.type ? emit_ir(b, decl.type, 0) : 0}));
+           val_reg = env_addOp(b, ocode_of(onew, {decl.type ? emit_ir(b, decl.type, 0) : 0}));
            if (decl.value) {
              u32 rhs_reg = 0;
-             rhs_reg = env_addOp(b, ocode_of(decl.value));
-             env_addOp(b, ocode_of((omov){.l = rhs_reg, .r = val_reg}));
+             rhs_reg = env_addOp(b, ocode_of(oast, decl.value));
+             env_addOp(b, ocode_of(omov, {.l = rhs_reg, .r = val_reg}));
            }
-         } else val_reg = env_addOp(b, ocode_of((onew){.l = 0}));
+         } else val_reg = env_addOp(b, ocode_of(onew, {.l = 0}));
 
-         if (decl.is_const) env_addOp(b, ocode_of((oconst){val_reg}));
+         if (decl.is_const) env_addOp(b, ocode_of(oconst, {val_reg}));
          if (decl.name) env_bind(b, tu_catch(astId, *decl.name), val_reg);
 
          val_reg;
@@ -220,6 +207,7 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
          env_addOp(
              b,
              ocode_of(
+                 oint,
                  BInt.from.fptr(
                      scope_allocator(b->env),
                      base,
@@ -230,7 +218,7 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
        })),
       (astString, str, ({
          // TODO(string includes "" and escapes, remove those);
-         env_addOp(b, ocode_of(str));
+         env_addOp(b, ocode_of(ostr, str));
        })),
       (astId, id, lookup_variable_register(b, id)),
       (astOp, op, ({
@@ -246,42 +234,51 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
                (astPBlock, bb, {
                  len = sentList_len(bb.stmts);
                  foreach (ast *it, vlap(sentList_vla(bb.stmts)))
-                   env_addOp(b, ocode_of(it));
+                   env_addOp(b, ocode_of(oast, it));
                }),
-               (default, mList_push(list, ocode_of(op.right)); len = 1;),
+               (default, mList_push(list, ocode_of(oast, op.right)); len = 1;),
            );
            irc = env_addOp(
                b,
-               ocode_of((ocall){
-                   .d = env_addOp(b, ocode_of((onew){})),
-                   .len = len,
-                   .off = offset,
-                   .l = left,
-               })
+               ocode_of(
+                   ocall,
+                   {
+                       .d = env_addOp(b, ocode_of(onew, {})),
+                       .len = len,
+                       .off = offset,
+                       .l = left,
+                   }
+               )
            );
          } else if (op.number_rep == opNumbers.dot) {
            irc = env_addOp(
                b,
-               ocode_of((olelem){
-                   .l = op.left ? emit_ir(b, op.left, 0) : ctx,
-                   .name = tu_catch(astId, op.right[0]),
-               })
+               ocode_of(
+                   olelem,
+                   {
+                       .l = op.left ? emit_ir(b, op.left, 0) : ctx,
+                       .name = tu_catch(astId, op.right[0]),
+                   }
+               )
            );
          } else {
            irc = env_addOp(
                b,
-               ocode_of((oop){
-                   .r = emit_ir(b, op.right, 0),
-                   .l = emit_ir(b, op.left, 0),
-                   .o = op.number_rep,
-                   .d = env_addOp(b, ocode_of((onew){})),
-               })
+               ocode_of(
+                   oop,
+                   {
+                       .r = emit_ir(b, op.right, 0),
+                       .l = emit_ir(b, op.left, 0),
+                       .o = op.number_rep,
+                       .d = env_addOp(b, ocode_of(onew, {})),
+                   }
+               )
            );
          }
          irc;
        })),
       (astPBlock, pb, ({
-         if (sentList_len(pb.stmts) > 1)
+         if (sentList_len(pb.stmts) != 1)
            error_ast(node[0], snprint(stdAlloc, "there are no tuples in this language"));
          emit_ir(b, pb.stmts[0], ctx);
        })),
@@ -293,7 +290,7 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
          env_pop(b);
          last_reg;
        })),
-      (astABlock, ab, env_addOp(b, ocode_of(node))),
+      (astABlock, ab, env_addOp(b, ocode_of(oast, node))),
       (astEmptyStatement, _, (u32)0),
 
   );

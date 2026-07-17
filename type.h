@@ -47,6 +47,7 @@ tu_def( // type
     (r_void /*       */, nothing_t),
     (r_uint /*       */, u16),
     (r_sint /*       */, u16),
+    (r_tag /*        */, struct { fptr name;Type *type; }),
     (r_ptr /*        */, Type *),
     (r_arr /*        */, struct { Type *type; usize count; }),
     (r_struct /*     */, mList(r_struct_item)),
@@ -143,8 +144,8 @@ i8 icmp(isize a, isize b) {
              : 0;
 }
 i8 Type_cmp(Type a, Type b) {
-  if (!mcmp(a, b))
-    return 0;
+  // if (!mcmp(a, b))
+  //   return 0;
   if (a.tag < b.tag) return -1;
   if (a.tag > b.tag) return 1;
   tu_match_void(
@@ -162,9 +163,13 @@ i8 Type_cmp(Type a, Type b) {
       (c_type, _, return 0;),
       (c_func, _, return 0;),
 
-      (r_uint, ai, { return icmp(ai, tu_catch(r_uint, b)); }),
-      (r_sint, ai, { return icmp(ai, tu_catch(r_sint, b)); }),
-      (r_ptr, ai, { return Type_cmp(ai[0], tu_catch(r_ptr, b)[0]); }),
+      (r_tag, ai, return fptr_cmp(ai.name, tu_catch(r_tag, b).name);),
+      (r_uint, ai, return icmp(ai, tu_catch(r_uint, b));),
+      (r_sint, ai, return icmp(ai, tu_catch(r_sint, b));),
+      (r_ptr, ai, {
+        var_ bi = tu_catch(r_ptr, b);
+        return ai == bi ? 0 : Type_cmp(ai[0], bi[0]);
+      }),
       (r_arr, ai, {
         var_ bi = tu_catch(r_arr, b);
         return Type_cmp(ai.type[0], bi.type[0])
@@ -235,8 +240,10 @@ u64 Type_hash(Type a) {
       (c_func, _, return 4;),
       (r_uint, v, return (u64)v ^ 0x1000;),
       (r_sint, v, return (u64)v ^ 0x2000;),
-      (r_ptr, p, return Type_hash(*p) ^ 0x3000;),
-      (r_arr, arr, return (Type_hash(*arr.type) * 31) ^ arr.count ^ 0x4000;),
+      // (r_ptr, p, return Type_hash(*p) ^ 0x3000;),
+      (r_ptr, p, return 0x3000;),
+      (r_tag, v, return fptr_hash(v.name) ^ 0x4000;),
+      (r_arr, arr, return (Type_hash(*arr.type) * 31) ^ arr.count ^ 0x5000;),
       (r_struct, l, {
         u64 h = 0x5000;
         var_ len = mList_len(l);
@@ -323,6 +330,7 @@ typePrinter(Type) {
         USETYPEPRINTER(builtin_id, builtin);
       }),
       (r_void, _, PUTS("void");),
+      (r_tag, t, USENAMEDPRINTER("slice(c8)", t.name);),
       (r_uint, bits, PUTS("u"); USETYPEPRINTER(usize, bits);),
       (r_sint, bits, PUTS("i"); USETYPEPRINTER(usize, bits);),
       (r_ptr, type, {
@@ -404,3 +412,206 @@ typePrinter(value) {
   USETYPEPRINTER(typed_value, value_value(in).rvalue);
   PUTS("}");
 }
+// { test functions
+test_fn(type_ptr_equality) {
+  var_ v = (Type)tu_of(
+      r_struct,
+      mList_init(allocator, r_struct_item)
+  );
+  defer { mList_deinit(tu_catch(r_struct, v)); };
+  mList_push(
+      tu_catch(r_struct, v),
+      {
+          .alignment = 8,
+          .isconst = false,
+          .name = fp("self"),
+          .offset = 0,
+          .init = (typed_value){tu_of(r_ptr, &v)},
+      }
+  );
+  test_assert(!Type_cmp(v, v));
+  test_pass();
+}
+test_fn(type_hash_ptr_equality) {
+  var_ v = (Type)tu_of(
+      r_struct,
+      mList_init(allocator, r_struct_item)
+  );
+  defer { mList_deinit(tu_catch(r_struct, v)); };
+  mList_push(
+      tu_catch(r_struct, v),
+      {
+          .alignment = 8,
+          .isconst = false,
+          .name = fp("self"),
+          .offset = 0,
+          .init = (typed_value){tu_of(r_ptr, &v)},
+      }
+  );
+  test_assert(Type_hash(v) == Type_hash(v));
+  test_pass();
+}
+// r_tag is nominal: same name, different underlying type -> still "equal" per Type_cmp
+// (the whole point of r_tag is that it does NOT recurse into .type)
+test_fn(type_tag_nominal_equality) {
+  var_ u32t = (Type)tu_of(r_uint, (u16)32);
+  var_ u64t = (Type)tu_of(r_uint, (u16)64);
+  var_ a = (Type)tu_of(r_tag, {.name = fp("Meters"), .type = &u32t});
+  var_ b = (Type)tu_of(r_tag, {.name = fp("Meters"), .type = &u64t});
+  test_assert(!Type_cmp(a, b));
+  test_assert(Type_hash(a) == Type_hash(b));
+  test_pass();
+}
+
+// r_tag: different name, same underlying type -> must NOT be equal
+test_fn(type_tag_distinct_names) {
+  var_ u32t = (Type)tu_of(r_uint, (u16)32);
+  var_ a = (Type)tu_of(r_tag, {.name = fp("Meters"), .type = &u32t});
+  var_ b = (Type)tu_of(r_tag, {.name = fp("Seconds"), .type = &u32t});
+  test_assert(Type_cmp(a, b) != 0);
+  test_pass();
+}
+
+// r_ptr: two DISTINCT pointers pointing at structurally-equal (non-cyclic) types
+// must still compare equal -- this is the general case the identity check
+// short-circuits only when it's the SAME pointer, so it should still recurse
+// correctly for the common non-cyclic case.
+test_fn(type_ptr_structural_equality_distinct_pointers) {
+  var_ ta = (Type)tu_of(r_uint, (u16)32);
+  var_ tb = (Type)tu_of(r_uint, (u16)32);
+  var_ pa = (Type)tu_of(r_ptr, &ta);
+  var_ pb = (Type)tu_of(r_ptr, &tb);
+  test_assert(!Type_cmp(pa, pb));
+  test_pass();
+}
+
+// r_ptr: distinct pointers to STRUCTURALLY DIFFERENT types must compare unequal
+test_fn(type_ptr_structural_inequality) {
+  var_ ta = (Type)tu_of(r_uint, (u16)32);
+  var_ tb = (Type)tu_of(r_uint, (u16)64);
+  var_ pa = (Type)tu_of(r_ptr, &ta);
+  var_ pb = (Type)tu_of(r_ptr, &tb);
+  test_assert(Type_cmp(pa, pb) != 0);
+  test_pass();
+}
+
+// tag ordering: variants earlier in tu_def should sort before later ones
+// (builtin is declared before r_void)
+test_fn(type_tag_ordering) {
+  var_ a = (Type)tu_of(builtin, builtin_if);
+  var_ b = (Type)tu_of(r_void, (nothing_t){0});
+  test_assert(Type_cmp(a, b) < 0);
+  test_assert(Type_cmp(b, a) > 0);
+  test_pass();
+}
+
+// r_uint and r_sint must NOT hash the same even for identical bit-width,
+// since they're semantically distinct (signedness matters for Type_cmp
+// via the tag check) -- guards against someone "simplifying" the salts later.
+test_fn(type_uint_sint_hash_distinct) {
+  var_ u = (Type)tu_of(r_uint, (u16)32);
+  var_ s = (Type)tu_of(r_sint, (u16)32);
+  test_assert(Type_cmp(u, s) != 0);
+  test_assert(Type_hash(u) != Type_hash(s));
+  test_pass();
+}
+
+// hash consistency across two SEPARATELY constructed but structurally
+// identical r_struct values (not the same instance) -- this is the case
+// that actually matters for hash-consing/interning, as opposed to
+// Type_hash(v) == Type_hash(v) which is trivially true for any function.
+test_fn(type_struct_hash_consistency) {
+  var_ a = (Type)tu_of(r_struct, mList_init(allocator, r_struct_item));
+  var_ b = (Type)tu_of(r_struct, mList_init(allocator, r_struct_item));
+  defer {
+    mList_deinit(tu_catch(r_struct, a));
+    mList_deinit(tu_catch(r_struct, b));
+  };
+  var_ u32t = (typed_value){tu_of(r_uint, (u16)32)};
+  mList_push(tu_catch(r_struct, a), {
+                                        .alignment = 4,
+                                        .isconst = false,
+                                        .name = fp("x"),
+                                        .offset = 0,
+                                        .init = u32t,
+                                    });
+  mList_push(tu_catch(r_struct, b), {
+                                        .alignment = 4,
+                                        .isconst = false,
+                                        .name = fp("x"),
+                                        .offset = 0,
+                                        .init = u32t,
+                                    });
+  test_assert(!Type_cmp(a, b));
+  test_assert(Type_hash(a) == Type_hash(b));
+  test_pass();
+}
+
+// r_struct field order matters as written (Type_cmp walks index-by-index,
+// not by name) -- same fields in a different order should NOT compare equal.
+// Worth confirming this is the intended semantics rather than an oversight.
+test_fn(type_struct_field_order_matters) {
+  var_ a = (Type)tu_of(r_struct, mList_init(allocator, r_struct_item));
+  var_ b = (Type)tu_of(r_struct, mList_init(allocator, r_struct_item));
+  defer {
+    mList_deinit(tu_catch(r_struct, a));
+    mList_deinit(tu_catch(r_struct, b));
+  };
+  var_ u32t = (typed_value){tu_of(r_uint, (u16)32)};
+  var_ u8t = (typed_value){tu_of(r_uint, (u16)8)};
+  mList_push(tu_catch(r_struct, a), {.alignment = 4, .isconst = false, .name = fp("x"), .offset = 0, .init = u32t});
+  mList_push(tu_catch(r_struct, a), {.alignment = 1, .isconst = false, .name = fp("y"), .offset = 4, .init = u8t});
+  mList_push(tu_catch(r_struct, b), {.alignment = 1, .isconst = false, .name = fp("y"), .offset = 4, .init = u8t});
+  mList_push(tu_catch(r_struct, b), {.alignment = 4, .isconst = false, .name = fp("x"), .offset = 0, .init = u32t});
+  test_assert(Type_cmp(a, b) != 0);
+  test_pass();
+}
+
+// r_func: same param/return types -> equal; different arity -> unequal
+test_fn(type_func_equality) {
+  var_ p1 = mList_init(allocator, Type);
+  var_ p2 = mList_init(allocator, Type);
+  defer {
+    mList_deinit(p1);
+    mList_deinit(p2);
+  };
+  mList_push(p1, (Type)tu_of(r_uint, (u16)32));
+  mList_push(p1, (Type)tu_of(r_void, (nothing_t){0}));
+  mList_push(p2, (Type)tu_of(r_uint, (u16)32));
+  mList_push(p2, (Type)tu_of(r_void, (nothing_t){}));
+  var_ fa = (Type)tu_of(r_func, p1);
+  var_ fb = (Type)tu_of(r_func, p2);
+  test_assert(!Type_cmp(fa, fb));
+
+  var_ p3 = mList_init(allocator, Type);
+  defer { mList_deinit(p3); };
+  mList_push(p3, (Type)tu_of(r_uint, (u16)32));
+  var_ fc = (Type)tu_of(r_func, p3);
+  test_assert(Type_cmp(fa, fc) != 0);
+  test_pass();
+}
+
+// Type_ralig/Type_rsize sanity: a struct with a leading u8 then a u32
+// aligned to 4 should size to 8, not 5 (padding/alignment must round up)
+test_fn(type_struct_size_respects_alignment) {
+  var_ s = (Type)tu_of(r_struct, mList_init(allocator, r_struct_item));
+  defer { mList_deinit(tu_catch(r_struct, s)); };
+  mList_push(tu_catch(r_struct, s), {
+                                        .alignment = 1,
+                                        .isconst = false,
+                                        .name = fp("a"),
+                                        .offset = 0,
+                                        .init = (typed_value){tu_of(r_uint, (u16)8)},
+                                    });
+  mList_push(tu_catch(r_struct, s), {
+                                        .alignment = 4,
+                                        .isconst = false,
+                                        .name = fp("b"),
+                                        .offset = 4,
+                                        .init = (typed_value){tu_of(r_uint, (u16)32)},
+                                    });
+  test_assert(Type_rsize(s) == 8);
+  test_assert(Type_ralig(s) == 4);
+  test_pass();
+}
+// }
