@@ -30,16 +30,12 @@ typedef enum : u8 {
 typedef struct Type Type;
 typedef struct r_struct_item r_struct_item;
 typedef struct r_bitf_item r_bitf_item;
-typedef struct Env Env;
-typedef struct func_value {
-  mList(struct {
-    fptr name;
-    // not nullable
-    // the type is in there
-    struct typed_value *init;
-  }) params;
-  Env *es;
-} func_value;
+typedef mList(struct {
+  fptr name;
+  // not nullable
+  // the type is in there
+  struct typed_value *init;
+}) func_value;
 tu_def( // type
     (Type, u8),
     (builtin /*      */, builtin_id),
@@ -88,7 +84,7 @@ r_func cf_convert(
     AllocatorV allocator,
     itypeof(itypeof(typed_value, v), c_func) v
 ) {
-  return mList_map(allocator, v.params, $.init->t);
+  return mList_map(allocator, v, $.init->t);
 }
 static inline usize Type_ralig(Type t) {
   return tu_match_exp(
@@ -394,10 +390,7 @@ typePrinter(typed_value) {
       (c_int, _, USENAMEDPRINTER("bigint", in.v.c_int);),
       (c_ast, _, USENAMEDPRINTER("ast", in.v.c_ast);),
       (c_type, _, USETYPEPRINTER(Type, *in.v.c_type);),
-      (c_func, fn, {
-        PUTS("fn @");
-        USENAMEDPRINTER("ptr", in.v.c_func.es);
-      }),
+      (c_func, _, PUTS("fn");),
       (default, {
         if (in.v.value)
           USETYPEPRINTER(fptr, ((fptr){Type_rsize(in.t), in.v.value}));
@@ -499,7 +492,7 @@ test_fn(type_ptr_structural_inequality) {
 // (builtin is declared before r_void)
 test_fn(type_tag_ordering) {
   var_ a = (Type)tu_of(builtin, builtin_if);
-  var_ b = (Type)tu_of(r_void, (nothing_t){0});
+  var_ b = (Type)tu_of(r_void, (nothing_t){});
   test_assert(Type_cmp(a, b) < 0);
   test_assert(Type_cmp(b, a) > 0);
   test_pass();
@@ -576,7 +569,7 @@ test_fn(type_func_equality) {
     mList_deinit(p2);
   };
   mList_push(p1, (Type)tu_of(r_uint, (u16)32));
-  mList_push(p1, (Type)tu_of(r_void, (nothing_t){0}));
+  mList_push(p1, (Type)tu_of(r_void, (nothing_t){}));
   mList_push(p2, (Type)tu_of(r_uint, (u16)32));
   mList_push(p2, (Type)tu_of(r_void, (nothing_t){}));
   var_ fa = (Type)tu_of(r_func, p1);

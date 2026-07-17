@@ -105,17 +105,7 @@ IrBuilder IrBuilder_init(AllocatorV allocator) {
   return res;
 }
 void IrBuilder_deinit(IrBuilder *b) { TODO("not super important"); }
-
 #include <wheels/mylist.h>
-
-typedef struct scope scope;
-typedef struct scope *scopeptr;
-sliceDef(scopeptr);
-
-struct scope {
-  msList(scopeptr) relatives;
-  msxmap(u32) locals;
-};
 
 AllocatorV scope_allocator(scope *s) { return ((hxmap *)s->locals)->allocator; }
 scopeptr scope_parent(scope *s) {
@@ -228,15 +218,16 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
 
            var_ list = b->code;
            var_ offset = mList_len(list);
-           var_ len = 0;
+           var_ len = 1;
            tu_match_void(
                *op.right,
                (astPBlock, bb, {
-                 len = sentList_len(bb.stmts);
-                 foreach (ast *it, vlap(sentList_vla(bb.stmts)))
+                 var_ lp = sentList_vla(bb.stmts);
+                 len = countof(*lp);
+                 foreach (ast *it, vlap(lp))
                    env_addOp(b, ocode_of(oast, it));
                }),
-               (default, mList_push(list, ocode_of(oast, op.right)); len = 1;),
+               (default, env_addOp(b, ocode_of(oast, op.right));),
            );
            irc = env_addOp(
                b,
@@ -301,6 +292,7 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
 typePrinter("opcodeTag", itypeof(opcode, tag)) {
   tu_match_void(
       ((opcode){.tag = in}),
+      (oscop, _, PUTS("oscop");),
       (obin, _, PUTS("obin");),
       (oint, _, PUTS("oint");),
       (ostr, _, PUTS("ostr");),
@@ -332,6 +324,7 @@ static void print_opcode(opcode o, outputFunction put, void *_arb, fptr args) {
   tu_match_void(
       o,
       (oint, v, USETYPEPRINTER(bigint, v);),
+      (oscop, o, PUTS("scop");),
       (ostr, v, USENAMEDPRINTER("slice(c8)", v);),
       (oast, v, USENAMEDPRINTER("ast", v);),
       (obin, b, USETYPEPRINTER(builtin_id, b);),
