@@ -36,7 +36,7 @@ bool update_deps() {
 bool build_main(Cmd *cmd, Procs *procs) {
   if (!mkdir_if_not_exists("build"))
     return false;
-  cmd_append(cmd, CC, COMMON_CFLAGS, "-o", "build/compiler" EXTENSION, "main.c", );
+  cmd_append(cmd, CC, COMMON_CFLAGS, "-o", "build/compiler" EXTENSION, "main.c","-g" );
   if (!cmd_run(cmd, .async = procs))
     return false;
   return true;

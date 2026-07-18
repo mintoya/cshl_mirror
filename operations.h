@@ -2,6 +2,7 @@
 #include "type.h"
 #include <wheels/bigint.h>
 #include <wheels/macros.h>
+#include <wheels/mylist.h>
 #include <wheels/sList.h>
 typedef struct scope *scopeptr;
 // 0 in any location is null
@@ -9,7 +10,7 @@ tu_def(
     (opcode, u8),
     // create an integer
     // creates
-    (oint, bigint),
+    (oint, fptr),
     // create a builtin
     // creates
     (obin, builtin_id),
@@ -48,25 +49,25 @@ tu_def(
 );
 #define ocode_of(type, ...) (opcode) tu_of(type, __VA_ARGS__)
 
-//
-// whatever
-//
-
-#include <wheels/mylist.h>
-
 typedef struct scope scope;
 sliceDef(scopeptr);
 
 struct scope {
+  u32 start_reg;
+  u32 next_reg;
+  msList(opcode) code;
   msList(scopeptr) relatives;
-  msxmap(u32) locals;
+  msList(typed_value) values;
+  msxmap(struct { u32 idx ; bool isconst; }) locals;
 };
 typedef struct {
   AllocatorV alloc;
-  mList(opcode) code;
-  u32 next_reg;
   scope *env;
 } IrBuilder;
+
+//
+//
+//
 
 u32 env_addOp(IrBuilder *b, opcode o);
 void env_bind(IrBuilder *b, fptr id, u32 reg);
@@ -75,11 +76,8 @@ void env_push(IrBuilder *b);
 IrBuilder IrBuilder_init(AllocatorV allocator) {
   var_ res = (IrBuilder){
       .alloc = allocator,
-      .code = mList_init(allocator, opcode),
-      .next_reg = 0,
       .env = nullptr,
   };
-  // TODO();
   env_push(&res);
   struct {
     char *name;
@@ -101,24 +99,22 @@ IrBuilder IrBuilder_init(AllocatorV allocator) {
   };
   foreach (var_ it, vla(builtins))
     env_bind(&res, fp(it.name), env_addOp(&res, ocode_of(obin, it.id)));
-
   return res;
 }
 void IrBuilder_deinit(IrBuilder *b) { TODO("not super important"); }
 #include <wheels/mylist.h>
 
 AllocatorV scope_allocator(scope *s) { return ((hxmap *)s->locals)->allocator; }
+
 scopeptr scope_parent(scope *s) {
   if (msList_len(s->relatives))
     return s->relatives[0];
   else return nullptr;
 }
 slice(scopeptr) scope_children(scope *s) {
-  assertMessage(msList_len(s->relatives));
-  return (slice(scopeptr)){
-      msList_len(s->relatives) - 1,
-      s->relatives + 1
-  };
+  if_decl (var_ len, msList_len(s->relatives))
+    return (slice(scopeptr)){len - 1, s->relatives + 1};
+  return (slice(scopeptr)){};
 }
 
 void env_bind(IrBuilder *b, fptr id, u32 reg) {
@@ -128,21 +124,20 @@ void env_bind(IrBuilder *b, fptr id, u32 reg) {
 }
 // u32 env_addreg(IrBuilder *b) { return ++b->next_reg; }
 
-u32 lookup_variable_register(IrBuilder *b, fptr id) {
+u32 env_lookup(IrBuilder *b, fptr id) {
   for (scope *s = b->env; s; s = scope_parent(s))
-    if_decl (u32 * reg_ptr, msxmap_get(s->locals, id))
-      return *reg_ptr;
-
-  error_at(id.ptr, "unknown variable");
+    if_decl (var_ reg_ptr, msxmap_get(s->locals, id))
+      if (reg_ptr->idx < s->start_reg) return reg_ptr->idx;
+  error_at(id.ptr, snprint(stdAlloc, "unknown variable {slice(c8)}", id));
 }
 
 void env_push(IrBuilder *b) {
-
   scope *new_scope = aValue(
       b->alloc,
       ((scope){
           .relatives = P$(msList_init(b->alloc, scopeptr), ({ msList_push(b->alloc, $, b->env);$; })),
-          .locals = msxmap_init(b->alloc, u32)
+          .locals = msxmap_init(b->alloc, msxmap_iType((itypeof(scope, locals))0)),
+          .values = msList_init(b->alloc, typed_value),
       })
   );
   if (b->env)
@@ -152,16 +147,16 @@ void env_push(IrBuilder *b) {
 
 void env_pop(IrBuilder *b) { b->env = scope_parent(b->env); }
 u32 env_addOp(IrBuilder *b, opcode o) {
-  mList_push(b->code, o);
+  msList_push(((hxmap *)b->env->locals)->allocator, b->env->code, o);
   return tu_match_exp(
       o,
-      (oscop, _, TODO(push the thing); ++b->next_reg),
-      (obin, _, ++b->next_reg),
-      (ostr, _, ++b->next_reg),
-      (oint, _, ; ++b->next_reg),
-      (onew, _, ++b->next_reg),
-      (oast, _, ; ++b->next_reg),
-      (olelem, _, ++b->next_reg),
+      (oscop, _, assertMessage(false, "pushing scope by itself not allowed"), (u32)0),
+      (obin, _, ++b->env->next_reg),
+      (ostr, _, ++b->env->next_reg),
+      (oint, _, ; ++b->env->next_reg),
+      (onew, _, ++b->env->next_reg),
+      (oast, _, ; ++b->env->next_reg),
+      (olelem, _, ++b->env->next_reg),
       (default, (u32)0),
 
   );
@@ -194,31 +189,17 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
            if (num.len > 1 && num.ptr[1] == 'x') base = 16;
            else if (num.len > 1 && num.ptr[1] == 'b') base = 2;
          } else base = 10;
-         env_addOp(
-             b,
-             ocode_of(
-                 oint,
-                 BInt.from.fptr(
-                     scope_allocator(b->env),
-                     base,
-                     base != 10 ? slice_split(num, (2, -1))[0] : num
-                 )
-             )
-         );
+         env_addOp(b, ocode_of(oint, num));
        })),
-      (astString, str, ({
-         // TODO(string includes "" and escapes, remove those);
-         env_addOp(b, ocode_of(ostr, str));
-       })),
-      (astId, id, lookup_variable_register(b, id)),
+      (astString, str, env_addOp(b, ocode_of(ostr, str))),
+      (astId, id, env_lookup(b, id)),
       (astOp, op, ({
          u32 irc = 0;
          if (op.number_rep == opNumbers.call) {
            var_ left = emit_ir(b, op.left, 0);
 
-           var_ list = b->code;
-           var_ offset = mList_len(list);
-           var_ len = 1;
+           var_ offset = b->env->next_reg;
+           u32 len = 0;
            tu_match_void(
                *op.right,
                (astPBlock, bb, {
@@ -227,7 +208,7 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
                  foreach (ast *it, vlap(lp))
                    env_addOp(b, ocode_of(oast, it));
                }),
-               (default, env_addOp(b, ocode_of(oast, op.right));),
+               (default, len = 1; env_addOp(b, ocode_of(oast, op.right));),
            );
            irc = env_addOp(
                b,
@@ -269,6 +250,8 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
          irc;
        })),
       (astPBlock, pb, ({
+         env_push(b);
+         defer { env_pop(b); };
          if (sentList_len(pb.stmts) != 1)
            error_ast(node[0], snprint(stdAlloc, "there are no tuples in this language"));
          emit_ir(b, pb.stmts[0], ctx);
@@ -276,15 +259,19 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
       (astBBlock, bb, ({
          u32 last_reg = 0;
          env_push(b);
+         defer { env_pop(b); };
          foreach (var_ stmnt, vlap(sentList_vla(bb.stmts)))
            last_reg = emit_ir(b, stmnt, ctx);
-         env_pop(b);
          last_reg;
        })),
       (astABlock, ab, env_addOp(b, ocode_of(oast, node))),
       (astEmptyStatement, _, (u32)0),
 
   );
+}
+// void env_replace(IrBuilder *b, u32 idx) {}
+void ir_av1(IrBuilder *b) {
+  // foreach (var_ i, span(mList_arr(b -> code) , ))
 }
 
 //
@@ -323,7 +310,7 @@ static void print_opcode(opcode o, outputFunction put, void *_arb, fptr args) {
   PUTS(" ");
   tu_match_void(
       o,
-      (oint, v, USETYPEPRINTER(bigint, v);),
+      (oint, v, USENAMEDPRINTER("slice(c8)", v);),
       (oscop, o, PUTS("scop");),
       (ostr, v, USENAMEDPRINTER("slice(c8)", v);),
       (oast, v, USENAMEDPRINTER("ast", v);),
@@ -408,10 +395,9 @@ typePrinter("ir", mList(opcode)) {
   }
 }
 typePrinter(IrBuilder) {
-  PUTS("IrBuilder { next_reg: ");
-  USETYPEPRINTER(u32, in.next_reg);
-  PUTS(", code:\n");
-  USENAMEDPRINTER("ir", in.code);
+  PUTS("IrBuilder {\n ");
+  if (in.env)
+    USENAMEDPRINTER("ir", in.env->code);
   PUTS("}\n");
 }
 // }
