@@ -139,11 +139,10 @@ i8 icmp(isize a, isize b) {
              ? 1
              : 0;
 }
-i8 Type_cmp(Type a, Type b) {
-  // if (!mcmp(a, b))
-  //   return 0;
-  if (a.tag < b.tag) return -1;
-  if (a.tag > b.tag) return 1;
+i8 Type_cmp_ex(Type a, Type b, mList(Type) followed) {
+  if (!mcmp(a, b)) return 0;
+  else if (a.tag < b.tag) return -1;
+  else if (a.tag > b.tag) return 1;
   tu_match_void(
       a,
       (builtin, id, {
@@ -162,13 +161,20 @@ i8 Type_cmp(Type a, Type b) {
       (r_tag, ai, return fptr_cmp(ai.name, tu_catch(r_tag, b).name);),
       (r_uint, ai, return icmp(ai, tu_catch(r_uint, b));),
       (r_sint, ai, return icmp(ai, tu_catch(r_sint, b));),
+
       (r_ptr, ai, {
         var_ bi = tu_catch(r_ptr, b);
-        return ai == bi ? 0 : Type_cmp(ai[0], bi[0]);
+        if (ai == bi) return 0;
+        var_ af = bbs_vla(*ai, *mList_vla(followed));
+        if (af.f) return 0;
+        mList_ins(followed, af.i, *ai);
+        i8 r = Type_cmp_ex(ai[0], bi[0], followed);
+        mList_rem(followed, af.i);
+        return r;
       }),
       (r_arr, ai, {
         var_ bi = tu_catch(r_arr, b);
-        return Type_cmp(ai.type[0], bi.type[0])
+        return Type_cmp_ex(ai.type[0], bi.type[0], followed)
                    ?: icmp(ai.count, bi.count);
       }),
       (r_func, ai, {
@@ -179,7 +185,7 @@ i8 Type_cmp(Type a, Type b) {
         foreach (var_ i, range(0, la)) {
           var_ a = mList_arr(ai)[i];
           var_ b = mList_arr(bi)[i];
-          var_ cmp = Type_cmp(a, b);
+          var_ cmp = Type_cmp_ex(a, b, followed);
           if (cmp) return cmp;
         }
         return 0;
@@ -192,7 +198,7 @@ i8 Type_cmp(Type a, Type b) {
         foreach (var_ i, range(0, la)) {
           var_ a = mList_arr(ai)[i];
           var_ b = mList_arr(bi)[i];
-          if_decl (var_ cmp, Type_cmp(a.init.t, b.init.t))
+          if_decl (var_ cmp, Type_cmp_ex(a.init.t, b.init.t, followed))
             return cmp;
           if_decl (var_ cmp, fptr_cmp(a.name, b.name))
             return cmp;
@@ -209,7 +215,7 @@ i8 Type_cmp(Type a, Type b) {
         foreach (var_ i, range(0, la)) {
           var_ a = mList_arr(ai)[i];
           var_ b = mList_arr(bi)[i];
-          if_decl (var_ cmp, Type_cmp(a.init.t, b.init.t))
+          if_decl (var_ cmp, Type_cmp_ex(a.init.t, b.init.t, followed))
             return cmp;
           if_decl (var_ cmp, fptr_cmp(a.name, b.name))
             return cmp;
@@ -224,8 +230,13 @@ i8 Type_cmp(Type a, Type b) {
       }),
   );
 }
+i8 Type_cmp(Type a, Type b) {
+  var_ f = mList_init(stdAlloc, Type);
+  defer { mList_deinit(f); };
+  return Type_cmp_ex(a, b, f);
+}
 i8 Type_cmp_hash(const void *a, const void *b) { return Type_cmp(*(Type *)a, *(Type *)b); }
-u64 Type_hash(Type a) {
+static u64 Type_hash_ex(Type a, bool follow_ptr) {
   tu_match_void(
       a,
       (builtin, b, return b + 6;),
@@ -236,16 +247,13 @@ u64 Type_hash(Type a) {
       (c_func, _, return 4;),
       (r_uint, v, return (u64)v ^ 0x1000;),
       (r_sint, v, return (u64)v ^ 0x2000;),
-      // (r_ptr, p, return Type_hash(*p) ^ 0x3000;),
-      (r_ptr, p, return 0x3000;),
+      (r_ptr, p, return follow_ptr ? Type_hash_ex(*p, false) * 31 ^ 0x3000 : 0x3000;),
       (r_tag, v, return fptr_hash(v.name) ^ 0x4000;),
-      (r_arr, arr, return (Type_hash(*arr.type) * 31) ^ arr.count ^ 0x5000;),
+      (r_arr, arr, return (Type_hash_ex(*arr.type, follow_ptr) * 31) ^ arr.count ^ 0x5000;),
       (r_struct, l, {
         u64 h = 0x5000;
-        var_ len = mList_len(l);
-        foreach (var_ i, range(0, len)) {
-          var_ item = mList_arr(l)[i];
-          h = (h * 31) ^ Type_hash(item.init.t);
+        foreach (var_ item, mList_iter(l)) {
+          h = (h * 31) ^ Type_hash_ex(item.init.t, follow_ptr);
           h = (h * 31) ^ fptr_hash(item.name);
           h = (h * 31) ^ item.isconst;
           h = (h * 31) ^ item.alignment;
@@ -255,10 +263,8 @@ u64 Type_hash(Type a) {
       }),
       (r_bitfield, l, {
         u64 h = 0x6000;
-        var_ len = mList_len(l);
-        foreach (var_ i, range(0, len)) {
-          var_ item = mList_arr(l)[i];
-          h = (h * 31) ^ Type_hash(item.init.t);
+        foreach (var_ item, mList_iter(l)) {
+          h = (h * 31) ^ Type_hash_ex(item.init.t, follow_ptr);
           h = (h * 31) ^ fptr_hash(item.name);
           h = (h * 31) ^ item.width;
         }
@@ -266,15 +272,14 @@ u64 Type_hash(Type a) {
       }),
       (r_func, l, {
         u64 h = 0x7000;
-        var_ len = mList_len(l);
-        foreach (var_ i, range(0, len)) {
-          var_ t = mList_arr(l)[i];
-          h = (h * 31) ^ Type_hash(t);
-        }
+        foreach (var_ t, mList_iter(l))
+          h = (h * 31) ^ Type_hash_ex(t, follow_ptr);
         return h;
       })
   );
 }
+
+u64 Type_hash(Type a) { return Type_hash_ex(a, true); }
 u64 Type_hash_hash(const void *t) { return Type_hash(*(Type *)t); }
 //}
 //{value
@@ -423,7 +428,6 @@ test_fn(type_ptr_equality) {
       }
   );
   test_assert(!Type_cmp(v, v));
-  test_pass();
 }
 test_fn(type_hash_ptr_equality) {
   var_ v = (Type)tu_of(
@@ -442,7 +446,6 @@ test_fn(type_hash_ptr_equality) {
       }
   );
   test_assert(Type_hash(v) == Type_hash(v));
-  test_pass();
 }
 // r_tag is nominal: same name, different underlying type -> still "equal" per Type_cmp
 // (the whole point of r_tag is that it does NOT recurse into .type)
@@ -453,7 +456,6 @@ test_fn(type_tag_nominal_equality) {
   var_ b = (Type)tu_of(r_tag, {.name = fp("Meters"), .type = &u64t});
   test_assert(!Type_cmp(a, b));
   test_assert(Type_hash(a) == Type_hash(b));
-  test_pass();
 }
 
 // r_tag: different name, same underlying type -> must NOT be equal
@@ -462,7 +464,6 @@ test_fn(type_tag_distinct_names) {
   var_ a = (Type)tu_of(r_tag, {.name = fp("Meters"), .type = &u32t});
   var_ b = (Type)tu_of(r_tag, {.name = fp("Seconds"), .type = &u32t});
   test_assert(Type_cmp(a, b) != 0);
-  test_pass();
 }
 
 // r_ptr: two DISTINCT pointers pointing at structurally-equal (non-cyclic) types
@@ -475,7 +476,6 @@ test_fn(type_ptr_structural_equality_distinct_pointers) {
   var_ pa = (Type)tu_of(r_ptr, &ta);
   var_ pb = (Type)tu_of(r_ptr, &tb);
   test_assert(!Type_cmp(pa, pb));
-  test_pass();
 }
 
 // r_ptr: distinct pointers to STRUCTURALLY DIFFERENT types must compare unequal
@@ -485,7 +485,6 @@ test_fn(type_ptr_structural_inequality) {
   var_ pa = (Type)tu_of(r_ptr, &ta);
   var_ pb = (Type)tu_of(r_ptr, &tb);
   test_assert(Type_cmp(pa, pb) != 0);
-  test_pass();
 }
 
 // tag ordering: variants earlier in tu_def should sort before later ones
@@ -495,7 +494,6 @@ test_fn(type_tag_ordering) {
   var_ b = (Type)tu_of(r_void, (nothing_t){});
   test_assert(Type_cmp(a, b) < 0);
   test_assert(Type_cmp(b, a) > 0);
-  test_pass();
 }
 
 // r_uint and r_sint must NOT hash the same even for identical bit-width,
@@ -506,7 +504,6 @@ test_fn(type_uint_sint_hash_distinct) {
   var_ s = (Type)tu_of(r_sint, (u16)32);
   test_assert(Type_cmp(u, s) != 0);
   test_assert(Type_hash(u) != Type_hash(s));
-  test_pass();
 }
 
 // hash consistency across two SEPARATELY constructed but structurally
@@ -537,7 +534,6 @@ test_fn(type_struct_hash_consistency) {
                                     });
   test_assert(!Type_cmp(a, b));
   test_assert(Type_hash(a) == Type_hash(b));
-  test_pass();
 }
 
 // r_struct field order matters as written (Type_cmp walks index-by-index,
@@ -557,7 +553,6 @@ test_fn(type_struct_field_order_matters) {
   mList_push(tu_catch(r_struct, b), {.alignment = 1, .isconst = false, .name = fp("y"), .offset = 4, .init = u8t});
   mList_push(tu_catch(r_struct, b), {.alignment = 4, .isconst = false, .name = fp("x"), .offset = 0, .init = u32t});
   test_assert(Type_cmp(a, b) != 0);
-  test_pass();
 }
 
 // r_func: same param/return types -> equal; different arity -> unequal
@@ -581,7 +576,6 @@ test_fn(type_func_equality) {
   mList_push(p3, (Type)tu_of(r_uint, (u16)32));
   var_ fc = (Type)tu_of(r_func, p3);
   test_assert(Type_cmp(fa, fc) != 0);
-  test_pass();
 }
 
 // Type_ralig/Type_rsize sanity: a struct with a leading u8 then a u32
@@ -605,6 +599,5 @@ test_fn(type_struct_size_respects_alignment) {
                                     });
   test_assert(Type_rsize(s) == 8);
   test_assert(Type_ralig(s) == 4);
-  test_pass();
 }
 // }
