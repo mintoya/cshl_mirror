@@ -11,3 +11,5 @@ nob.exe.old
 nob.pdb
 /.ccls-cache
 /a.out
+compile_commands.wsl.json
+compile_commands.win64.json

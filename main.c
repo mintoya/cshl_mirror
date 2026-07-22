@@ -89,8 +89,7 @@ cmd_main(
 
   if (execute) {
     var_ builder = IrBuilder_init(allocator);
-    defer { IrBuilder_deinit(&builder); };
-    env_push(&builder);
+    // defer { IrBuilder_deinit(&builder); };
     emit_ir(&builder, ast, 0);
     println("{IrBuilder}", builder);
   }

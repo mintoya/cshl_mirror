@@ -127,7 +127,7 @@ void env_bind(IrBuilder *b, fptr id, u32 reg) {
 u32 env_lookup(IrBuilder *b, fptr id) {
   for (scope *s = b->env; s; s = scope_parent(s))
     if_decl (var_ reg_ptr, msxmap_get(s->locals, id))
-      if (reg_ptr->idx < s->start_reg) return reg_ptr->idx;
+      if (reg_ptr->idx >= s->start_reg) return reg_ptr->idx;
   error_at(id.ptr, snprint(stdAlloc, "unknown variable {slice(c8)}", id));
 }
 
@@ -138,10 +138,16 @@ void env_push(IrBuilder *b) {
           .relatives = P$(msList_init(b->alloc, scopeptr), ({ msList_push(b->alloc, $, b->env);$; })),
           .locals = msxmap_init(b->alloc, msxmap_iType((itypeof(scope, locals))0)),
           .values = msList_init(b->alloc, typed_value),
+          .code = msList_init(b->alloc, opcode),
       })
+
   );
-  if (b->env)
+
+  if (b->env) {
+    new_scope->start_reg = b->env->next_reg;
+    new_scope->next_reg = b->env->next_reg;
     msList_push(b->alloc, b->env->relatives, new_scope);
+  }
   b->env = new_scope;
 }
 
@@ -270,9 +276,7 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
   );
 }
 // void env_replace(IrBuilder *b, u32 idx) {}
-void ir_av1(IrBuilder *b) {
-  // foreach (var_ i, span(mList_arr(b -> code) , ))
-}
+void ir_av1(IrBuilder *b) {}
 
 //
 // opcode printer {
@@ -304,6 +308,27 @@ static void print_reg(u32 r, outputFunction put, void *_arb, fptr args) {
     USETYPEPRINTER(u32, r);
   }
 }
+static void print_scope_tree(scope *s, outputFunction put, void *_arb, fptr args, int depth) {
+  if (!s) return;
+  for (int i = 0; i < depth; i++)
+    PUTS("  ");
+  PUTS("scope {\n");
+  for (usize i = 0; i < msList_len(s->code); i++) {
+    for (int j = 0; j < depth + 1; j++)
+      PUTS("  ");
+    USETYPEPRINTER(u32, (u32)i);
+    PUTS(": ");
+    USENAMEDPRINTER("opcode", s->code[i]);
+    PUTS("\n");
+  }
+  // relatives[0] is the parent (see scope_parent) — children start at index 1
+  slice(scopeptr) kids = scope_children(s);
+  for (usize i = 0; i < kids.len; i++)
+    print_scope_tree(kids.ptr[i], put, _arb, args, depth + 1);
+  for (int i = 0; i < depth; i++)
+    PUTS("  ");
+  PUTS("}\n");
+}
 
 static void print_opcode(opcode o, outputFunction put, void *_arb, fptr args) {
   USENAMEDPRINTER("opcodeTag", o.tag);
@@ -311,7 +336,7 @@ static void print_opcode(opcode o, outputFunction put, void *_arb, fptr args) {
   tu_match_void(
       o,
       (oint, v, USENAMEDPRINTER("slice(c8)", v);),
-      (oscop, o, PUTS("scop");),
+      (oscop, o, TODO();),
       (ostr, v, USENAMEDPRINTER("slice(c8)", v);),
       (oast, v, USENAMEDPRINTER("ast", v);),
       (obin, b, USETYPEPRINTER(builtin_id, b);),
@@ -386,18 +411,21 @@ static void print_opcode(opcode o, outputFunction put, void *_arb, fptr args) {
 }
 typePrinter("opcode", opcode) { print_opcode(in, put, _arb, args); }
 
-typePrinter("ir", mList(opcode)) {
-  for (usize i = 0; i < mList_len(in); i++) {
+typePrinter("ir", msList(opcode)) {
+  for (usize i = 0; i < msList_len(in); i++) {
     USETYPEPRINTER(u32, (u32)i);
     PUTS(": ");
-    USENAMEDPRINTER("opcode", mList_arr(in)[i]);
+    USENAMEDPRINTER("opcode", in[i]);
     PUTC((char)'\n');
   }
 }
 typePrinter(IrBuilder) {
-  PUTS("IrBuilder {\n ");
-  if (in.env)
-    USENAMEDPRINTER("ir", in.env->code);
+  PUTS("IrBuilder {\n");
+  // walk up to the outermost scope so we print the whole tree, not just wherever env currently is
+  scope *root = in.env;
+  while (root && scope_parent(root))
+    root = scope_parent(root);
+  print_scope_tree(root, put, _arb, args, 1);
   PUTS("}\n");
 }
 // }
