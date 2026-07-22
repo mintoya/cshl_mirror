@@ -333,7 +333,7 @@ static void print_scope_tree(scope *s, outputFunction put, void *_arb, fptr args
       USETYPEPRINTER(u32, ++i);
     PUTS("\t:");
 
-    var_ fbb = fba_buffer([10]);
+    var_ fbb = fba_buffer([100]);
     var_ alloc = fba_initBuffer(fbb);
     var_ str = snprint(alloc, "{}", depth);
     USENAMEDPRINTER_WA("opcode", fp(str), it[0]);
