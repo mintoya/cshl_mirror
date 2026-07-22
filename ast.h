@@ -81,7 +81,7 @@ typePrinter("astTag", itypeof(ast, tag)) {
 }
 static inline void print_ast_indent(int indent, outputFunction put, void *_arb) {
   for (int i = 0; i < indent; i++)
-    PUTS("  ");
+    PUTS(" ");
 }
 static void print_ast_recursive(ast *node, int indent, outputFunction put, void *_arb) {
   if (!node) return PUTS("null\n");
@@ -161,7 +161,16 @@ static void print_ast_recursive(ast *node, int indent, outputFunction put, void 
       (default, unreachable())
   );
 }
-typePrinter("ast", ast *) { print_ast_recursive(in, 0, put, _arb); }
+typePrinter("ast", ast *) {
+  var_ deapth = printer_arg_trim(printer_arg_until(':', args));
+  args = printer_arg_trim(printer_arg_after(':', args));
+  usize d = 0;
+  while (deapth.len && deapth.ptr[0] >= '0' && deapth.ptr[0] <= '9') {
+    d = d * 10 + deapth.ptr[0] - '0';
+    deapth = slice_split(deapth, (1, -1))[0];
+  }
+  print_ast_recursive(in, d, put, _arb);
+}
 // }
 //
 __attribute__((noreturn)) void error_ast(ast a, slice(c8) message) {
@@ -222,11 +231,11 @@ sliceDef(Token);
 typePrinter(Token) {
   switch (in.kind) {
       // clang-format off
-case t_operator    :PUTS("op ");break;
-case t_punctuation :PUTS("pun");break;
-case t_number      :PUTS("num");break;
-case t_string      :PUTS("str");break;
-case t_identifier  :PUTS("id ");break;
+      case t_operator    :PUTS("op ");break;
+      case t_punctuation :PUTS("pun");break;
+      case t_number      :PUTS("num");break;
+      case t_string      :PUTS("str");break;
+      case t_identifier  :PUTS("id ");break;
       // clang-format on
   }
   PUTS("'");

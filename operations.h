@@ -152,6 +152,20 @@ void env_push(IrBuilder *b) {
 }
 
 void env_pop(IrBuilder *b) { b->env = scope_parent(b->env); }
+bool op_creates(opcode o) {
+  return tu_match_exp(
+      o,
+      (oscop, _, true),
+      (obin, _, true),
+      (ostr, _, true),
+      (oint, _, true),
+      (onew, _, true),
+      (oast, _, true),
+      (olelem, _, true),
+      (default, false),
+
+  );
+}
 u32 env_addOp(IrBuilder *b, opcode o) {
   msList_push(((hxmap *)b->env->locals)->allocator, b->env->code, o);
   return tu_match_exp(
@@ -275,7 +289,6 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
 
   );
 }
-// void env_replace(IrBuilder *b, u32 idx) {}
 void ir_av1(IrBuilder *b) {}
 
 //
@@ -308,25 +321,28 @@ static void print_reg(u32 r, outputFunction put, void *_arb, fptr args) {
     USETYPEPRINTER(u32, r);
   }
 }
+#include "wheels/allocators/fbaAllocator.h"
 static void print_scope_tree(scope *s, outputFunction put, void *_arb, fptr args, int depth) {
   if (!s) return;
-  for (int i = 0; i < depth; i++)
-    PUTS("  ");
+  print_ast_indent(depth, put, _arb);
   PUTS("scope {\n");
-  for (usize i = 0; i < msList_len(s->code); i++) {
-    for (int j = 0; j < depth + 1; j++)
-      PUTS("  ");
-    USETYPEPRINTER(u32, (u32)i);
-    PUTS(": ");
-    USENAMEDPRINTER("opcode", s->code[i]);
+  u32 i = s->start_reg;
+  foreach (var_ it, span(s->code, msList_len(s->code))) {
+    print_ast_indent(depth, put, _arb);
+    if (op_creates(it[0]))
+      USETYPEPRINTER(u32, ++i);
+    PUTS("\t:");
+
+    var_ fbb = fba_buffer([10]);
+    var_ alloc = fba_initBuffer(fbb);
+    var_ str = snprint(alloc, "{}", depth);
+    USENAMEDPRINTER_WA("opcode", fp(str), it[0]);
     PUTS("\n");
   }
-  // relatives[0] is the parent (see scope_parent) — children start at index 1
-  slice(scopeptr) kids = scope_children(s);
+  var_ kids = scope_children(s);
   for (usize i = 0; i < kids.len; i++)
     print_scope_tree(kids.ptr[i], put, _arb, args, depth + 1);
-  for (int i = 0; i < depth; i++)
-    PUTS("  ");
+  print_ast_indent(depth, put, _arb);
   PUTS("}\n");
 }
 
@@ -338,7 +354,7 @@ static void print_opcode(opcode o, outputFunction put, void *_arb, fptr args) {
       (oint, v, USENAMEDPRINTER("slice(c8)", v);),
       (oscop, o, TODO();),
       (ostr, v, USENAMEDPRINTER("slice(c8)", v);),
-      (oast, v, USENAMEDPRINTER("ast", v);),
+      (oast, v, USENAMEDPRINTER_WA("ast", args, v);),
       (obin, b, USETYPEPRINTER(builtin_id, b);),
       (onew, v, {
         PUTS("l=");
@@ -412,10 +428,12 @@ static void print_opcode(opcode o, outputFunction put, void *_arb, fptr args) {
 typePrinter("opcode", opcode) { print_opcode(in, put, _arb, args); }
 
 typePrinter("ir", msList(opcode)) {
-  for (usize i = 0; i < msList_len(in); i++) {
-    USETYPEPRINTER(u32, (u32)i);
-    PUTS(": ");
-    USENAMEDPRINTER("opcode", in[i]);
+  u32 i = 0;
+  foreach (var_ it, span(in, msList_len(in))) {
+    if (op_creates(it[0]))
+      USETYPEPRINTER(u32, (u32)++i);
+    PUTS(":\t");
+    USENAMEDPRINTER("opcode", it[0]);
     PUTC((char)'\n');
   }
 }
