@@ -230,12 +230,12 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
                }),
                (default, len = 1; env_addOp(b, ocode_of(oast, op.right));),
            );
-           irc = env_addOp(
+           env_addOp(
                b,
                ocode_of(
                    ocall,
                    {
-                       .d = env_addOp(b, ocode_of(onew, {})),
+                       .d = irc = env_addOp(b, ocode_of(onew, {})),
                        .len = len,
                        .off = offset,
                        .l = left,
@@ -254,7 +254,7 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
                )
            );
          } else {
-           irc = env_addOp(
+           env_addOp(
                b,
                ocode_of(
                    oop,
@@ -262,7 +262,7 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
                        .r = emit_ir(b, op.right, 0),
                        .l = emit_ir(b, op.left, 0),
                        .o = op.number_rep,
-                       .d = env_addOp(b, ocode_of(onew, {})),
+                       .d = irc = env_addOp(b, ocode_of(onew, {})),
                    }
                )
            );
@@ -332,11 +332,9 @@ static void print_scope_tree(scope *s, outputFunction put, void *_arb, fptr args
     if (op_creates(it[0]))
       USETYPEPRINTER(u32, ++i);
     PUTS("\t:");
-
-    var_ fbb = fba_buffer([100]);
-    var_ alloc = fba_initBuffer(fbb);
-    var_ str = snprint(alloc, "{}", depth);
-    USENAMEDPRINTER_WA("opcode", fp(str), it[0]);
+    var_ fbb = fba_buffer(u8[sizeof(myAlign)]);
+    var_ dstring = snprint(fba_initBuffer(fbb), "{}", depth + 3);
+    USENAMEDPRINTER_WA("opcode", fp(dstring), it[0]);
     PUTS("\n");
   }
   var_ kids = scope_children(s);
