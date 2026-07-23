@@ -13,3 +13,4 @@ nob.pdb
 /a.out
 compile_commands.wsl.json
 compile_commands.win64.json
+/nob_files/last_run.txt
