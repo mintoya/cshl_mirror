@@ -1,5 +1,6 @@
 #include "ast.h"
 #include "type.h"
+#include <wheels/allocators/fbaAllocator.h>
 #include <wheels/bigint.h>
 #include <wheels/macros.h>
 #include <wheels/mylist.h>
@@ -63,6 +64,7 @@ struct scope {
 typedef struct {
   AllocatorV alloc;
   scope *env;
+  mxmap(Type, Type *) types;
 } IrBuilder;
 
 //
@@ -77,6 +79,14 @@ IrBuilder IrBuilder_init(AllocatorV allocator) {
   var_ res = (IrBuilder){
       .alloc = allocator,
       .env = nullptr,
+      .types = mxmap_init(
+          allocator,
+          Type,
+          Type *,
+          3,
+          Type_hash_hash,
+          Type_cmp_hash
+      )
   };
   env_push(&res);
   struct {
@@ -102,10 +112,62 @@ IrBuilder IrBuilder_init(AllocatorV allocator) {
   return res;
 }
 void IrBuilder_deinit(IrBuilder *b) { TODO("not super important"); }
-#include <wheels/mylist.h>
+AllocatorV IrBuilder_allocator(IrBuilder *b) { return ((hxmap *)b->types)->allocator; }
 
 AllocatorV scope_allocator(scope *s) { return ((hxmap *)s->locals)->allocator; }
+Type *IrBuilder_getType(IrBuilder *b, Type t) {
+  if_decl (let t, mxmap_get(b->types, t)) return *t;
+  let allocator = IrBuilder_allocator(b);
+  let pt = aCreate(allocator, Type);
+  mxmap_set(b->types, t, pt);
+  *pt = tu_match_exp(
+      t,
+      (builtin, b, (Type)tu_of(builtin, b)),
+      (r_void, _, (Type)tu_of(r_void, {})),
+      (r_uint, u, (Type)tu_of(r_uint, u)),
+      (r_sint, s, (Type)tu_of(r_sint, s)),
+      (r_tag, tag, (Type)tu_of(r_tag, {.name = tag.name, .type = IrBuilder_getType(b, *tag.type)})),
+      (r_ptr, p, (Type)tu_of(r_ptr, IrBuilder_getType(b, *p))),
+      (r_arr, arr, (Type)tu_of(r_arr, {.type = IrBuilder_getType(b, *arr.type), .count = arr.count})),
+      (r_struct,
+       items,
+       (Type)tu_of(
+           r_struct,
+           mList_map(allocator, items, ({ // TODO: intern the other things also
+                       $.init.t = *IrBuilder_getType(b, $.init.t);
+                       $;
+                     }))
+       )),
+      (r_bitfield,
+       items,
 
+       (Type)tu_of(
+           r_bitfield,
+           mList_map(allocator, items, ({ // TODO: intern the other things also
+                       $.init.t = *IrBuilder_getType(b, $.init.t);
+                       $;
+                     }))
+       )),
+      (
+          r_func,
+          params,
+          (Type)tu_of(
+              r_func,
+              mList_map(
+                  allocator,
+                  params,
+                  ({ // TODO: intern the other things also
+                    $ = *IrBuilder_getType(b, $);
+                    $;
+                  })
+              )
+
+          )
+      ),
+      (default, t),
+  );
+  return *mxmap_set(b->types, *pt, pt);
+}
 scopeptr scope_parent(scope *s) {
   if (msList_len(s->relatives))
     return s->relatives[0];
@@ -289,7 +351,17 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
 
   );
 }
-void ir_av1(IrBuilder *b) {}
+void ir_av1(IrBuilder *b) {
+  let code = b->env->code;
+  foreach (let i, span(code, msList_len(code))) {
+    tu_match_void(
+        i[0],
+        (oint, str, TODO("write basic conversion functions");),
+        (ostr, str, TODO("write basic conversion functions");),
+        (obin, str, TODO("write basic conversion functions");),
+    );
+  }
+}
 
 //
 // opcode printer {
@@ -321,7 +393,6 @@ static void print_reg(u32 r, outputFunction put, void *_arb, fptr args) {
     USETYPEPRINTER(u32, r);
   }
 }
-#include "wheels/allocators/fbaAllocator.h"
 static void print_scope_tree(scope *s, outputFunction put, void *_arb, fptr args, int depth) {
   if (!s) return;
   print_ast_indent(depth, put, _arb);
@@ -332,7 +403,8 @@ static void print_scope_tree(scope *s, outputFunction put, void *_arb, fptr args
     if (op_creates(it[0]))
       USETYPEPRINTER(u32, ++i);
     PUTS("\t:");
-    var_ fbb = fba_buffer(u8[sizeof(myAlign)]);
+    // fba_buffer(u8[sizeof(myAlign)]) fbb;
+    let fbb = (fba_buffer(myAlign[2])){};
     var_ dstring = snprint(fba_initBuffer(fbb), "{}", depth + 3);
     USENAMEDPRINTER_WA("opcode", fp(dstring), it[0]);
     PUTS("\n");
@@ -446,3 +518,32 @@ typePrinter(IrBuilder) {
 }
 // }
 //
+
+test_fn(type_interns) {
+  let irb = IrBuilder_init(allocator);
+
+  let v = (Type)tu_of(
+      r_struct,
+      mList_init(allocator, r_struct_item)
+  );
+  mList_push(
+      tu_catch(r_struct, v),
+      {
+          .alignment = 8,
+          .isconst = false,
+          .name = fp("self"),
+          .offset = 0,
+          .init = (typed_value){tu_of(r_ptr, &v)},
+      }
+  );
+
+  let p1 = IrBuilder_getType(&irb, v);
+  let p2 = IrBuilder_getType(&irb, *p1);
+  let p3 = IrBuilder_getType(&irb, *p2);
+  test_assert(p1 && p2 && p3);
+  test_assert(p1->tag == p3->tag);
+  test_assert(!Type_cmp(*p1, *p2));
+  test_assert(!Type_cmp(*p1, *p3));
+  test_assert(p1 == p2);
+  test_assert(p1 == p3);
+}

@@ -323,7 +323,12 @@ typePrinter(builtin_id) {
       // clang-format on
   }
 }
-typePrinter(Type) {
+static void print_Type_impl(Type in, outputFunction put, void *_arb, fptr args, int depth) {
+  if (depth > 8) {
+    PUTS("...");
+    return;
+  }
+
   tu_match_void(
       in,
       (builtin, builtin, {
@@ -336,13 +341,13 @@ typePrinter(Type) {
       (r_sint, bits, PUTS("i"); USETYPEPRINTER(usize, bits);),
       (r_ptr, type, {
         PUTS("[*]");
-        USETYPEPRINTER(Type, *type);
+        if (type) print_Type_impl(*type, put, _arb, args, depth + 1);
       }),
       (r_arr, arr, {
         PUTS("[");
         USETYPEPRINTER(usize, arr.count);
         PUTS("]");
-        USETYPEPRINTER(Type, *arr.type);
+        if (arr.type) print_Type_impl(*arr.type, put, _arb, args, depth + 1);
       }),
       (r_struct, st, {
         PUTS("struct{");
@@ -354,7 +359,7 @@ typePrinter(Type) {
           PUTS("@");
           USETYPEPRINTER(usize, type->offset);
           PUTS(":");
-          USETYPEPRINTER(Type, type->init.t);
+          print_Type_impl(type->init.t, put, _arb, args, depth + 1);
         }
       }),
       (r_bitfield, st, {
@@ -367,17 +372,17 @@ typePrinter(Type) {
           PUTS("|");
           USETYPEPRINTER(usize, type->width);
           PUTS(":");
-          USETYPEPRINTER(Type, type->init.t);
+          print_Type_impl(type->init.t, put, _arb, args, depth + 1);
         }
       }),
       (r_func, fn, {
         PUTS("fn((");
         foreach (var_ it, span(mList_arr(fn), mList_len(fn) - 1)) {
           if (it != mList_arr(fn)) PUTS(",");
-          USETYPEPRINTER(Type, it[0]);
+          print_Type_impl(it[0], put, _arb, args, depth + 1);
         }
         PUTS("),");
-        if (mList_len(fn)) USETYPEPRINTER(Type, mList_last(fn));
+        if (mList_len(fn)) print_Type_impl(mList_last(fn), put, _arb, args, depth + 1);
         PUTS(")");
       }),
       (c_func, f, PUTS("fn");),
@@ -386,6 +391,8 @@ typePrinter(Type) {
       (c_ast, t, PUTS("ast");),
   );
 }
+
+typePrinter(Type) { print_Type_impl(in, put, _arb, args, 0); }
 typePrinter(typed_value) {
   PUTS("{t:");
   USETYPEPRINTER(Type, in.t);
