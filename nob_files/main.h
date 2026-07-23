@@ -1,8 +1,12 @@
 #include "../deps/nob.h/nob.h"
-#include <stdcountof.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#if __has_include(<stdcountof.h>)
+  #include <stdcountof.h>
+#else
+  #define countof(x) (sizeof(x) / sizeof(x[0]))
+#endif
 
 #if !defined CC
   #define CC "clang"
@@ -94,24 +98,24 @@ bool update_deps() {
     return nob_procs_wait(p);
   } else return (nob_log(INFO, "skipping sync..."), true);
 }
-bool build_main(Cmd *cmd, Procs *procs) {
+bool build_main() {
+  Cmd cmd = {};
   if (!mkdir_if_not_exists("build"))
     return false;
-  cmd_append(cmd, CC, COMMON_CFLAGS, "-o", "build/compiler" EXTENSION, "main.c", "-g");
-  return cmd_run(cmd, .async = procs);
+  cmd_append(&cmd, CC, COMMON_CFLAGS, "-o", "build/compiler" EXTENSION, "main.c", "-g");
+  return cmd_run_sync(cmd);
 }
 
-bool build_tests(Cmd *cmd, Procs *procs) {
+bool build_tests() {
+  Cmd cmd = {};
   if (!mkdir_if_not_exists("build"))
     return false;
 #if defined(_WIN32)
-  cmd_append(cmd, CC, COMMON_CFLAGS, "-o", "build/compiler" EXTENSION, "tests.c", "deps/wheels/c11threads/c11threads_win32.c");
+  cmd_append(&cmd, CC, COMMON_CFLAGS, "-o", "build/compiler" EXTENSION, "tests.c", "deps/wheels/c11threads/c11threads_win32.c");
 #else
-  cmd_append(cmd, CC, COMMON_CFLAGS, "-o", "build/compiler" EXTENSION, "tests.c");
+  cmd_append(&cmd, CC, COMMON_CFLAGS, "-o", "build/compiler" EXTENSION, "tests.c");
 #endif
-  if (!cmd_run(cmd, .async = procs))
-    return false;
-  return true;
+  return cmd_run_sync(cmd);
 }
 
 void usage(const char *program) {
@@ -127,38 +131,22 @@ void usage(const char *program) {
 
 int main(int argc, char **argv) {
   NOB_GO_REBUILD_URSELF(argc, argv);
-
-  Cmd cmd = {0};
-  Procs procs = {0};
-
   const char *program = shift_args(&argc, &argv);
 
-  if (!argc) {
-    if (!build_main(&cmd, &procs))
-      return 1;
-    return 0;
-  }
+  if (!argc) return build_main();
 
   const char *subcmd = shift_args(&argc, &argv);
 
-  if (!strcmp(subcmd, "help")) {
-    usage(program);
-    return 0;
-  }
+  if (!strcmp(subcmd, "help")) return (usage(program), 0);
 
-  do {
-    if (!update_deps())
-      return 1;
-    if (!nob_procs_wait(procs))
-      return 1;
-  } while (0);
+  if (!update_deps())
+    return 1;
 
   if (!strcmp(subcmd, "run")) {
-    if (!build_main(&cmd, &procs))
+    if (!build_main())
       return 1;
-    if (!nob_procs_wait(procs))
-      return 1;
-    cmd.count = 0;
+
+    Cmd cmd = {};
     cmd_append(&cmd, "./build/compiler" EXTENSION);
     for (int i = 0; i < argc; ++i)
       cmd_append(&cmd, argv[i]);
@@ -166,12 +154,10 @@ int main(int argc, char **argv) {
       return 1;
     return 0;
   } else if (!strcmp(subcmd, "test")) {
-    if (!build_tests(&cmd, &procs))
-      return 1;
-    if (!nob_procs_wait(procs))
+    if (!build_tests())
       return 1;
 
-    cmd.count = 0;
+    Cmd cmd = {};
     cmd_append(&cmd, "./build/compiler" EXTENSION);
     if (!cmd_run_sync(cmd))
       return 1;
