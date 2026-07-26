@@ -351,170 +351,41 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
 
   );
 }
+typed_value Type_asValue(Type *t) {
+  return (typed_value){tu_of(c_type, {}), {.c_type = t}};
+}
+Type value_asType(typed_value t) {
+  if (tu_is(c_type, t.t))
+    return t.v.c_type[0];
+  else assertMessage(false, "thing is not a type");
+}
+Type typeof_Value(typed_value t) { return t.t; }
+typed_value convertString(IrBuilder *b, fptr in) { TODO(); }
+typed_value convertInt(IrBuilder *b, fptr in) { TODO(); }
+
 void ir_av1(IrBuilder *b) {
   let code = b->env->code;
+  let allocator = IrBuilder_allocator(b);
   foreach (let i, span(code, msList_len(code))) {
     tu_match_void(
         i[0],
-        (oint, str, TODO("write basic conversion functions");),
-        (ostr, str, TODO("write basic conversion functions");),
-        (obin, str, TODO("write basic conversion functions");),
+        (oint, str, msList_push(allocator, b->env->values, convertInt(b, str));),
+        (ostr, str, msList_push(allocator, b->env->values, convertString(b, str));),
+        (obin, bin, msList_push(allocator, b->env->values, {tu_of(builtin, bin)})),
+        (onew, n, {
+          if_decl (let typeIndex, n.l) {
+            assertMessage(typeIndex < msList_len(b->env->values));
+            let t = value_asType(b->env->values[typeIndex]);
+          } else msList_push(allocator, b->env->values, {tu_of(r_void, {})}); // TODO : not sufficient
+        })
     );
   }
 }
 
 //
 // opcode printer {
-typePrinter("opcodeTag", itypeof(opcode, tag)) {
-  tu_match_void(
-      ((opcode){.tag = in}),
-      (oscop, _, PUTS("oscop");),
-      (obin, _, PUTS("obin");),
-      (oint, _, PUTS("oint");),
-      (ostr, _, PUTS("ostr");),
-      (oast, _, PUTS("oast");),
-      (onew, _, PUTS("onew");),
-      (oconst, _, PUTS("oconst");),
-      (ojif, _, PUTS("ojif");),
-      (ocall, _, PUTS("ocall");),
-      (oop, _, PUTS("oop");),
-      (oret, _, PUTS("oret");),
-      (omov, _, PUTS("omov");),
-      (ocpy, _, PUTS("ocpy");),
-      (olelem, _, PUTS("olelem");),
-      (oselem, _, PUTS("oselem");),
-  );
-}
+typePrinter(opcode) {
 
-static void print_reg(u32 r, outputFunction put, void *_arb, fptr args) {
-  if (!r) PUTS("null");
-  else {
-    PUTS("%");
-    USETYPEPRINTER(u32, r);
-  }
-}
-static void print_scope_tree(scope *s, outputFunction put, void *_arb, fptr args, int depth) {
-  if (!s) return;
-  print_ast_indent(depth, put, _arb);
-  PUTS("scope {\n");
-  u32 i = s->start_reg;
-  foreach (var_ it, span(s->code, msList_len(s->code))) {
-    print_ast_indent(depth, put, _arb);
-    if (op_creates(it[0]))
-      USETYPEPRINTER(u32, ++i);
-    PUTS("\t:");
-    // fba_buffer(u8[sizeof(myAlign)]) fbb;
-    let fbb = (fba_buffer(myAlign[2])){};
-    var_ dstring = snprint(fba_initBuffer(fbb), "{}", depth + 3);
-    USENAMEDPRINTER_WA("opcode", fp(dstring), it[0]);
-    PUTS("\n");
-  }
-  var_ kids = scope_children(s);
-  for (usize i = 0; i < kids.len; i++)
-    print_scope_tree(kids.ptr[i], put, _arb, args, depth + 1);
-  print_ast_indent(depth, put, _arb);
-  PUTS("}\n");
-}
-
-static void print_opcode(opcode o, outputFunction put, void *_arb, fptr args) {
-  USENAMEDPRINTER("opcodeTag", o.tag);
-  PUTS(" ");
-  tu_match_void(
-      o,
-      (oint, v, USENAMEDPRINTER("slice(c8)", v);),
-      (oscop, o, TODO();),
-      (ostr, v, USENAMEDPRINTER("slice(c8)", v);),
-      (oast, v, USENAMEDPRINTER_WA("ast", args, v);),
-      (obin, b, USETYPEPRINTER(builtin_id, b);),
-      (onew, v, {
-        PUTS("l=");
-        print_reg(v.l, put, _arb, args);
-      }),
-      (oconst, v, {
-        PUTS("l=");
-        print_reg(v.l, put, _arb, args);
-      }),
-      (ojif, v, {
-        PUTS("l=");
-        print_reg(v.l, put, _arb, args);
-        PUTS(" d=");
-        USETYPEPRINTER(u32, v.d);
-      }),
-      (ocall, v, {
-        PUTS("l=");
-        print_reg(v.l, put, _arb, args);
-        PUTS(" off=");
-        USETYPEPRINTER(u32, v.off);
-        PUTS(" len=");
-        USETYPEPRINTER(u32, v.len);
-        PUTS(" d=");
-        print_reg(v.d, put, _arb, args);
-      }),
-      (oop, v, {
-        char sym[sizeof(u32) + 1] = {};
-        memcpy(sym, &v.o, sizeof(v.o));
-        PUTS("l=");
-        print_reg(v.l, put, _arb, args);
-        PUTS(" r=");
-        print_reg(v.r, put, _arb, args);
-        PUTS(" o='");
-        USENAMEDPRINTER("cstr", (char *)sym);
-        PUTS("' d=");
-        print_reg(v.d, put, _arb, args);
-      }),
-      (oret, v, {
-        PUTS("l=");
-        print_reg(v.l, put, _arb, args);
-      }),
-      (omov, v, {
-        PUTS("l=");
-        print_reg(v.l, put, _arb, args);
-        PUTS(" r=");
-        print_reg(v.r, put, _arb, args);
-      }),
-      (ocpy, v, {
-        PUTS("l=");
-        print_reg(v.l, put, _arb, args);
-        PUTS(" r=");
-        print_reg(v.r, put, _arb, args);
-      }),
-      (olelem, v, {
-        PUTS("l=");
-        print_reg(v.l, put, _arb, args);
-        PUTS(" name='");
-        USENAMEDPRINTER("slice(c8)", v.name);
-        PUTS("'");
-      }),
-      (oselem, v, {
-        PUTS("l=");
-        print_reg(v.l, put, _arb, args);
-        PUTS(" name='");
-        USENAMEDPRINTER("slice(c8)", v.name);
-        PUTS("' d=");
-        print_reg(v.d, put, _arb, args);
-      }),
-  );
-}
-typePrinter("opcode", opcode) { print_opcode(in, put, _arb, args); }
-
-typePrinter("ir", msList(opcode)) {
-  u32 i = 0;
-  foreach (var_ it, span(in, msList_len(in))) {
-    if (op_creates(it[0]))
-      USETYPEPRINTER(u32, (u32)++i);
-    PUTS(":\t");
-    USENAMEDPRINTER("opcode", it[0]);
-    PUTC((char)'\n');
-  }
-}
-typePrinter(IrBuilder) {
-  PUTS("IrBuilder {\n");
-  // walk up to the outermost scope so we print the whole tree, not just wherever env currently is
-  scope *root = in.env;
-  while (root && scope_parent(root))
-    root = scope_parent(root);
-  print_scope_tree(root, put, _arb, args, 1);
-  PUTS("}\n");
 }
 // }
 //
@@ -546,4 +417,29 @@ test_fn(type_interns) {
   test_assert(!Type_cmp(*p1, *p3));
   test_assert(p1 == p2);
   test_assert(p1 == p3);
+}
+test_fn(type_typeof) {
+  u64 mem = 0xF00;
+  u64 mem2 = ~(u64)0;
+  let foo = (typed_value){
+      tu_of(r_uint, 64), {.value = &mem}
+  };
+  let bar = (typed_value){
+      tu_of(r_uint, 64), {.value = &mem2}
+  };
+  println("values : {typed_value} , {typed_value} ", foo, bar);
+  let typeof_foo = typeof_Value(foo);
+  let typeof_bar = typeof_Value(bar);
+  test_assert(!Type_cmp(typeof_bar, typeof_foo));
+
+  let typetype = typeof_Value(Type_asValue(&typeof_foo));
+
+  test_assert(Type_cmp(typeof_Value(bar), typetype));
+  println("{Type}", typetype);
+  test_assert(!Type_cmp(typeof_Value(Type_asValue(&typeof_bar)), typetype));
+  let typeof_typeof_bar = typeof_Value(Type_asValue(&typeof_bar));
+  test_assert(!Type_cmp(typeof_Value(Type_asValue(&typeof_typeof_bar)), typetype));
+  println("t\t: {}", ((fptr){sizeof(typeof_foo), (u8 *)&typeof_foo}));
+  println("t(t)\t: {}", ((fptr){sizeof(typetype), (u8 *)&typetype}));
+  println("t(t(t))\t: {}", ((fptr){sizeof(typeof_typeof_bar), (u8 *)&typeof_typeof_bar}));
 }

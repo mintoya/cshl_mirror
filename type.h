@@ -80,12 +80,6 @@ typedef struct r_bitf_item {
   fptr name;
   usize width;
 } r_bitf_item;
-r_func cf_convert(
-    AllocatorV allocator,
-    itypeof(itypeof(typed_value, v), c_func) v
-) {
-  return mList_map(allocator, v, $.init->t);
-}
 static inline usize Type_ralig(Type t) {
   return tu_match_exp(
       t,
@@ -96,13 +90,13 @@ static inline usize Type_ralig(Type t) {
       (r_arr, a, assertMessage(a.type); Type_ralig(a.type[0]) * a.count),
       (r_bitfield, b, ({
          usize s = 0;
-         foreach (var_ b, mList_iter(b))
+         foreach (let b, mList_iter(b))
            s += b.width;
          Type_ralig((Type)tu_of(r_uint, s));
        })),
       (r_struct, s, ({
          usize a = 1;
-         foreach (var_ i, mList_iter(s))
+         foreach (let i, mList_iter(s))
            a = MAX$(i.isconst ? 1 : i.alignment, a);
          a;
        })),
@@ -119,26 +113,20 @@ static inline usize Type_rsize(Type t) {
       (r_arr, a, assertMessage(a.type); Type_rsize(a.type[0]) * a.count),
       (r_bitfield, b, ({
          usize s = 0;
-         foreach (var_ b, mList_iter(b))
+         foreach (let b, mList_iter(b))
            s += b.width;
          Type_rsize((Type)tu_of(r_uint, s));
        })),
       (r_struct, s, ({
          usize sz = 0;
-         foreach (var_ i, mList_iter(s))
+         foreach (let i, mList_iter(s))
            sz = MAX$(i.isconst ? 0 : i.offset + Type_rsize(i.init.t), sz);
          lineup(sz, Type_ralig(t));
        })),
       (default, (usize)0)
   );
 }
-i8 icmp(isize a, isize b) {
-  return a > b
-             ? -1
-         : a < b
-             ? 1
-             : 0;
-}
+i8 icmp(isize a, isize b) { return a - b; }
 i8 Type_cmp_ex(Type a, Type b, mList(Type) followed) {
   if (!mcmp(a, b)) return 0;
   else if (a.tag < b.tag) return -1;
@@ -146,7 +134,7 @@ i8 Type_cmp_ex(Type a, Type b, mList(Type) followed) {
   tu_match_void(
       a,
       (builtin, id, {
-        var_ id2 = tu_catch(builtin, b);
+        let id2 = tu_catch(builtin, b);
         if (id < id2) return -1;
         if (id > id2) return 1;
         return 0;
@@ -163,9 +151,9 @@ i8 Type_cmp_ex(Type a, Type b, mList(Type) followed) {
       (r_sint, ai, return icmp(ai, tu_catch(r_sint, b));),
 
       (r_ptr, ai, {
-        var_ bi = tu_catch(r_ptr, b);
+        let bi = tu_catch(r_ptr, b);
         if (ai == bi) return 0;
-        var_ af = bbs_vla(*ai, *mList_vla(followed));
+        let af = bbs_vla(*ai, *mList_vla(followed));
         if (af.f) return 0;
         mList_ins(followed, af.i, *ai);
         i8 r = Type_cmp_ex(ai[0], bi[0], followed);
@@ -173,57 +161,57 @@ i8 Type_cmp_ex(Type a, Type b, mList(Type) followed) {
         return r;
       }),
       (r_arr, ai, {
-        var_ bi = tu_catch(r_arr, b);
+        let bi = tu_catch(r_arr, b);
         return Type_cmp_ex(ai.type[0], bi.type[0], followed)
                    ?: icmp(ai.count, bi.count);
       }),
       (r_func, ai, {
-        var_ bi = tu_catch(r_func, b);
-        var_ la = mList_len(ai);
-        var_ lb = mList_len(bi);
+        let bi = tu_catch(r_func, b);
+        let la = mList_len(ai);
+        let lb = mList_len(bi);
         if (la != lb) return icmp(la, lb);
-        foreach (var_ i, range(0, la)) {
-          var_ a = mList_arr(ai)[i];
-          var_ b = mList_arr(bi)[i];
-          var_ cmp = Type_cmp_ex(a, b, followed);
+        foreach (let i, range(0, la)) {
+          let a = mList_arr(ai)[i];
+          let b = mList_arr(bi)[i];
+          let cmp = Type_cmp_ex(a, b, followed);
           if (cmp) return cmp;
         }
         return 0;
       }),
       (r_bitfield, ai, {
-        var_ bi = tu_catch(r_bitfield, b);
-        var_ la = mList_len(ai);
-        var_ lb = mList_len(bi);
+        let bi = tu_catch(r_bitfield, b);
+        let la = mList_len(ai);
+        let lb = mList_len(bi);
         if (la != lb) return icmp(la, lb);
-        foreach (var_ i, range(0, la)) {
-          var_ a = mList_arr(ai)[i];
-          var_ b = mList_arr(bi)[i];
-          if_decl (var_ cmp, Type_cmp_ex(a.init.t, b.init.t, followed))
+        foreach (let i, range(0, la)) {
+          let a = mList_arr(ai)[i];
+          let b = mList_arr(bi)[i];
+          if_decl (let cmp, Type_cmp_ex(a.init.t, b.init.t, followed))
             return cmp;
-          if_decl (var_ cmp, fptr_cmp(a.name, b.name))
+          if_decl (let cmp, fptr_cmp(a.name, b.name))
             return cmp;
-          if_decl (var_ cmp, icmp(a.width, b.width))
+          if_decl (let cmp, icmp(a.width, b.width))
             return cmp;
         }
         return 0;
       }),
       (r_struct, ai, {
-        var_ bi = tu_catch(r_struct, b);
-        var_ la = mList_len(ai);
-        var_ lb = mList_len(bi);
+        let bi = tu_catch(r_struct, b);
+        let la = mList_len(ai);
+        let lb = mList_len(bi);
         if (la != lb) return icmp(la, lb);
-        foreach (var_ i, range(0, la)) {
-          var_ a = mList_arr(ai)[i];
-          var_ b = mList_arr(bi)[i];
-          if_decl (var_ cmp, Type_cmp_ex(a.init.t, b.init.t, followed))
+        foreach (let i, range(0, la)) {
+          let a = mList_arr(ai)[i];
+          let b = mList_arr(bi)[i];
+          if_decl (let cmp, Type_cmp_ex(a.init.t, b.init.t, followed))
             return cmp;
-          if_decl (var_ cmp, fptr_cmp(a.name, b.name))
+          if_decl (let cmp, fptr_cmp(a.name, b.name))
             return cmp;
-          if_decl (var_ cmp, icmp(a.isconst, b.isconst))
+          if_decl (let cmp, icmp(a.isconst, b.isconst))
             return cmp;
-          if_decl (var_ cmp, icmp(a.alignment, b.alignment))
+          if_decl (let cmp, icmp(a.alignment, b.alignment))
             return cmp;
-          if_decl (var_ cmp, icmp(a.offset, b.offset))
+          if_decl (let cmp, icmp(a.offset, b.offset))
             return cmp;
         }
         return 0;
@@ -231,7 +219,7 @@ i8 Type_cmp_ex(Type a, Type b, mList(Type) followed) {
   );
 }
 i8 Type_cmp(Type a, Type b) {
-  var_ f = mList_init(stdAlloc, Type);
+  let f = mList_init(stdAlloc, Type);
   defer { mList_deinit(f); };
   return Type_cmp_ex(a, b, f);
 }
@@ -252,7 +240,7 @@ static u64 Type_hash_ex(Type a, bool follow_ptr) {
       (r_arr, arr, return (Type_hash_ex(*arr.type, follow_ptr) * 31) ^ arr.count ^ 0x5000;),
       (r_struct, l, {
         u64 h = 0x5000;
-        foreach (var_ item, mList_iter(l)) {
+        foreach (let item, mList_iter(l)) {
           h = (h * 31) ^ Type_hash_ex(item.init.t, follow_ptr);
           h = (h * 31) ^ fptr_hash(item.name);
           h = (h * 31) ^ item.isconst;
@@ -263,7 +251,7 @@ static u64 Type_hash_ex(Type a, bool follow_ptr) {
       }),
       (r_bitfield, l, {
         u64 h = 0x6000;
-        foreach (var_ item, mList_iter(l)) {
+        foreach (let item, mList_iter(l)) {
           h = (h * 31) ^ Type_hash_ex(item.init.t, follow_ptr);
           h = (h * 31) ^ fptr_hash(item.name);
           h = (h * 31) ^ item.width;
@@ -272,7 +260,7 @@ static u64 Type_hash_ex(Type a, bool follow_ptr) {
       }),
       (r_func, l, {
         u64 h = 0x7000;
-        foreach (var_ t, mList_iter(l))
+        foreach (let t, mList_iter(l))
           h = (h * 31) ^ Type_hash_ex(t, follow_ptr);
         return h;
       })
@@ -289,11 +277,11 @@ typedef struct value {
 } value;
 //{value macros
 #define value_access(value) (*({             \
-  var_ _value_ptr = &(value);                \
+  let _value_ptr = &(value);                 \
   _value_ptr->lvalue ?: &_value_ptr->rvalue; \
 }))
 #define value_value(value) ({ \
-  var_ _value = (value);      \
+  let _value = (value);       \
   _value.rvalue =             \
       _value.lvalue           \
           ? *_value.lvalue    \
@@ -323,11 +311,13 @@ typePrinter(builtin_id) {
       // clang-format on
   }
 }
-static void print_Type_impl(Type in, outputFunction put, void *_arb, fptr args, int depth) {
-  if (depth > 8) {
-    PUTS("...");
-    return;
-  }
+
+typePrinter(Type) {
+  let depth = fptr_toi(PRINTARGS());
+  if (depth > 8) return PUTS("...");
+
+  let db = (fba_buffer(myAlign[2])){};
+  let ndepth = i_tofptr(fba_initBuffer(db), depth + 1);
 
   tu_match_void(
       in,
@@ -341,48 +331,56 @@ static void print_Type_impl(Type in, outputFunction put, void *_arb, fptr args, 
       (r_sint, bits, PUTS("i"); USETYPEPRINTER(usize, bits);),
       (r_ptr, type, {
         PUTS("[*]");
-        if (type) print_Type_impl(*type, put, _arb, args, depth + 1);
+        PRINTARGS_PUSH(ndepth) {
+          if (type) USETYPEPRINTER(Type, *type);
+          else PUTS("NULLTYPE!");
+        }
       }),
       (r_arr, arr, {
         PUTS("[");
         USETYPEPRINTER(usize, arr.count);
         PUTS("]");
-        if (arr.type) print_Type_impl(*arr.type, put, _arb, args, depth + 1);
+
+        PRINTARGS_PUSH(ndepth) {
+          if (arr.type) USETYPEPRINTER(Type, *arr.type);
+          else PUTS("NULLTYPE!");
+        }
       }),
       (r_struct, st, {
         PUTS("struct{");
         defer { PUTS("}"); }
-        foreach (var_ type, span(mList_arr(st), mList_len(st))) {
+        foreach (let type, span(mList_arr(st), mList_len(st))) {
           if (type != mList_arr(st)) PUTS(",");
 
           USENAMEDPRINTER("slice(c8)", type->name);
           PUTS("@");
           USETYPEPRINTER(usize, type->offset);
           PUTS(":");
-          print_Type_impl(type->init.t, put, _arb, args, depth + 1);
+          PRINTARGS_PUSH(ndepth) { USETYPEPRINTER(Type, type->init.t); }
         }
       }),
       (r_bitfield, st, {
         PUTS("struct{");
         defer { PUTS("}"); }
-        foreach (var_ type, span(mList_arr(st), mList_len(st))) {
+        foreach (let type, span(mList_arr(st), mList_len(st))) {
           if (type != mList_arr(st)) PUTS(",");
 
           USENAMEDPRINTER("slice(c8)", type->name);
           PUTS("|");
           USETYPEPRINTER(usize, type->width);
           PUTS(":");
-          print_Type_impl(type->init.t, put, _arb, args, depth + 1);
+          PRINTARGS_PUSH(ndepth) { USETYPEPRINTER(Type, type->init.t); }
         }
       }),
       (r_func, fn, {
         PUTS("fn((");
-        foreach (var_ it, span(mList_arr(fn), mList_len(fn) - 1)) {
+        foreach (let it, span(mList_arr(fn), (mList_len(fn) ?: 1) - 1)) {
           if (it != mList_arr(fn)) PUTS(",");
-          print_Type_impl(it[0], put, _arb, args, depth + 1);
+          PRINTARGS_PUSH(ndepth) { USETYPEPRINTER(Type, it[0]); }
         }
         PUTS("),");
-        if (mList_len(fn)) print_Type_impl(mList_last(fn), put, _arb, args, depth + 1);
+        if (mList_len(fn))
+          PRINTARGS_PUSH(ndepth) { USETYPEPRINTER(Type, mList_last(fn)); }
         PUTS(")");
       }),
       (c_func, f, PUTS("fn");),
@@ -391,8 +389,6 @@ static void print_Type_impl(Type in, outputFunction put, void *_arb, fptr args, 
       (c_ast, t, PUTS("ast");),
   );
 }
-
-typePrinter(Type) { print_Type_impl(in, put, _arb, args, 0); }
 typePrinter(typed_value) {
   PUTS("{t:");
   USETYPEPRINTER(Type, in.t);
@@ -419,7 +415,7 @@ typePrinter(value) {
 }
 // { test functions
 test_fn(type_ptr_equality) {
-  var_ v = (Type)tu_of(
+  let v = (Type)tu_of(
       r_struct,
       mList_init(allocator, r_struct_item)
   );
@@ -437,7 +433,7 @@ test_fn(type_ptr_equality) {
   test_assert(!Type_cmp(v, v));
 }
 test_fn(type_hash_ptr_equality) {
-  var_ v = (Type)tu_of(
+  let v = (Type)tu_of(
       r_struct,
       mList_init(allocator, r_struct_item)
   );
@@ -457,19 +453,19 @@ test_fn(type_hash_ptr_equality) {
 // r_tag is nominal: same name, different underlying type -> still "equal" per Type_cmp
 // (the whole point of r_tag is that it does NOT recurse into .type)
 test_fn(type_tag_nominal_equality) {
-  var_ u32t = (Type)tu_of(r_uint, (u16)32);
-  var_ u64t = (Type)tu_of(r_uint, (u16)64);
-  var_ a = (Type)tu_of(r_tag, {.name = fp("Meters"), .type = &u32t});
-  var_ b = (Type)tu_of(r_tag, {.name = fp("Meters"), .type = &u64t});
+  let u32t = (Type)tu_of(r_uint, (u16)32);
+  let u64t = (Type)tu_of(r_uint, (u16)64);
+  let a = (Type)tu_of(r_tag, {.name = fp("Meters"), .type = &u32t});
+  let b = (Type)tu_of(r_tag, {.name = fp("Meters"), .type = &u64t});
   test_assert(!Type_cmp(a, b));
   test_assert(Type_hash(a) == Type_hash(b));
 }
 
 // r_tag: different name, same underlying type -> must NOT be equal
 test_fn(type_tag_distinct_names) {
-  var_ u32t = (Type)tu_of(r_uint, (u16)32);
-  var_ a = (Type)tu_of(r_tag, {.name = fp("Meters"), .type = &u32t});
-  var_ b = (Type)tu_of(r_tag, {.name = fp("Seconds"), .type = &u32t});
+  let u32t = (Type)tu_of(r_uint, (u16)32);
+  let a = (Type)tu_of(r_tag, {.name = fp("Meters"), .type = &u32t});
+  let b = (Type)tu_of(r_tag, {.name = fp("Seconds"), .type = &u32t});
   test_assert(Type_cmp(a, b) != 0);
 }
 
@@ -478,27 +474,27 @@ test_fn(type_tag_distinct_names) {
 // short-circuits only when it's the SAME pointer, so it should still recurse
 // correctly for the common non-cyclic case.
 test_fn(type_ptr_structural_equality_distinct_pointers) {
-  var_ ta = (Type)tu_of(r_uint, (u16)32);
-  var_ tb = (Type)tu_of(r_uint, (u16)32);
-  var_ pa = (Type)tu_of(r_ptr, &ta);
-  var_ pb = (Type)tu_of(r_ptr, &tb);
+  let ta = (Type)tu_of(r_uint, (u16)32);
+  let tb = (Type)tu_of(r_uint, (u16)32);
+  let pa = (Type)tu_of(r_ptr, &ta);
+  let pb = (Type)tu_of(r_ptr, &tb);
   test_assert(!Type_cmp(pa, pb));
 }
 
 // r_ptr: distinct pointers to STRUCTURALLY DIFFERENT types must compare unequal
 test_fn(type_ptr_structural_inequality) {
-  var_ ta = (Type)tu_of(r_uint, (u16)32);
-  var_ tb = (Type)tu_of(r_uint, (u16)64);
-  var_ pa = (Type)tu_of(r_ptr, &ta);
-  var_ pb = (Type)tu_of(r_ptr, &tb);
+  let ta = (Type)tu_of(r_uint, (u16)32);
+  let tb = (Type)tu_of(r_uint, (u16)64);
+  let pa = (Type)tu_of(r_ptr, &ta);
+  let pb = (Type)tu_of(r_ptr, &tb);
   test_assert(Type_cmp(pa, pb) != 0);
 }
 
 // tag ordering: variants earlier in tu_def should sort before later ones
 // (builtin is declared before r_void)
 test_fn(type_tag_ordering) {
-  var_ a = (Type)tu_of(builtin, builtin_if);
-  var_ b = (Type)tu_of(r_void, (nothing_t){});
+  let a = (Type)tu_of(builtin, builtin_if);
+  let b = (Type)tu_of(r_void, (nothing_t){});
   test_assert(Type_cmp(a, b) < 0);
   test_assert(Type_cmp(b, a) > 0);
 }
@@ -507,8 +503,8 @@ test_fn(type_tag_ordering) {
 // since they're semantically distinct (signedness matters for Type_cmp
 // via the tag check) -- guards against someone "simplifying" the salts later.
 test_fn(type_uint_sint_hash_distinct) {
-  var_ u = (Type)tu_of(r_uint, (u16)32);
-  var_ s = (Type)tu_of(r_sint, (u16)32);
+  let u = (Type)tu_of(r_uint, (u16)32);
+  let s = (Type)tu_of(r_sint, (u16)32);
   test_assert(Type_cmp(u, s) != 0);
   test_assert(Type_hash(u) != Type_hash(s));
 }
@@ -518,13 +514,13 @@ test_fn(type_uint_sint_hash_distinct) {
 // that actually matters for hash-consing/interning, as opposed to
 // Type_hash(v) == Type_hash(v) which is trivially true for any function.
 test_fn(type_struct_hash_consistency) {
-  var_ a = (Type)tu_of(r_struct, mList_init(allocator, r_struct_item));
-  var_ b = (Type)tu_of(r_struct, mList_init(allocator, r_struct_item));
+  let a = (Type)tu_of(r_struct, mList_init(allocator, r_struct_item));
+  let b = (Type)tu_of(r_struct, mList_init(allocator, r_struct_item));
   defer {
     mList_deinit(tu_catch(r_struct, a));
     mList_deinit(tu_catch(r_struct, b));
   };
-  var_ u32t = (typed_value){tu_of(r_uint, (u16)32)};
+  let u32t = (typed_value){tu_of(r_uint, (u16)32)};
   mList_push(tu_catch(r_struct, a), {
                                         .alignment = 4,
                                         .isconst = false,
@@ -547,14 +543,14 @@ test_fn(type_struct_hash_consistency) {
 // not by name) -- same fields in a different order should NOT compare equal.
 // Worth confirming this is the intended semantics rather than an oversight.
 test_fn(type_struct_field_order_matters) {
-  var_ a = (Type)tu_of(r_struct, mList_init(allocator, r_struct_item));
-  var_ b = (Type)tu_of(r_struct, mList_init(allocator, r_struct_item));
+  let a = (Type)tu_of(r_struct, mList_init(allocator, r_struct_item));
+  let b = (Type)tu_of(r_struct, mList_init(allocator, r_struct_item));
   defer {
     mList_deinit(tu_catch(r_struct, a));
     mList_deinit(tu_catch(r_struct, b));
   };
-  var_ u32t = (typed_value){tu_of(r_uint, (u16)32)};
-  var_ u8t = (typed_value){tu_of(r_uint, (u16)8)};
+  let u32t = (typed_value){tu_of(r_uint, (u16)32)};
+  let u8t = (typed_value){tu_of(r_uint, (u16)8)};
   mList_push(tu_catch(r_struct, a), {.alignment = 4, .isconst = false, .name = fp("x"), .offset = 0, .init = u32t});
   mList_push(tu_catch(r_struct, a), {.alignment = 1, .isconst = false, .name = fp("y"), .offset = 4, .init = u8t});
   mList_push(tu_catch(r_struct, b), {.alignment = 1, .isconst = false, .name = fp("y"), .offset = 4, .init = u8t});
@@ -564,8 +560,8 @@ test_fn(type_struct_field_order_matters) {
 
 // r_func: same param/return types -> equal; different arity -> unequal
 test_fn(type_func_equality) {
-  var_ p1 = mList_init(allocator, Type);
-  var_ p2 = mList_init(allocator, Type);
+  let p1 = mList_init(allocator, Type);
+  let p2 = mList_init(allocator, Type);
   defer {
     mList_deinit(p1);
     mList_deinit(p2);
@@ -574,21 +570,21 @@ test_fn(type_func_equality) {
   mList_push(p1, (Type)tu_of(r_void, (nothing_t){}));
   mList_push(p2, (Type)tu_of(r_uint, (u16)32));
   mList_push(p2, (Type)tu_of(r_void, (nothing_t){}));
-  var_ fa = (Type)tu_of(r_func, p1);
-  var_ fb = (Type)tu_of(r_func, p2);
+  let fa = (Type)tu_of(r_func, p1);
+  let fb = (Type)tu_of(r_func, p2);
   test_assert(!Type_cmp(fa, fb));
 
-  var_ p3 = mList_init(allocator, Type);
+  let p3 = mList_init(allocator, Type);
   defer { mList_deinit(p3); };
   mList_push(p3, (Type)tu_of(r_uint, (u16)32));
-  var_ fc = (Type)tu_of(r_func, p3);
+  let fc = (Type)tu_of(r_func, p3);
   test_assert(Type_cmp(fa, fc) != 0);
 }
 
 // Type_ralig/Type_rsize sanity: a struct with a leading u8 then a u32
 // aligned to 4 should size to 8, not 5 (padding/alignment must round up)
 test_fn(type_struct_size_respects_alignment) {
-  var_ s = (Type)tu_of(r_struct, mList_init(allocator, r_struct_item));
+  let s = (Type)tu_of(r_struct, mList_init(allocator, r_struct_item));
   defer { mList_deinit(tu_catch(r_struct, s)); };
   mList_push(tu_catch(r_struct, s), {
                                         .alignment = 1,

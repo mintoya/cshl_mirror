@@ -1,6 +1,8 @@
 #pragma once
+#include "wheels/print/print_pre.h"
 #include <string.h>
 #include <wheels/allocator.h>
+#include <wheels/allocators/fbaAllocator.h>
 #include <wheels/assertMessage.h>
 #include <wheels/fptr.h>
 #include <wheels/macros.h>
@@ -82,14 +84,68 @@ typePrinter("astTag", itypeof(ast, tag)) {
       (astEmptyStatement, _, PUTS("astEmpty");),
   );
 }
-static inline void print_ast_indent(int indent, outputFunction put, void *_arb) {
+isize fptr_toi(fptr p) {
+  isize result = 0;
+  int sign = 1;
+
+  for (isize i = 0; i < p.len; i++) {
+    if (p.ptr[i] == ' ') {
+      continue;
+    }
+
+    if (p.ptr[i] == '-') {
+      sign = -1;
+      continue;
+    }
+
+    if (p.ptr[i] >= '0' && p.ptr[i] <= '9') {
+      result = result * 10 + (p.ptr[i] - '0');
+    }
+  }
+
+  return result * sign;
+}
+fptr i_tofptr(AllocatorV allocator, isize val) {
+  isize len = 0;
+  isize temp = val;
+
+  if (val <= 0) len++;
+
+  while (temp) {
+    temp /= 10;
+    len++;
+  }
+  u8 *buf = aCreate(allocator, u8, len);
+  isize n = val < 0 ? -val : val;
+  isize i = len - 1;
+
+  if (!val) {
+    buf[0] = '0';
+  } else {
+    while (n) {
+      buf[i--] = (n % 10) + '0';
+      n /= 10;
+    }
+    if (val < 0) {
+      buf[0] = '-';
+    }
+  }
+
+  return (fptr){.ptr = buf, .len = len};
+}
+static inline void print_ast_indent(int indent, printerfunction_context _ctx) {
   for (int i = 0; i < indent; i++)
     PUTS(" ");
 }
-static void print_ast_recursive(ast *node, int indent, outputFunction put, void *_arb) {
-  if (!node) return PUTS("null\n");
+typePrinter("ast", ast *) {
+  let indent = fptr_toi(PRINTARGS());
+
+  let b = (fba_buffer(myAlign[2])){};
+  let ndepth = i_tofptr(fba_initBuffer(b), indent + 1);
+
+  if (!in) return PUTS("null\n");
   tu_match_void(
-      (*node),
+      (*in),
       (astId, id, {
         PUTS("Id '");
         USENAMEDPRINTER("slice(c8)", id);
@@ -112,17 +168,19 @@ static void print_ast_recursive(ast *node, int indent, outputFunction put, void 
         }
         PUTS("\n");
 
-        print_ast_indent(indent + 1, put, _arb);
-        PUTS("name: ");
-        print_ast_recursive(decl.name, indent + 1, put, _arb);
+        PRINTARGS_PUSH(ndepth) {
+          print_ast_indent(indent + 1, _ctx);
+          PUTS("name: ");
+          USENAMEDPRINTER("ast", decl.name);
 
-        print_ast_indent(indent + 1, put, _arb);
-        PUTS("type: ");
-        print_ast_recursive(decl.type, indent + 1, put, _arb);
+          print_ast_indent(indent + 1, _ctx);
+          PUTS("type: ");
+          USENAMEDPRINTER("ast", decl.type);
 
-        print_ast_indent(indent + 1, put, _arb);
-        PUTS("value: ");
-        print_ast_recursive(decl.value, indent + 1, put, _arb);
+          print_ast_indent(indent + 1, _ctx);
+          PUTS("value: ");
+          USENAMEDPRINTER("ast", decl.value);
+        }
       }),
       (astOp, op, {
         PUTS("Op '");
@@ -131,48 +189,46 @@ static void print_ast_recursive(ast *node, int indent, outputFunction put, void 
         USENAMEDPRINTER("cstr", (char *)s);
         PUTS("'\n");
 
-        print_ast_indent(indent + 1, put, _arb);
-        PUTS("l: ");
-        print_ast_recursive(op.left, indent + 1, put, _arb);
+        PRINTARGS_PUSH(ndepth) {
+          print_ast_indent(indent + 1, _ctx);
+          PUTS("l: ");
+          USENAMEDPRINTER("ast", op.left);
 
-        print_ast_indent(indent + 1, put, _arb);
-        PUTS("r: ");
-        print_ast_recursive(op.right, indent + 1, put, _arb);
+          print_ast_indent(indent + 1, _ctx);
+          PUTS("r: ");
+          USENAMEDPRINTER("ast", op.right);
+        }
       }),
       (astPBlock, block, {
         PUTS("PBlock\n");
-        for (ast **stmt = (ast **)block.stmts; stmt && *stmt; stmt++) {
-          print_ast_indent(indent + 1, put, _arb);
-          print_ast_recursive(*stmt, indent + 1, put, _arb);
+        foreach (let stmt, vlap(sentList_vla(block.stmts))) {
+          PRINTARGS_PUSH(ndepth) {
+            print_ast_indent(indent + 1, _ctx);
+            USENAMEDPRINTER("ast", stmt);
+          }
         }
       }),
       (astBBlock, block, {
         PUTS("BBlock\n");
-        for (ast **stmt = (ast **)block.stmts; stmt && *stmt; stmt++) {
-          print_ast_indent(indent + 1, put, _arb);
-          print_ast_recursive(*stmt, indent + 1, put, _arb);
+        foreach (let stmt, vlap(sentList_vla(block.stmts))) {
+          PRINTARGS_PUSH(ndepth) {
+            print_ast_indent(indent + 1, _ctx);
+            USENAMEDPRINTER("ast", stmt);
+          }
         }
       }),
       (astABlock, block, {
         PUTS("ABlock\n");
-        for (ast **item = (ast **)block.items; item && *item; item++) {
-          print_ast_indent(indent + 1, put, _arb);
-          print_ast_recursive(*item, indent + 1, put, _arb);
+        foreach (let stmt, vlap(sentList_vla(block.items))) {
+          PRINTARGS_PUSH(ndepth) {
+            print_ast_indent(indent + 1, _ctx);
+            USENAMEDPRINTER("ast", stmt);
+          }
         }
       }),
       (astEmptyStatement, _, { PUTS("Empty"); }),
       (default, unreachable())
   );
-}
-typePrinter("ast", ast *) {
-  var_ deapth = printer_arg_trim(printer_arg_until(':', args));
-  args = printer_arg_trim(printer_arg_after(':', args));
-  usize d = 0;
-  while (deapth.len && deapth.ptr[0] >= '0' && deapth.ptr[0] <= '9') {
-    d = d * 10 + deapth.ptr[0] - '0';
-    deapth = slice_split(deapth, (1, -1))[0];
-  }
-  print_ast_recursive(in, d, put, _arb);
 }
 // }
 //

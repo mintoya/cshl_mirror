@@ -91,7 +91,7 @@ int build_main(int nargs, char **args) {
   if (!cmd_run_sync(cmd)) return false;
   Cmd runcmd = {};
   cmd_append(&runcmd, "./build/compiler" EXTENSION);
-  for (int i = 0; i < nargs; i++) 
+  for (int i = 0; i < nargs; i++)
     cmd_append(&runcmd, args[i]);
   return !cmd_run_sync(runcmd);
 }
@@ -103,7 +103,7 @@ int build_tests() {
 #if defined(_WIN32)
   cmd_append(&cmd, CC, COMMON_CFLAGS, "-o", "build/tests" EXTENSION, "tests.c", "deps/wheels/c11threads/c11threads_win32.c");
 #else
-  cmd_append(&cmd, CC, COMMON_CFLAGS, "-o", "build/compiler" EXTENSION, "tests.c");
+  cmd_append(&cmd, CC, COMMON_CFLAGS, "-o", "build/tests" EXTENSION, "tests.c");
 #endif
   if (!cmd_run_sync(cmd)) return false;
 

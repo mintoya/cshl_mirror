@@ -17,7 +17,7 @@ char *strcats(char *c, ...) {
   va_list l;
   va_start(l, c);
   char *nc = 0;
-  while (nc = va_arg(l, char *))
+  while ((nc = va_arg(l, char *)))
     strcat(c, nc);
   va_end(l);
   return c;

@@ -1,0 +1,21 @@
+type:@type():@type();
+
+any :type:@any();
+ast :type:@ast();
+int :type:@int();
+
+i32:type:@sint(32);
+i8 :type:@sint 8;
+
+print:fnp(([*]i8 ,...),i32):@extern();
+
+main::fn((nargs:i32, args:[*]i8), result:i32:0)
+  print("%s\n" , "hello world");
+
+test_sexps :: (hello world (what)
+  ( is your name ));
+// for {} ony, trailing is mandated
+bblock :: {a ; b ; c ; d;};
+ablock ::[ a , b , c , d ];
+pblock ::( a , b , c , d ,);
+fn(params) { stmt1; stmt2; };
