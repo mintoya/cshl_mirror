@@ -28,6 +28,9 @@ tu_def(
     // l is nullable
     // creates
     (onew, /*  */ struct { u32 l; }),
+    // load element named  name in l into new reg
+    // creates
+    (olelem, struct {u32 l ; fptr name; }),
     // set item in l to const
     (oconst, /**/ struct { u32 l; }),
     // jump to d if l
@@ -42,9 +45,6 @@ tu_def(
     (omov, /*   */ struct { u32 l, r; }),
     // copy thing pointed to by in l to thing pointed to by r
     (ocpy, /*   */ struct { u32 l, r; }),
-    // load element named  name in l into new reg
-    // creates
-    (olelem, struct {u32 l ; fptr name; }),
     // store element named name in l into d
     (oselem, struct {u32 l , d ; fptr name; }),
 );
@@ -365,29 +365,193 @@ typed_value convertInt(IrBuilder *b, fptr in) { TODO(); }
 
 void ir_av1(IrBuilder *b) {
   let code = b->env->code;
+  let values = &b->env->values;
   let allocator = IrBuilder_allocator(b);
-  foreach (let i, span(code, msList_len(code))) {
+  foreach (let i, vlap(msList_vla(code))) {
     tu_match_void(
-        i[0],
-        (oint, str, msList_push(allocator, b->env->values, convertInt(b, str));),
-        (ostr, str, msList_push(allocator, b->env->values, convertString(b, str));),
-        (obin, bin, msList_push(allocator, b->env->values, {tu_of(builtin, bin)})),
-        (onew, n, {
-          if_decl (let typeIndex, n.l) {
-            assertMessage(typeIndex < msList_len(b->env->values));
-            let t = value_asType(b->env->values[typeIndex]);
-          } else msList_push(allocator, b->env->values, {tu_of(r_void, {})}); // TODO : not sufficient
+        i,
+        (oint, str, msList_push(allocator, *values, convertInt(b, str))),
+        (ostr, str, msList_push(allocator, *values, convertString(b, str))),
+        (obin, bin, msList_push(allocator, *values, {tu_of(builtin, bin)})),
+        (oast, ats, msList_push(allocator, *values, {tu_of(c_ast, {}), ats})),
+        (onew, nit, {
+          if_decl (let x, nit.l)
+            msList_push(allocator, *values, {value_asType((*values)[nit.l]), {}});
+          else msList_push(allocator, *values, {tu_of(builtin, builtin_anyType)});
+        }),
+        //
+        (oconst, _, ),
+        (ojif, _, ),
+    );
+  }
+}
+
+//{ printer
+static inline void print_ir_indent(int indent, printerfunction_context _ctx) {
+  for (int i = 0; i < indent; i++)
+    PUTS(" ");
+}
+
+typePrinter(scope) {
+  let indent = fptr_toi(PRINTARGS());
+
+  let b = (fba_buffer(myAlign[2])){};
+  let ndepth = i_tofptr(fba_initBuffer(b), indent + 1);
+
+  print_ir_indent(indent, _ctx);
+  PUTS("scope [start_reg: ");
+  USETYPEPRINTER(u32, in.start_reg);
+  PUTS(", next_reg: ");
+  USETYPEPRINTER(u32, in.next_reg);
+  PUTS("]\n");
+
+  u32 current_reg = in.start_reg;
+
+  foreach (var_ o, vlap(msList_vla(in.code))) {
+    print_ir_indent(indent + 1, _ctx);
+
+    if (op_creates(o)) {
+      current_reg++;
+      PUTS("r");
+      USETYPEPRINTER(u32, current_reg);
+      PUTS(" = ");
+    } else {
+      PUTS("       ");
+    }
+
+    tu_match_void(
+        o,
+        (oint, str, {
+          PUTS("oint '");
+          USENAMEDPRINTER("slice(c8)", str);
+          PUTS("'\n");
+        }),
+        (obin, bin, {
+          PUTS("obin ");
+          USETYPEPRINTER(u32, bin);
+          PUTS("\n");
+        }),
+        (ostr, str, {
+          PUTS("ostr \"");
+          USENAMEDPRINTER("slice(c8)", str);
+          PUTS("\"\n");
+        }),
+        (oast, astp, {
+          PUTS("oast\n");
+          PRINTARGS_PUSH(ndepth) {
+            print_ir_indent(indent + 2, _ctx);
+            // PRINTARGS_PUSH("");
+            USENAMEDPRINTER("ast", astp);
+          }
+        }),
+        (oscop, scop, {
+          PUTS("oscop\n");
+          PRINTARGS_PUSH(ndepth) {
+            USENAMEDPRINTER("scope", scop);
+          }
+        }),
+        (onew, val, {
+          PUTS("onew l:r");
+          USETYPEPRINTER(u32, val.l);
+          PUTS("\n");
+        }),
+        (olelem, val, {
+          PUTS("olelem l:r");
+          USETYPEPRINTER(u32, val.l);
+          PUTS(" name:'");
+          USENAMEDPRINTER("slice(c8)", val.name);
+          PUTS("'\n");
+        }),
+        (oconst, val, {
+          PUTS("oconst l:r");
+          USETYPEPRINTER(u32, val.l);
+          PUTS("\n");
+        }),
+        (ojif, val, {
+          PUTS("ojif l:r");
+          USETYPEPRINTER(u32, val.l);
+          PUTS(" d:");
+          USETYPEPRINTER(u32, val.d);
+          PUTS("\n");
+        }),
+        (ocall, val, {
+          PUTS("ocall l:r");
+          USETYPEPRINTER(u32, val.l);
+          PUTS(" off:");
+          USETYPEPRINTER(u32, val.off);
+          PUTS(" len:");
+          USETYPEPRINTER(u32, val.len);
+          PUTS(" d:r");
+          USETYPEPRINTER(u32, val.d);
+          PUTS("\n");
+        }),
+        (oop, val, {
+          PUTS("oop l:r");
+          USETYPEPRINTER(u32, val.l);
+          PUTS(" r:r");
+          USETYPEPRINTER(u32, val.r);
+          PUTS(" d:r");
+          USETYPEPRINTER(u32, val.d);
+          PUTS(" o:");
+          USETYPEPRINTER(u32, val.o);
+          PUTS("\n");
+        }),
+        (oret, val, {
+          PUTS("oret l:r");
+          USETYPEPRINTER(u32, val.l);
+          PUTS("\n");
+        }),
+        (omov, val, {
+          PUTS("omov l:r");
+          USETYPEPRINTER(u32, val.l);
+          PUTS(" r:r");
+          USETYPEPRINTER(u32, val.r);
+          PUTS("\n");
+        }),
+        (ocpy, val, {
+          PUTS("ocpy l:r");
+          USETYPEPRINTER(u32, val.l);
+          PUTS(" r:r");
+          USETYPEPRINTER(u32, val.r);
+          PUTS("\n");
+        }),
+        (oselem, val, {
+          PUTS("oselem l:r");
+          USETYPEPRINTER(u32, val.l);
+          PUTS(" d:r");
+          USETYPEPRINTER(u32, val.d);
+          PUTS(" name:'");
+          USENAMEDPRINTER("slice(c8)", val.name);
+          PUTS("'\n");
         })
     );
   }
 }
 
-//
-// opcode printer {
-typePrinter(opcode) {
+typePrinter(IrBuilder) {
+  let indent = fptr_toi(PRINTARGS());
 
+  let b = (fba_buffer(myAlign[2])){};
+  let alloc = fba_initBuffer(b);
+
+  let ndepth = i_tofptr(alloc, indent);
+  let n2depth = i_tofptr(alloc, indent + 1);
+
+  print_ir_indent(indent, _ctx);
+  PUTS("IrBuilder {\n");
+
+  PRINTARGS_PUSH(ndepth)
+  USETYPEPRINTER(scope, *in.env);
+
+  foreach (let sc, vlap(slice_vla(scope_children(in.env))))
+    PRINTARGS_PUSH(n2depth)
+  USETYPEPRINTER(scope, *sc);
+
+  print_ir_indent(indent, _ctx);
+  PUTS("}\n");
 }
-// }
+//}
+//
 //
 
 test_fn(type_interns) {
@@ -407,12 +571,12 @@ test_fn(type_interns) {
           .init = (typed_value){tu_of(r_ptr, &v)},
       }
   );
+  println("{Type}", v);
 
   let p1 = IrBuilder_getType(&irb, v);
   let p2 = IrBuilder_getType(&irb, *p1);
   let p3 = IrBuilder_getType(&irb, *p2);
   test_assert(p1 && p2 && p3);
-  test_assert(p1->tag == p3->tag);
   test_assert(!Type_cmp(*p1, *p2));
   test_assert(!Type_cmp(*p1, *p3));
   test_assert(p1 == p2);

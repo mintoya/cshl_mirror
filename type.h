@@ -10,6 +10,7 @@
 #include <wheels/sList.h>
 
 typedef enum : u8 {
+  builtin_anyType,
   builtin_if,
   builtin_while,
 
@@ -295,6 +296,7 @@ typedef struct value {
 typePrinter(builtin_id) {
   switch (in) {
       // clang-format off
+    case(builtin_anyType):PUTS("anyType");break;
     case(builtin_if):PUTS("if");break;
     case(builtin_fn):PUTS("fn");break;
     case(builtin_ast):PUTS("ast");break;

@@ -32,11 +32,11 @@ __attribute__((noreturn)) void error_at_str(u8 *loc, char *messag) { error_at(lo
 typedef struct ast ast;
 tu_def(
     (ast, u8),
+    // empty statement
+    (astEmptyStatement, nothing_t),
     // Identifier
     //  string, u8* ptr & usize len
     (astId, fptr),
-    // empty statement
-    (astEmptyStatement, nothing_t),
     // Numbers
     //  0-9*
     //  x0-9 + a-f*
