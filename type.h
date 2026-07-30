@@ -391,6 +391,7 @@ typePrinter(Type) {
       (c_ast, t, PUTS("ast");),
   );
 }
+
 typePrinter(typed_value) {
   PUTS("{t:");
   USETYPEPRINTER(Type, in.t);

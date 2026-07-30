@@ -1,10 +1,10 @@
 #pragma once
 #include "ast.h"
 #include "wheels/macros.h"
-#include "wheels/shmap.h"
 #include <wheels/fptr.h>
 #include <wheels/print.h>
 #include <wheels/sList.h>
+#include <wheels/smap.h>
 
 static inline bool isNum(u8 i) { return i >= '0' && i <= '9'; };
 static inline bool isAlphaNum(u8 i) {
@@ -23,20 +23,20 @@ static inline bool isAlphaNum(u8 i) {
   }
 };
 
-static msList(Token) tokenize(AllocatorV allocator, fptr input) {
+static msList(Token) tokenize(allocfn allocator, fptr input) {
   var_ res = msList_init(allocator, Token);
 
-  var_ tmap = msHmap_init(allocator, token);
-  defer { msHmap_deinit(tmap); };
+  var_ tmap = msxmap_init(allocator, token);
+  defer { msxmap_deinit(tmap); };
 
   foreach (var_ pun, vla(punctuations))
-    msHmap_set(tmap, pun, t_punctuation);
+    msxmap_set(tmap, pun, t_punctuation);
   foreach (var_ pun, vla(operations))
-    msHmap_set(tmap, pun.name, t_operator);
+    msxmap_set(tmap, pun.name, t_operator);
 
-  msHmap_set(tmap, "[]", t_identifier);
-  msHmap_set(tmap, "[*]", t_identifier);
-  msHmap_set(tmap, "$", t_identifier);
+  msxmap_set(tmap, "[]", t_identifier);
+  msxmap_set(tmap, "[*]", t_identifier);
+  msxmap_set(tmap, "$", t_identifier);
 
   for (usize i = 0; i < input.len;) {
     switch (input.ptr[i]) {
@@ -126,7 +126,7 @@ static msList(Token) tokenize(AllocatorV allocator, fptr input) {
           while (j < input.len && isAlphaNum(input.ptr[j]))
             j++;
           fptr word = {j - i, input.ptr + i};
-          token *wkind = msHmap_get(tmap, word);
+          token *wkind = msxmap_get(tmap, word);
           msList_push(allocator, res, ((Token){.kind = wkind ? *wkind : t_identifier, .s = word}));
           i = j;
           continue;
@@ -136,7 +136,7 @@ static msList(Token) tokenize(AllocatorV allocator, fptr input) {
               usize diff = input.len - i > 8 ? 8 : input.len - i;
               diff > 0;
               diff--) {
-            token *kind = msHmap_get(tmap, ((fptr){diff, input.ptr + i}));
+            token *kind = msxmap_get(tmap, ((fptr){diff, input.ptr + i}));
             if (kind) {
               msList_push(allocator, res, ((Token){.kind = *kind, .s = {diff, input.ptr + i}}));
               i += diff;

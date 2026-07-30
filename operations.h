@@ -5,6 +5,7 @@
 #include <wheels/macros.h>
 #include <wheels/mylist.h>
 #include <wheels/sList.h>
+#include <wheels/smap.h>
 typedef struct scope *scopeptr;
 // 0 in any location is null
 tu_def(
@@ -62,7 +63,7 @@ struct scope {
   msxmap(struct { u32 idx ; bool isconst; }) locals;
 };
 typedef struct {
-  AllocatorV alloc;
+  allocfn alloc;
   scope *env;
   mxmap(Type, Type *) types;
 } IrBuilder;
@@ -75,7 +76,7 @@ u32 env_addOp(IrBuilder *b, opcode o);
 void env_bind(IrBuilder *b, fptr id, u32 reg);
 void env_push(IrBuilder *b);
 
-IrBuilder IrBuilder_init(AllocatorV allocator) {
+IrBuilder IrBuilder_init(allocfn allocator) {
   var_ res = (IrBuilder){
       .alloc = allocator,
       .env = nullptr,
@@ -112,13 +113,13 @@ IrBuilder IrBuilder_init(AllocatorV allocator) {
   return res;
 }
 void IrBuilder_deinit(IrBuilder *b) { TODO("not super important"); }
-AllocatorV IrBuilder_allocator(IrBuilder *b) { return ((hxmap *)b->types)->allocator; }
+allocfn IrBuilder_allocator(IrBuilder *b) { return ((hxmap *)b->types)->allocator; }
 
-AllocatorV scope_allocator(scope *s) { return ((hxmap *)s->locals)->allocator; }
+allocfn scope_allocator(scope *s) { return ((hxmap *)s->locals)->allocator; }
 Type *IrBuilder_getType(IrBuilder *b, Type t) {
   if_decl (let t, mxmap_get(b->types, t)) return *t;
   let allocator = IrBuilder_allocator(b);
-  let pt = aCreate(allocator, Type);
+  let pt = acreate(allocator, Type);
   mxmap_set(b->types, t, pt);
   *pt = tu_match_exp(
       t,
@@ -194,7 +195,7 @@ u32 env_lookup(IrBuilder *b, fptr id) {
 }
 
 void env_push(IrBuilder *b) {
-  scope *new_scope = aValue(
+  scope *new_scope = avalue(
       b->alloc,
       ((scope){
           .relatives = P$(msList_init(b->alloc, scopeptr), ({ msList_push(b->alloc, $, b->env);$; })),
@@ -335,7 +336,7 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
          env_push(b);
          defer { env_pop(b); };
          if (sentList_len(pb.stmts) != 1)
-           error_ast(node[0], snprint(stdAlloc, "there are no tuples in this language"));
+           error_ast(node[0], snprint(stdAlloc, "no tuples"));
          emit_ir(b, pb.stmts[0], ctx);
        })),
       (astBBlock, bb, ({

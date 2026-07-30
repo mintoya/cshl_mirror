@@ -1,5 +1,7 @@
 #pragma once
+#include "wheels/mytypes.h"
 #include "wheels/print/print_pre.h"
+#include <stdio.h>
 #include <string.h>
 #include <wheels/allocator.h>
 #include <wheels/allocators/fbaAllocator.h>
@@ -8,7 +10,6 @@
 #include <wheels/macros.h>
 #include <wheels/print.h>
 #include <wheels/smallstream.h>
-#include <wheels/smallstreams/smallfiles.h>
 #if !defined(_Nullable)
   #define _Nullable
 #endif
@@ -105,7 +106,7 @@ isize fptr_toi(fptr p) {
 
   return result * sign;
 }
-fptr i_tofptr(AllocatorV allocator, isize val) {
+fptr i_tofptr(allocfn allocator, isize val) {
   isize len = 0;
   isize temp = val;
 
@@ -115,7 +116,7 @@ fptr i_tofptr(AllocatorV allocator, isize val) {
     temp /= 10;
     len++;
   }
-  u8 *buf = aCreate(allocator, u8, len);
+  u8 *buf = *acreate(allocator, u8[len]);
   isize n = val < 0 ? -val : val;
   isize i = len - 1;
 
@@ -251,27 +252,20 @@ __attribute__((noreturn)) void error_ast(ast a, slice(c8) message) {
   unreachable();
 }
 
-static inline slice(u8) readFileAlloc(AllocatorV allocator, const char *filename) {
-  var_ fileptr = file_stream_open(
-      allocator,
-      filename,
-      (fileopenflags){
-          .access.read = 1,
-          .status.sync = 1
-      }
-  );
+static inline slice(u8) readFileAlloc(allocfn allocator, const char *filename) {
+  var_ fileptr = fopen(filename, "rb");
   assertMessage(fileptr);
-  defer { file_stream_close(allocator, fileptr); };
+  defer { fclose(fileptr); };
 
-  assertMessage(fileptr->tell_max);
-  usize len = *fileptr->tell_max;
+  fseek(fileptr, 0, SEEK_END);
+  usize len = ftell(fileptr);
+  fseek(fileptr, 0, SEEK_SET);
 
-  var_ resp = &aCreate(allocator, u8, len ?: 1);
-  usize len2 = sGetsf(fileptr, ((fptr){sizeof(*resp), *resp}));
+  var_ resp = acreate(allocator, u8[len ?: 1]);
+  usize len2 = fread(resp, sizeof(u8), len, fileptr);
   assertMessage(len2 == len);
-  return (slice(u8)){len, resp[0]};
+  return (slice(u8))slice_stat(*resp);
 }
-
 //
 // tokenizer defs {
 typedef enum token : u8 {
@@ -406,10 +400,11 @@ static struct { // opNumbers
   opNumbers.set = /*  */ ((opS){"="}).n;
 }
 
-ast ast_clone(AllocatorV allocator, ast a);
-ast *ast_cloneP(AllocatorV allocator, ast *a) { return a ? aValue(allocator, ast_clone(allocator, a[0])) : nullptr; }
-ast ast_clone(AllocatorV allocator, ast a) {
+ast ast_clone(allocfn allocator, ast a);
+ast *ast_cloneP(allocfn allocator, ast *a) { return a ? avalue(allocator, ast_clone(allocator, a[0])) : nullptr; }
+ast ast_clone(allocfn allocator, ast a) {
   sliceDef(int);
+  let f = slice_clone(allocator, tu_catch(astId, a));
   return tu_match_exp(
       a,
       (astEmptyStatement, e, (ast)tu_of(astEmptyStatement, {})),

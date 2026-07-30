@@ -30,9 +30,9 @@ __attribute__((noreturn)) void(error_at)(u8 *location, fptr message) {
   exit(1);
 }
 
-void on_allocation(allocationType *t) {
-  println("allocation from {} line {} , {}->{}", t->trace.fn, t->trace.ln, t->insize, t->outsize);
-}
+// void on_allocation(allocationType *t) {
+//   println("allocation from {} line {} , {}->{}", t->trace.fn, t->trace.ln, t->insize, t->outsize);
+// }
 
 cmd_main(
     int nargs,
