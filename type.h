@@ -128,8 +128,14 @@ static inline usize Type_rsize(Type t) {
       (default, (usize)0)
   );
 }
+
+typedef struct {
+  Type *a;
+  Type *b;
+} type_cmp_pair;
+
 i8 icmp(isize a, isize b) { return a - b; }
-i8 Type_cmp_ex(Type a, Type b, mList(Type) followed) {
+i8 Type_cmp_ex(Type a, Type b, mList(type_cmp_pair) followed) {
   if (!mcmp(a, b)) return 0;
   else if (a.tag < b.tag) return -1;
   else if (a.tag > b.tag) return 1;
@@ -155,11 +161,18 @@ i8 Type_cmp_ex(Type a, Type b, mList(Type) followed) {
       (r_ptr, ai, {
         let bi = tu_catch(r_ptr, b);
         if (ai == bi) return 0;
-        let af = bbs_vla(*ai, *mList_vla(followed));
-        if (af.f) return 0;
-        mList_ins(followed, af.i, *ai);
+        if (!ai || !bi) return ai ? 1 : -1; // one null, one not: deterministic order, never equal
+
+        // Only short-circuit when we've already started comparing THIS
+        // exact pair -- i.e. both sides have returned to a point they've
+        // been before, together. Tracking `ai` alone (as before) let one
+        // side's cycle mask real differences on the other side.
+        foreach (let p, mList_iter(followed))
+          if (p.a == ai && p.b == bi) return 0;
+
+        mList_push(followed, ((type_cmp_pair){.a = ai, .b = bi}));
         i8 r = Type_cmp_ex(ai[0], bi[0], followed);
-        mList_rem(followed, af.i);
+        mList_rem(followed, mList_len(followed) - 1);
         return r;
       }),
       (r_arr, ai, {
@@ -221,11 +234,13 @@ i8 Type_cmp_ex(Type a, Type b, mList(Type) followed) {
   );
 }
 i8 Type_cmp(Type a, Type b) {
-  let f = mList_init(stdAlloc, Type);
+  let f = mList_init(stdAlloc, type_cmp_pair);
   defer { mList_deinit(f); };
   return Type_cmp_ex(a, b, f);
 }
+
 i8 Type_cmp_hash(const void *a, const void *b) { return Type_cmp(*(Type *)a, *(Type *)b); }
+
 static u64 Type_hash_ex(Type a, bool follow_ptr) {
   tu_match_void(
       a,
@@ -385,7 +400,7 @@ void typePrinterWorker(Type in, mList(Type) visited, mxmap(Type, u32) visitedmap
         defer { PUTS(")"); }
         foreach (let type, span(mList_arr(st), mList_len(st))) {
           if (type != mList_arr(st)) PUTS(" ");
-          USENAMEDPRINTER("slice(c8)", type->name);
+          USETYPEPRINTER(id_str, (id_str){type->name});
           PUTS("@");
           USETYPEPRINTER(usize, type->offset);
           PUTS(":");
@@ -399,7 +414,7 @@ void typePrinterWorker(Type in, mList(Type) visited, mxmap(Type, u32) visitedmap
         foreach (let type, span(mList_arr(st), mList_len(st))) {
           if (type != mList_arr(st)) PUTS(" ");
 
-          USENAMEDPRINTER("slice(c8)", type->name);
+          USETYPEPRINTER(id_str, (id_str){type->name});
           PUTS("|");
           USETYPEPRINTER(usize, type->width);
           PUTS(":");

@@ -593,7 +593,10 @@ test_fn(type_interns) {
           .init = (typed_value){tu_of(r_ptr, &v)},
       }
   );
-  println("{Type}", v);
+  // println("{Type}", v);
+  let str = snprint(allocator, "{Type}", v);
+  let idstr = snprint(allocator, "{id_str}", str);
+  println("`{slice(c8)}' -> {slice(c8)}", str, idstr);
 
   let p1 = IrBuilder_getType(&irb, v);
   let p2 = IrBuilder_getType(&irb, *p1);
