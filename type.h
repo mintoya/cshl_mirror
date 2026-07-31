@@ -4,6 +4,7 @@
 #include "ast.h"
 #include <wheels/bigint.h>
 #include <wheels/fptr.h>
+#include <wheels/hxmap.h>
 #include <wheels/macros.h>
 #include <wheels/mylist.h>
 #include <wheels/mytypes.h>
@@ -314,82 +315,117 @@ typePrinter(builtin_id) {
   }
 }
 
-typePrinter(Type) {
-  let depth = fptr_toi(PRINTARGS());
-  if (depth > 8) return PUTS("...");
+typedef struct {
+  slice(u8) str;
+} id_str;
+typePrinter(id_str) {
+  foreach (let c, span(in.str.ptr, in.str.len)) {
+    PUTC((char)(((*c >> 4) & 0xf) + 'a'));
+    PUTC((char)(((*c >> 0) & 0xf) + 'a'));
+  }
+}
 
-  let db = (fba_buffer(myAlign[2])){};
-  let ndepth = i_tofptr(fba_initBuffer(db), depth + 1);
-
+void typePrinterWorker(Type in, mList(Type) visited, mxmap(Type, u32) visitedmap, printerfunction_context _ctx);
+static inline void typePrinterWorker_add(Type in, mList(Type) visited, mxmap(Type, u32) visitedmap) {
+  u32 idx = (u32)mList_len(visited);
+  mList_push(visited, in);
+  mxmap_set(visitedmap, in, idx);
+}
+static inline void typePrinterWorker_recurse(Type in, mList(Type) visited, mxmap(Type, u32) visitedmap, printerfunction_context _ctx) {
+  if_decl (let idx, mxmap_get(visitedmap, in))
+    USETYPEPRINTER(usize, *idx);
+  else
+    typePrinterWorker(in, visited, visitedmap, _ctx);
+}
+void typePrinterWorker(Type in, mList(Type) visited, mxmap(Type, u32) visitedmap, printerfunction_context _ctx) {
   tu_match_void(
       in,
+      // trivial, are themselves
       (builtin, builtin, {
-        PUTS("builtin:");
+        PUTS("(b ");
         USETYPEPRINTER(builtin_id, builtin);
+        PUTS(")");
       }),
+      (c_func, f, PUTS("cfn");),
+      (c_int, i, PUTS("int");),
+      (c_type, t, PUTS("type");),
+      (c_ast, t, PUTS("ast");),
       (r_void, _, PUTS("void");),
-      (r_tag, t, USENAMEDPRINTER("slice(c8)", t.name);),
+      (r_tag, t, {
+        PUTS("(id ");
+        USETYPEPRINTER(id_str, (id_str){t.name});
+        PUTS(")");
+      }),
       (r_uint, bits, PUTS("u"); USETYPEPRINTER(usize, bits);),
       (r_sint, bits, PUTS("i"); USETYPEPRINTER(usize, bits);),
+      // complex, require other types
+
+      // only one type, no push
       (r_ptr, type, {
-        PUTS("[*]");
-        PRINTARGS_PUSH(ndepth) {
-          if (type) USETYPEPRINTER(Type, *type);
-          else PUTS("NULLTYPE!");
-        }
+        // typePrinterWorker_add(in, visited, visitedmap);
+        PUTS("(* ");
+        defer { PUTS(")"); };
+        if (type) typePrinterWorker_recurse(*type, visited, visitedmap, _ctx);
+        else PUTS("!");
       }),
       (r_arr, arr, {
+        // typePrinterWorker_add(in, visited, visitedmap);
+        PUTS("(a ");
+        defer { PUTS(")"); };
         PUTS("[");
         USETYPEPRINTER(usize, arr.count);
-        PUTS("]");
-
-        PRINTARGS_PUSH(ndepth) {
-          if (arr.type) USETYPEPRINTER(Type, *arr.type);
-          else PUTS("NULLTYPE!");
-        }
+        PUTS("] ");
+        if (arr.type) typePrinterWorker_recurse(*arr.type, visited, visitedmap, _ctx);
+        else PUTS("!");
       }),
+      // multiple types, push
       (r_struct, st, {
-        PUTS("struct{");
-        defer { PUTS("}"); }
+        typePrinterWorker_add(in, visited, visitedmap);
+        PUTS("(s ");
+        defer { PUTS(")"); }
         foreach (let type, span(mList_arr(st), mList_len(st))) {
-          if (type != mList_arr(st)) PUTS(",");
-
+          if (type != mList_arr(st)) PUTS(" ");
           USENAMEDPRINTER("slice(c8)", type->name);
           PUTS("@");
           USETYPEPRINTER(usize, type->offset);
           PUTS(":");
-          PRINTARGS_PUSH(ndepth) { USETYPEPRINTER(Type, type->init.t); }
+          typePrinterWorker_recurse(type->init.t, visited, visitedmap, _ctx);
         }
       }),
       (r_bitfield, st, {
-        PUTS("struct{");
-        defer { PUTS("}"); }
+        typePrinterWorker_add(in, visited, visitedmap);
+        PUTS("(bf ");
+        defer { PUTS(")"); }
         foreach (let type, span(mList_arr(st), mList_len(st))) {
-          if (type != mList_arr(st)) PUTS(",");
+          if (type != mList_arr(st)) PUTS(" ");
 
           USENAMEDPRINTER("slice(c8)", type->name);
           PUTS("|");
           USETYPEPRINTER(usize, type->width);
           PUTS(":");
-          PRINTARGS_PUSH(ndepth) { USETYPEPRINTER(Type, type->init.t); }
+          typePrinterWorker_recurse(type->init.t, visited, visitedmap, _ctx);
         }
       }),
       (r_func, fn, {
-        PUTS("fn((");
+        typePrinterWorker_add(in, visited, visitedmap);
+        PUTS("(fn (");
         foreach (let it, span(mList_arr(fn), (mList_len(fn) ?: 1) - 1)) {
-          if (it != mList_arr(fn)) PUTS(",");
-          PRINTARGS_PUSH(ndepth) { USETYPEPRINTER(Type, it[0]); }
+          if (it != mList_arr(fn)) PUTS(" ");
+          typePrinterWorker_recurse(*it, visited, visitedmap, _ctx);
         }
-        PUTS("),");
+        PUTS(") ");
         if (mList_len(fn))
-          PRINTARGS_PUSH(ndepth) { USETYPEPRINTER(Type, mList_last(fn)); }
+          typePrinterWorker_recurse(mList_last(fn), visited, visitedmap, _ctx);
         PUTS(")");
       }),
-      (c_func, f, PUTS("fn");),
-      (c_int, i, PUTS("int");),
-      (c_type, t, PUTS("type");),
-      (c_ast, t, PUTS("ast");),
   );
+}
+typePrinter(Type) {
+  let visited = mList_init(PRINTARGS_ALLOCATOR(), Type);
+  defer { mList_deinit(visited); };
+  let visitedindexes = mxmap_init(PRINTARGS_ALLOCATOR(), Type, u32, 3, Type_hash_hash, Type_cmp_hash);
+  defer { mxmap_deinit(visitedindexes); };
+  typePrinterWorker(in, visited, visitedindexes, _ctx);
 }
 
 typePrinter(typed_value) {
@@ -410,12 +446,7 @@ typePrinter(typed_value) {
   );
   PUTS("}");
 }
-typePrinter(value) {
-  PUTS("{");
-  in.lvalue ? PUTS("lvalue:") : PUTS("rvalue:");
-  USETYPEPRINTER(typed_value, value_value(in).rvalue);
-  PUTS("}");
-}
+
 // { test functions
 test_fn(type_ptr_equality) {
   let v = (Type)tu_of(
@@ -605,5 +636,100 @@ test_fn(type_struct_size_respects_alignment) {
                                     });
   test_assert(Type_rsize(s) == 8);
   test_assert(Type_ralig(s) == 4);
+}
+// Touches every Type variant in one structure:
+// builtin, r_void, r_uint, r_sint, r_tag, r_ptr (self-referential),
+// r_arr (of a scalar and of self-pointers), r_struct (self + nested),
+// r_bitfield, r_func (full / empty / return-only), and all four
+// compile-time variants (c_int, c_type, c_ast, c_func).
+test_fn(type_print_complex) {
+  let v = (Type)tu_of(r_struct, mList_init(allocator, r_struct_item));
+  defer { mList_deinit(tu_catch(r_struct, v)); };
+
+  // --- leaf/aux types -----------------------------------------------
+  let t_u8 = (Type)tu_of(r_uint, (u16)8);
+  let t_u32 = (Type)tu_of(r_uint, (u16)32);
+  let t_i16 = (Type)tu_of(r_sint, (u16)16);
+  let t_i8 = (Type)tu_of(r_sint, (u16)8);
+  let t_void = (Type)tu_of(r_void, (nothing_t){});
+
+  // r_ptr used as an r_arr element type -- needs its own addressable
+  // storage distinct from the inline r_ptr fields below
+  let t_ptr_v = (Type)tu_of(r_ptr, &v);
+
+  // --- nested composite: a plain (non-cyclic) struct "Point" --------
+  let point_items = mList_init(allocator, r_struct_item);
+  defer { mList_deinit(point_items); };
+  mList_push(point_items, {.alignment = 4, .isconst = false, .name = fp("x"), .offset = 0, .init = (typed_value){t_u32}});
+  mList_push(point_items, {.alignment = 4, .isconst = false, .name = fp("y"), .offset = 4, .init = (typed_value){t_u32}});
+  let t_point = (Type)tu_of(r_struct, point_items);
+
+  // --- r_bitfield -----------------------------------------------------
+  let bf = mList_init(allocator, r_bitf_item);
+  defer { mList_deinit(bf); };
+  mList_push(bf, {.name = fp("flag1"), .width = 1, .init = (typed_value){t_u8}});
+  mList_push(bf, {.name = fp("flag2"), .width = 3, .init = (typed_value){t_u8}});
+  let t_bitfield = (Type)tu_of(r_bitfield, bf);
+
+  // --- r_func: params + return ----------------------------------------
+  let fn_params = mList_init(allocator, Type);
+  defer { mList_deinit(fn_params); };
+  mList_push(fn_params, t_u32);
+  mList_push(fn_params, (Type)tu_of(r_ptr, &v)); // self-ptr param
+  mList_push(fn_params, t_i8);                   // last elem == return
+  let t_fn_full = (Type)tu_of(r_func, fn_params);
+
+  // --- r_func: zero params, zero return (empty list edge case) -------
+  let fn_empty = mList_init(allocator, Type);
+  defer { mList_deinit(fn_empty); };
+  let t_fn_empty = (Type)tu_of(r_func, fn_empty);
+
+  // --- r_func: zero params, return-only (single elem edge case) ------
+  let fn_ret_only = mList_init(allocator, Type);
+  defer { mList_deinit(fn_ret_only); };
+  mList_push(fn_ret_only, t_void);
+  let t_fn_ret_only = (Type)tu_of(r_func, fn_ret_only);
+
+  // --- assemble v -------------------------------------------------------
+  mList_push(tu_catch(r_struct, v), {.alignment = 8, .isconst = false, .name = fp("val"), .offset = 16, .init = (typed_value){tu_of(r_uint, (u16)64)}});
+  mList_push(tu_catch(r_struct, v), {.alignment = 8, .isconst = false, .name = fp("next"), .offset = 0, .init = (typed_value){tu_of(r_ptr, &v)}});
+  mList_push(tu_catch(r_struct, v), {.alignment = 8, .isconst = false, .name = fp("prev"), .offset = 8, .init = (typed_value){tu_of(r_ptr, &v)}});
+  mList_push(tu_catch(r_struct, v), {.alignment = 4, .isconst = false, .name = fp("id"), .offset = 24, .init = (typed_value){tu_of(r_tag, {.name = fp("Meters"), .type = &t_u32})}});
+  mList_push(tu_catch(r_struct, v), {.alignment = 1, .isconst = false, .name = fp("flags"), .offset = 32, .init = (typed_value){t_bitfield}});
+  mList_push(tu_catch(r_struct, v), {.alignment = 1, .isconst = false, .name = fp("kind"), .offset = 40, .init = (typed_value){tu_of(builtin, builtin_typeof)}});
+  mList_push(tu_catch(r_struct, v), {.alignment = 1, .isconst = false, .name = fp("pad"), .offset = 48, .init = (typed_value){t_void}});
+  mList_push(tu_catch(r_struct, v), {.alignment = 2, .isconst = false, .name = fp("scores"), .offset = 56, .init = (typed_value){tu_of(r_arr, {.type = &t_i16, .count = 4})}});
+  mList_push(tu_catch(r_struct, v), {.alignment = 8, .isconst = false, .name = fp("children"), .offset = 72, .init = (typed_value){tu_of(r_arr, {.type = &t_ptr_v, .count = 2})}});
+  mList_push(tu_catch(r_struct, v), {.alignment = 4, .isconst = false, .name = fp("origin"), .offset = 88, .init = (typed_value){t_point}});
+  mList_push(tu_catch(r_struct, v), {.alignment = 8, .isconst = true, .name = fp("callback"), .offset = 96, .init = (typed_value){t_fn_full}});
+  mList_push(tu_catch(r_struct, v), {.alignment = 8, .isconst = true, .name = fp("noop"), .offset = 104, .init = (typed_value){t_fn_empty}});
+  mList_push(tu_catch(r_struct, v), {.alignment = 8, .isconst = true, .name = fp("make"), .offset = 112, .init = (typed_value){t_fn_ret_only}});
+  mList_push(tu_catch(r_struct, v), {.alignment = 1, .isconst = true, .name = fp("count"), .offset = 120, .init = (typed_value){tu_of(c_int, {})}});
+  mList_push(tu_catch(r_struct, v), {.alignment = 1, .isconst = true, .name = fp("selfType"), .offset = 120, .init = (typed_value){tu_of(c_type, {})}});
+  mList_push(tu_catch(r_struct, v), {.alignment = 1, .isconst = true, .name = fp("astNode"), .offset = 120, .init = (typed_value){tu_of(c_ast, {})}});
+  mList_push(tu_catch(r_struct, v), {.alignment = 1, .isconst = true, .name = fp("ctor"), .offset = 120, .init = (typed_value){tu_of(c_func, {})}});
+
+  println("{Type}", v);
+
+  // Expected (with the recurse-add fix applied):
+  // (s val@16:u64 next@0:(* 0) prev@8:(* 0) id@24:(id engfhegfhchd)
+  //    flags@32:(bf flag1|1:u8 flag2|3:u8) kind@40:(b typeof) pad@48:void
+  //    scores@56:(a [4] i16) children@72:(a [2] (* 0))
+  //    origin@88:(s x@0:u32 y@4:u32)
+  //    callback@96:(fn (u32 (* 0)) i8) noop@104:(fn () ) make@112:(fn () void)
+  //    count@120:int selfType@120:type astNode@120:ast ctor@120:cfn)
+  //
+  // Notes on why:
+  // - `next`/`prev` both fully expand to `(* 0)` -- self-pointers to `v`
+  //   (idx 0), demonstrating the recurse-add fix from before.
+  // - `children` is an *array of self-pointers*, distinct from next/prev's
+  //   pointer objects but structurally identical; r_arr/r_ptr are never
+  //   added to visitedmap, so it re-expands too, landing on the same `0`.
+  // - `origin` is a structurally distinct nested r_struct ("Point"), so it
+  //   gets its own fresh index rather than colliding with anything.
+  // - `noop`/`make` exercise the r_func length-0 and length-1 edge cases:
+  //   zero params + zero return, and zero params + return-only.
+  // - `count`/`selfType`/`astNode`/`ctor` are the four compile-time
+  //   variants; they carry no runtime payload, so only `.t` matters here.
 }
 // }

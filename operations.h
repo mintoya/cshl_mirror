@@ -1,3 +1,4 @@
+#pragma once
 #include "ast.h"
 #include "type.h"
 #include <wheels/allocators/fbaAllocator.h>
@@ -567,8 +568,28 @@ test_fn(type_interns) {
       {
           .alignment = 8,
           .isconst = false,
-          .name = fp("self"),
+          .name = fp("val"),
+          .offset = 16,
+          .init = (typed_value){tu_of(r_uint, 64)},
+      }
+  );
+  mList_push(
+      tu_catch(r_struct, v),
+      {
+          .alignment = 8,
+          .isconst = false,
+          .name = fp("next"),
           .offset = 0,
+          .init = (typed_value){tu_of(r_ptr, &v)},
+      }
+  );
+  mList_push(
+      tu_catch(r_struct, v),
+      {
+          .alignment = 8,
+          .isconst = false,
+          .name = fp("prev"),
+          .offset = 8,
           .init = (typed_value){tu_of(r_ptr, &v)},
       }
   );
