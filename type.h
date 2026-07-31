@@ -2,6 +2,7 @@
 #include "wheels/macros.h"
 
 #include "ast.h"
+#include "wheels/oxmap.h"
 #include <wheels/bigint.h>
 #include <wheels/fptr.h>
 #include <wheels/hxmap.h>
@@ -334,25 +335,28 @@ typedef struct {
   slice(u8) str;
 } id_str;
 typePrinter(id_str) {
-  foreach (let c, span(in.str.ptr, in.str.len)) {
-    PUTC((char)(((*c >> 4) & 0xf) + 'a'));
-    PUTC((char)(((*c >> 0) & 0xf) + 'a'));
+  if (fptr_eq(PRINTARGS(), "decode")) {
+    assertMessage(!(in.str.len & 1));
+    foreach (let cp, span(in.str.ptr, in.str.len, 2))
+      PUTC((char)(((cp[0] - 'a') << 4) | (cp[1] - 'a')));
+  } else {
+    foreach (let c, span(in.str.ptr, in.str.len)) {
+      PUTC((char)(((*c >> 4) & 0xf) + 'a'));
+      PUTC((char)(((*c >> 0) & 0xf) + 'a'));
+    }
   }
 }
 
-void typePrinterWorker(Type in, mList(Type) visited, mxmap(Type, u32) visitedmap, printerfunction_context _ctx);
-static inline void typePrinterWorker_add(Type in, mList(Type) visited, mxmap(Type, u32) visitedmap) {
-  u32 idx = (u32)mList_len(visited);
-  mList_push(visited, in);
-  mxmap_set(visitedmap, in, idx);
+void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_context _ctx);
+static inline void typePrinterWorker_add(Type in, moxmap(Type, u32) visitedmap) {
+  moxmap_set(visitedmap, in, ((u32)((oxmap *)visitedmap)->keys->length));
 }
-static inline void typePrinterWorker_recurse(Type in, mList(Type) visited, mxmap(Type, u32) visitedmap, printerfunction_context _ctx) {
-  if_decl (let idx, mxmap_get(visitedmap, in))
+static inline void typePrinterWorker_recurse(Type in, moxmap(Type, u32) visitedmap, printerfunction_context _ctx) {
+  if_decl (let idx, moxmap_get(visitedmap, in))
     USETYPEPRINTER(usize, *idx);
-  else
-    typePrinterWorker(in, visited, visitedmap, _ctx);
+  else typePrinterWorker(in, visitedmap, _ctx);
 }
-void typePrinterWorker(Type in, mList(Type) visited, mxmap(Type, u32) visitedmap, printerfunction_context _ctx) {
+void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_context _ctx) {
   tu_match_void(
       in,
       // trivial, are themselves
@@ -380,7 +384,7 @@ void typePrinterWorker(Type in, mList(Type) visited, mxmap(Type, u32) visitedmap
         // typePrinterWorker_add(in, visited, visitedmap);
         PUTS("(* ");
         defer { PUTS(")"); };
-        if (type) typePrinterWorker_recurse(*type, visited, visitedmap, _ctx);
+        if (type) typePrinterWorker_recurse(*type, visitedmap, _ctx);
         else PUTS("!");
       }),
       (r_arr, arr, {
@@ -390,12 +394,12 @@ void typePrinterWorker(Type in, mList(Type) visited, mxmap(Type, u32) visitedmap
         PUTS("[");
         USETYPEPRINTER(usize, arr.count);
         PUTS("] ");
-        if (arr.type) typePrinterWorker_recurse(*arr.type, visited, visitedmap, _ctx);
+        if (arr.type) typePrinterWorker_recurse(*arr.type, visitedmap, _ctx);
         else PUTS("!");
       }),
       // multiple types, push
       (r_struct, st, {
-        typePrinterWorker_add(in, visited, visitedmap);
+        typePrinterWorker_add(in, visitedmap);
         PUTS("(s ");
         defer { PUTS(")"); }
         foreach (let type, span(mList_arr(st), mList_len(st))) {
@@ -404,11 +408,11 @@ void typePrinterWorker(Type in, mList(Type) visited, mxmap(Type, u32) visitedmap
           PUTS("@");
           USETYPEPRINTER(usize, type->offset);
           PUTS(":");
-          typePrinterWorker_recurse(type->init.t, visited, visitedmap, _ctx);
+          typePrinterWorker_recurse(type->init.t, visitedmap, _ctx);
         }
       }),
       (r_bitfield, st, {
-        typePrinterWorker_add(in, visited, visitedmap);
+        typePrinterWorker_add(in, visitedmap);
         PUTS("(bf ");
         defer { PUTS(")"); }
         foreach (let type, span(mList_arr(st), mList_len(st))) {
@@ -418,29 +422,27 @@ void typePrinterWorker(Type in, mList(Type) visited, mxmap(Type, u32) visitedmap
           PUTS("|");
           USETYPEPRINTER(usize, type->width);
           PUTS(":");
-          typePrinterWorker_recurse(type->init.t, visited, visitedmap, _ctx);
+          typePrinterWorker_recurse(type->init.t, visitedmap, _ctx);
         }
       }),
       (r_func, fn, {
-        typePrinterWorker_add(in, visited, visitedmap);
+        typePrinterWorker_add(in, visitedmap);
         PUTS("(fn (");
         foreach (let it, span(mList_arr(fn), (mList_len(fn) ?: 1) - 1)) {
           if (it != mList_arr(fn)) PUTS(" ");
-          typePrinterWorker_recurse(*it, visited, visitedmap, _ctx);
+          typePrinterWorker_recurse(*it, visitedmap, _ctx);
         }
         PUTS(") ");
         if (mList_len(fn))
-          typePrinterWorker_recurse(mList_last(fn), visited, visitedmap, _ctx);
+          typePrinterWorker_recurse(mList_last(fn), visitedmap, _ctx);
         PUTS(")");
       }),
   );
 }
 typePrinter(Type) {
-  let visited = mList_init(PRINTARGS_ALLOCATOR(), Type);
-  defer { mList_deinit(visited); };
-  let visitedindexes = mxmap_init(PRINTARGS_ALLOCATOR(), Type, u32, 3, Type_hash_hash, Type_cmp_hash);
-  defer { mxmap_deinit(visitedindexes); };
-  typePrinterWorker(in, visited, visitedindexes, _ctx);
+  let visited = moxmap_init(PRINTARGS_ALLOCATOR(), Type, u32, Type_cmp_hash);
+  defer { moxmap_deinit(visited); };
+  typePrinterWorker(in, visited, _ctx);
 }
 
 typePrinter(typed_value) {
@@ -706,23 +708,26 @@ test_fn(type_print_complex) {
   let t_fn_ret_only = (Type)tu_of(r_func, fn_ret_only);
 
   // --- assemble v -------------------------------------------------------
-  mList_push(tu_catch(r_struct, v), {.alignment = 8, .isconst = false, .name = fp("val"), .offset = 16, .init = (typed_value){tu_of(r_uint, (u16)64)}});
-  mList_push(tu_catch(r_struct, v), {.alignment = 8, .isconst = false, .name = fp("next"), .offset = 0, .init = (typed_value){tu_of(r_ptr, &v)}});
-  mList_push(tu_catch(r_struct, v), {.alignment = 8, .isconst = false, .name = fp("prev"), .offset = 8, .init = (typed_value){tu_of(r_ptr, &v)}});
-  mList_push(tu_catch(r_struct, v), {.alignment = 4, .isconst = false, .name = fp("id"), .offset = 24, .init = (typed_value){tu_of(r_tag, {.name = fp("Meters"), .type = &t_u32})}});
-  mList_push(tu_catch(r_struct, v), {.alignment = 1, .isconst = false, .name = fp("flags"), .offset = 32, .init = (typed_value){t_bitfield}});
-  mList_push(tu_catch(r_struct, v), {.alignment = 1, .isconst = false, .name = fp("kind"), .offset = 40, .init = (typed_value){tu_of(builtin, builtin_typeof)}});
-  mList_push(tu_catch(r_struct, v), {.alignment = 1, .isconst = false, .name = fp("pad"), .offset = 48, .init = (typed_value){t_void}});
-  mList_push(tu_catch(r_struct, v), {.alignment = 2, .isconst = false, .name = fp("scores"), .offset = 56, .init = (typed_value){tu_of(r_arr, {.type = &t_i16, .count = 4})}});
-  mList_push(tu_catch(r_struct, v), {.alignment = 8, .isconst = false, .name = fp("children"), .offset = 72, .init = (typed_value){tu_of(r_arr, {.type = &t_ptr_v, .count = 2})}});
-  mList_push(tu_catch(r_struct, v), {.alignment = 4, .isconst = false, .name = fp("origin"), .offset = 88, .init = (typed_value){t_point}});
-  mList_push(tu_catch(r_struct, v), {.alignment = 8, .isconst = true, .name = fp("callback"), .offset = 96, .init = (typed_value){t_fn_full}});
-  mList_push(tu_catch(r_struct, v), {.alignment = 8, .isconst = true, .name = fp("noop"), .offset = 104, .init = (typed_value){t_fn_empty}});
-  mList_push(tu_catch(r_struct, v), {.alignment = 8, .isconst = true, .name = fp("make"), .offset = 112, .init = (typed_value){t_fn_ret_only}});
-  mList_push(tu_catch(r_struct, v), {.alignment = 1, .isconst = true, .name = fp("count"), .offset = 120, .init = (typed_value){tu_of(c_int, {})}});
-  mList_push(tu_catch(r_struct, v), {.alignment = 1, .isconst = true, .name = fp("selfType"), .offset = 120, .init = (typed_value){tu_of(c_type, {})}});
-  mList_push(tu_catch(r_struct, v), {.alignment = 1, .isconst = true, .name = fp("astNode"), .offset = 120, .init = (typed_value){tu_of(c_ast, {})}});
-  mList_push(tu_catch(r_struct, v), {.alignment = 1, .isconst = true, .name = fp("ctor"), .offset = 120, .init = (typed_value){tu_of(c_func, {})}});
+  {
+    let p = &tu_catch(r_struct, v);
+    mList_push((*p), {.alignment = 8, .isconst = false, .name = fp("val"), .offset = 16, .init = (typed_value){tu_of(r_uint, (u16)64)}});
+    mList_push((*p), {.alignment = 8, .isconst = false, .name = fp("next"), .offset = 0, .init = (typed_value){tu_of(r_ptr, &v)}});
+    mList_push((*p), {.alignment = 8, .isconst = false, .name = fp("prev"), .offset = 8, .init = (typed_value){tu_of(r_ptr, &v)}});
+    mList_push((*p), {.alignment = 4, .isconst = false, .name = fp("id"), .offset = 24, .init = (typed_value){tu_of(r_tag, {.name = fp("Meters"), .type = &t_u32})}});
+    mList_push((*p), {.alignment = 1, .isconst = false, .name = fp("flags"), .offset = 32, .init = (typed_value){t_bitfield}});
+    mList_push((*p), {.alignment = 1, .isconst = false, .name = fp("kind"), .offset = 40, .init = (typed_value){tu_of(builtin, builtin_typeof)}});
+    mList_push((*p), {.alignment = 1, .isconst = false, .name = fp("pad"), .offset = 48, .init = (typed_value){t_void}});
+    mList_push((*p), {.alignment = 2, .isconst = false, .name = fp("scores"), .offset = 56, .init = (typed_value){tu_of(r_arr, {.type = &t_i16, .count = 4})}});
+    mList_push((*p), {.alignment = 8, .isconst = false, .name = fp("children"), .offset = 72, .init = (typed_value){tu_of(r_arr, {.type = &t_ptr_v, .count = 2})}});
+    mList_push((*p), {.alignment = 4, .isconst = false, .name = fp("origin"), .offset = 88, .init = (typed_value){t_point}});
+    mList_push((*p), {.alignment = 8, .isconst = true, .name = fp("callback"), .offset = 96, .init = (typed_value){t_fn_full}});
+    mList_push((*p), {.alignment = 8, .isconst = true, .name = fp("noop"), .offset = 104, .init = (typed_value){t_fn_empty}});
+    mList_push((*p), {.alignment = 8, .isconst = true, .name = fp("make"), .offset = 112, .init = (typed_value){t_fn_ret_only}});
+    mList_push((*p), {.alignment = 1, .isconst = true, .name = fp("count"), .offset = 120, .init = (typed_value){tu_of(c_int, {})}});
+    mList_push((*p), {.alignment = 1, .isconst = true, .name = fp("selfType"), .offset = 120, .init = (typed_value){tu_of(c_type, {})}});
+    mList_push((*p), {.alignment = 1, .isconst = true, .name = fp("astNode"), .offset = 120, .init = (typed_value){tu_of(c_ast, {})}});
+    mList_push((*p), {.alignment = 1, .isconst = true, .name = fp("ctor"), .offset = 120, .init = (typed_value){tu_of(c_func, {})}});
+  }
 
   println("{Type}", v);
 

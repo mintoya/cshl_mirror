@@ -594,9 +594,11 @@ test_fn(type_interns) {
       }
   );
   // println("{Type}", v);
+
   let str = snprint(allocator, "{Type}", v);
   let idstr = snprint(allocator, "{id_str}", str);
-  println("`{slice(c8)}' -> {slice(c8)}", str, idstr);
+  let decoded = snprint(allocator, "{id_str:decode}", fptr_CSP(idstr.ptr));
+  println("`{slice(c8)}' -> {slice(c8)} -> `{slice(c8)}'", str, idstr, decoded);
 
   let p1 = IrBuilder_getType(&irb, v);
   let p2 = IrBuilder_getType(&irb, *p1);
