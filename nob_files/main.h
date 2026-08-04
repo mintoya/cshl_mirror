@@ -22,7 +22,7 @@
   #define INPUT_FLAGS "",
 #endif
 
-#define COMMON_CFLAGS INPUT_FLAGS "-std=c23", "-fdefer-ts", "-DnoAssertMessage", "-I", "deps", "-fno-sanitize=vla-bound"
+#define COMMON_CFLAGS INPUT_FLAGS "-std=c23", "-fdefer-ts", "-I", "deps", "-fno-sanitize=vla-bound"
 
 //{timespec
 #include <time.h>
@@ -87,7 +87,7 @@ int build_main(int nargs, char **args) {
   Cmd cmd = {};
   if (!mkdir_if_not_exists("build"))
     return false;
-  cmd_append(&cmd, CC, COMMON_CFLAGS, "-o", "build/compiler" EXTENSION, "main.c", "-g");
+  cmd_append(&cmd, CC, COMMON_CFLAGS, "-o", "build/compiler" EXTENSION, "main.c", "-g", "-rdynamic");
   if (!cmd_run_sync(cmd)) return false;
   Cmd runcmd = {};
   cmd_append(&runcmd, "./build/compiler" EXTENSION);

@@ -1,6 +1,10 @@
 #pragma once
 #include "ast.h"
 #include "type.h"
+#include "wheels/allocators/cballocator.h"
+#include "wheels/fptr.h"
+#include "wheels/mytypes.h"
+#include "wheels/print/print_pre.h"
 #include <wheels/allocators/fbaAllocator.h>
 #include <wheels/bigint.h>
 #include <wheels/macros.h>
@@ -50,7 +54,7 @@ tu_def(
     // store element named name in l into d
     (oselem, struct {u32 l , d ; fptr name; }),
 );
-#define ocode_of(type, ...) (opcode) tu_of(type, __VA_ARGS__)
+#define ocode_of (opcode) tu_of
 
 typedef struct scope scope;
 sliceDef(scopeptr);
@@ -67,6 +71,7 @@ typedef struct {
   allocfn alloc;
   scope *env;
   mxmap(Type, Type *) types;
+  mxmap(void *, usize) pointers;
 } IrBuilder;
 
 //
@@ -75,22 +80,23 @@ typedef struct {
 
 u32 env_addOp(IrBuilder *b, opcode o);
 void env_bind(IrBuilder *b, fptr id, u32 reg);
-void env_push(IrBuilder *b);
+u32 env_push(IrBuilder *b);
 
+void irb_cbb(const callbackallocatorhandle *h, void *p) {
+  let _map = (itypeof(IrBuilder, pointers))h->cbself->udata;
+  mxmap_rem(_map, h->inptr);
+  if (p) mxmap_set(_map, p, h->outsize);
+}
 IrBuilder IrBuilder_init(allocfn allocator) {
-  var_ res = (IrBuilder){
-      .alloc = allocator,
+  IrBuilder res;
+  res = (IrBuilder){
       .env = nullptr,
-      .types = mxmap_init(
-          allocator,
-          Type,
-          Type *,
-          3,
-          Type_hash_hash,
-          Type_cmp_hash
-      )
+      .types = mxmap_init(allocator, Type, Type *, 3, Type_hash_hash, Type_cmp_hash),
+      .pointers = mxmap_init(allocator, void *, usize),
   };
+  res.alloc = cba_init(allocator, nullptr, irb_cbb, res.pointers);
   env_push(&res);
+
   struct {
     char *name;
     builtin_id id;
@@ -113,8 +119,17 @@ IrBuilder IrBuilder_init(allocfn allocator) {
     env_bind(&res, fp(it.name), env_addOp(&res, ocode_of(obin, it.id)));
   return res;
 }
-void IrBuilder_deinit(IrBuilder *b) { TODO("not super important"); }
-allocfn IrBuilder_allocator(IrBuilder *b) { return ((hxmap *)b->types)->allocator; }
+void IrBuilder_deinit(IrBuilder *b) {
+  let realAllocator = cba_backing(b->alloc);
+  foreach (let i, mxmap_iter(b->pointers, void *, usize)) {
+    println("(log) free {ptr}:{}", i.key, *i.val);
+    adestroy(realAllocator, (u8(*)[*i.val])i.key);
+  }
+  cba_deinit(b->alloc);
+  mxmap_deinit(b->pointers);
+  mxmap_deinit(b->types);
+}
+allocfn IrBuilder_allocator(IrBuilder *b) { return b->alloc; }
 
 allocfn scope_allocator(scope *s) { return ((hxmap *)s->locals)->allocator; }
 Type *IrBuilder_getType(IrBuilder *b, Type t) {
@@ -125,55 +140,26 @@ Type *IrBuilder_getType(IrBuilder *b, Type t) {
   *pt = tu_match_exp(
       t,
       (builtin, b, (Type)tu_of(builtin, b)),
-      (r_void, _, (Type)tu_of(r_void, {})),
       (r_uint, u, (Type)tu_of(r_uint, u)),
       (r_sint, s, (Type)tu_of(r_sint, s)),
       (r_tag, tag, (Type)tu_of(r_tag, {.name = tag.name, .type = IrBuilder_getType(b, *tag.type)})),
       (r_ptr, p, (Type)tu_of(r_ptr, IrBuilder_getType(b, *p))),
-      (r_arr, arr, (Type)tu_of(r_arr, {.type = IrBuilder_getType(b, *arr.type), .count = arr.count})),
+      (r_arr, arr, (Type)tu_of(r_arr, {IrBuilder_getType(b, *arr.type), arr.count})),
       (r_struct,
        items,
-       (Type)tu_of(
-           r_struct,
-           mList_map(allocator, items, ({ // TODO: intern the other things also
-                       $.init.t = *IrBuilder_getType(b, $.init.t);
-                       $;
-                     }))
-       )),
+       (Type)tu_of(r_struct, mList_map(allocator, items, ($.init.t = *IrBuilder_getType(b, $.init.t), $)))),
       (r_bitfield,
        items,
-
-       (Type)tu_of(
-           r_bitfield,
-           mList_map(allocator, items, ({ // TODO: intern the other things also
-                       $.init.t = *IrBuilder_getType(b, $.init.t);
-                       $;
-                     }))
-       )),
-      (
-          r_func,
-          params,
-          (Type)tu_of(
-              r_func,
-              mList_map(
-                  allocator,
-                  params,
-                  ({ // TODO: intern the other things also
-                    $ = *IrBuilder_getType(b, $);
-                    $;
-                  })
-              )
-
-          )
-      ),
+       (Type)tu_of(r_bitfield, mList_map(allocator, items, ($.init.t = *IrBuilder_getType(b, $.init.t), $)))),
+      (r_func,
+       params,
+       (Type)tu_of(r_func, mList_map(allocator, params, (*IrBuilder_getType(b, $))))),
       (default, t),
   );
   return *mxmap_set(b->types, *pt, pt);
 }
 scopeptr scope_parent(scope *s) {
-  if (msList_len(s->relatives))
-    return s->relatives[0];
-  else return nullptr;
+  return msList_len(s->relatives) ? s->relatives[0] : nullptr;
 }
 slice(scopeptr) scope_children(scope *s) {
   if_decl (var_ len, msList_len(s->relatives))
@@ -186,7 +172,6 @@ void env_bind(IrBuilder *b, fptr id, u32 reg) {
     error_at(id.ptr, "item with same name exists in scope");
   msxmap_set(b->env->locals, id, reg);
 }
-// u32 env_addreg(IrBuilder *b) { return ++b->next_reg; }
 
 u32 env_lookup(IrBuilder *b, fptr id) {
   for (scope *s = b->env; s; s = scope_parent(s))
@@ -195,7 +180,7 @@ u32 env_lookup(IrBuilder *b, fptr id) {
   error_at(id.ptr, snprint(stdAlloc, "unknown variable {slice(c8)}", id));
 }
 
-void env_push(IrBuilder *b) {
+u32 env_push(IrBuilder *b) {
   scope *new_scope = avalue(
       b->alloc,
       ((scope){
@@ -206,13 +191,15 @@ void env_push(IrBuilder *b) {
       })
 
   );
-
   if (b->env) {
     new_scope->start_reg = b->env->next_reg;
     new_scope->next_reg = b->env->next_reg;
     msList_push(b->alloc, b->env->relatives, new_scope);
+    msList_push(b->alloc, b->env->code, ocode_of(oscop, new_scope));
+    b->env->next_reg++;
   }
   b->env = new_scope;
+  return new_scope->next_reg;
 }
 
 void env_pop(IrBuilder *b) { b->env = scope_parent(b->env); }
@@ -341,11 +328,10 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
          emit_ir(b, pb.stmts[0], ctx);
        })),
       (astBBlock, bb, ({
-         u32 last_reg = 0;
-         env_push(b);
-         defer { env_pop(b); };
+         let last_reg = env_push(b);
          foreach (var_ stmnt, vlap(sentList_vla(bb.stmts)))
-           last_reg = emit_ir(b, stmnt, ctx);
+           emit_ir(b, stmnt, ctx);
+         env_pop(b);
          last_reg;
        })),
       (astABlock, ab, env_addOp(b, ocode_of(oast, node))),
@@ -362,8 +348,63 @@ Type value_asType(typed_value t) {
   else assertMessage(false, "thing is not a type");
 }
 Type typeof_Value(typed_value t) { return t.t; }
-typed_value convertString(IrBuilder *b, fptr in) { TODO(); }
-typed_value convertInt(IrBuilder *b, fptr in) { TODO(); }
+typed_value convertInt(IrBuilder *b, fptr in) {
+  let front = slice_split(in, (0, 2))[0];
+  bigint result = nullptr;
+  if (fptr_eq(front, "0x") || fptr_eq(front, "0b"))
+    result = BInt.from.fptr(b->alloc, fptr_eq(front, "0x") ? 16 : 2, slice_split(in, (2, -1))[0]);
+  else result = BInt.from.fptr(b->alloc, 10, in);
+  return (typed_value){tu_of(c_int, {}), {.c_int = result}};
+}
+typed_value convertString(IrBuilder *b, fptr in) {
+  assertMessage(in.len > 1 && in.ptr[0] == '"' && in.ptr[in.len - 1] == '"');
+  let result = mList_init(b->alloc, char, in.len - 2);
+  defer { mList_deinit(result); };
+
+  usize i = 1;
+  usize end = in.len - 1;
+  while (i < end) {
+    char c = in.ptr[i];
+    if (c == '\\' && i + 1 < end) {
+      char out;
+      switch (in.ptr[i + 1]) {
+          // clang-format off
+        case 'n': out = '\n'; break;
+        case 't': out = '\t'; break;
+        case 'r': out = '\r'; break;
+        case 'a': out = '\a'; break;
+        case 'b': out = '\b'; break;
+        case 'f': out = '\f'; break;
+        case 'v': out = '\v'; break;
+        case '0': out = '\0'; break;
+        case '\\': out = '\\'; break;
+        case '\'': out = '\''; break;
+        case '"': out = '"'; break;
+        default: assertMessage(false , "unknown escape %c%c",in.ptr[i] , in.ptr[i+1]);
+          // clang-format on
+      }
+      mList_push(result, out);
+      i += 2;
+    } else {
+      mList_push(result, c);
+      i += 1;
+    }
+  }
+
+  return (typed_value){
+      *IrBuilder_getType(
+          b,
+          (Type)tu_of(
+              r_arr,
+              {
+                  IrBuilder_getType(b, (Type)tu_of(r_sint, 8)),
+                  mList_len(result),
+              }
+          )
+      ),
+      mList_toOwned(b->alloc, result)
+  };
+}
 
 void ir_av1(IrBuilder *b) {
   let code = b->env->code;
@@ -389,36 +430,22 @@ void ir_av1(IrBuilder *b) {
 }
 
 //{ printer
-static inline void print_ir_indent(int indent, printerfunction_context _ctx) {
-  for (int i = 0; i < indent; i++)
-    PUTS(" ");
-}
 
 typePrinter(scope) {
-  let indent = fptr_toi(PRINTARGS());
-
-  let b = (fba_buffer(myAlign[2])){};
-  let ndepth = i_tofptr(fba_initBuffer(b), indent + 1);
-
-  print_ir_indent(indent, _ctx);
   PUTS("scope [start_reg: ");
   USETYPEPRINTER(u32, in.start_reg);
   PUTS(", next_reg: ");
   USETYPEPRINTER(u32, in.next_reg);
-  PUTS("]\n");
+  PUTS("]\n" P_INDENT_IN);
 
   u32 current_reg = in.start_reg;
 
   foreach (var_ o, vlap(msList_vla(in.code))) {
-    print_ir_indent(indent + 1, _ctx);
-
     if (op_creates(o)) {
       current_reg++;
       PUTS("r");
       USETYPEPRINTER(u32, current_reg);
       PUTS(" = ");
-    } else {
-      PUTS("       ");
     }
 
     tu_match_void(
@@ -439,18 +466,14 @@ typePrinter(scope) {
           PUTS("\"\n");
         }),
         (oast, astp, {
-          PUTS("oast\n");
-          PRINTARGS_PUSH(ndepth) {
-            print_ir_indent(indent + 2, _ctx);
-            // PRINTARGS_PUSH("");
-            USENAMEDPRINTER("ast", astp);
-          }
+          PUTS("oast\n" P_INDENT_IN);
+          USENAMEDPRINTER("ast", astp);
+          PUTS(P_INDENT_OUT);
         }),
         (oscop, scop, {
-          PUTS("oscop\n");
-          PRINTARGS_PUSH(ndepth) {
-            USENAMEDPRINTER("scope", scop);
-          }
+          PUTS("oscop\n" P_INDENT_IN);
+          USENAMEDPRINTER("scope", *scop);
+          PUTS(P_INDENT_OUT);
         }),
         (onew, val, {
           PUTS("onew l:r");
@@ -528,40 +551,26 @@ typePrinter(scope) {
         })
     );
   }
-}
 
+  PUTS(P_INDENT_OUT);
+}
 typePrinter(IrBuilder) {
-  let indent = fptr_toi(PRINTARGS());
-
-  let b = (fba_buffer(myAlign[2])){};
-  let alloc = fba_initBuffer(b);
-
-  let ndepth = i_tofptr(alloc, indent);
-  let n2depth = i_tofptr(alloc, indent + 1);
-
-  print_ir_indent(indent, _ctx);
-  PUTS("IrBuilder {\n");
-
-  PRINTARGS_PUSH(ndepth)
+  PUTS("IrBuilder {\n" P_INDENT_IN);
   USETYPEPRINTER(scope, *in.env);
-
-  foreach (let sc, vlap(slice_vla(scope_children(in.env))))
-    PRINTARGS_PUSH(n2depth)
-  USETYPEPRINTER(scope, *sc);
-
-  print_ir_indent(indent, _ctx);
-  PUTS("}\n");
+  PUTS(P_INDENT_OUT "}\n");
 }
+
 //}
 //
 //
 
 test_fn(type_interns) {
   let irb = IrBuilder_init(allocator);
+  defer { IrBuilder_deinit(&irb); };
 
   let v = (Type)tu_of(
       r_struct,
-      mList_init(allocator, r_struct_item)
+      mList_init(irb.alloc, r_struct_item)
   );
   mList_push(
       tu_catch(r_struct, v),
@@ -595,9 +604,11 @@ test_fn(type_interns) {
   );
   // println("{Type}", v);
 
-  let str = snprint(allocator, "{Type}", v);
-  let idstr = snprint(allocator, "{id_str}", str);
-  let decoded = snprint(allocator, "{id_str:decode}", fptr_CSP(idstr.ptr));
+  let strArena = arena_new_ext(allocator, 1024);
+  defer { arena_cleanup(strArena); };
+  let str = snprint(strArena, "{Type}", v);
+  let idstr = snprint(strArena, "{id_str}", str);
+  let decoded = snprint(strArena, "{id_str:decode}", fptr_CSP(idstr.ptr));
   println("`{slice(c8)}' -> {slice(c8)} -> `{slice(c8)}'", str, idstr, decoded);
 
   let p1 = IrBuilder_getType(&irb, v);

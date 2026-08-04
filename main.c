@@ -33,7 +33,6 @@ __attribute__((noreturn)) void(error_at)(u8 *location, fptr message) {
 // void on_allocation(allocationType *t) {
 //   println("allocation from {} line {} , {}->{}", t->trace.fn, t->trace.ln, t->insize, t->outsize);
 // }
-
 cmd_main(
     int nargs,
     char **args,
@@ -84,14 +83,24 @@ cmd_main(
   defer { arena_cleanup(astArena); };
 
   var_ ast = parseBBlock(astArena, buffer.ptr, (slice(Token)){.len = msList_len(tokens), tokens});
+
+  // Initialize the depth printer state for structured outputs
+  DepthState dstate = {
+      .inner_put = fileprint,
+      .inner_arb = stdout,
+      .depth = 0,
+      .indent_spaces = 1,
+      .at_line_start = true
+  };
+
   if (echo_ast)
-    println("{ast}", ast);
+    print_wfO(depth_output, &dstate, "{ast}\n", ast);
 
   if (execute) {
     var_ builder = IrBuilder_init(allocator);
-    // defer { IrBuilder_deinit(&builder); };
+    defer { IrBuilder_deinit(&builder); };
     emit_ir(&builder, ast, 0);
-    println("{IrBuilder}", builder);
+    print_wfO(depth_output, &dstate, "{IrBuilder}\n", builder);
   }
 
   return 0;

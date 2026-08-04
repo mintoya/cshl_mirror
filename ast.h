@@ -9,7 +9,6 @@
 #include <wheels/fptr.h>
 #include <wheels/macros.h>
 #include <wheels/print.h>
-#include <wheels/smallstream.h>
 #if !defined(_Nullable)
   #define _Nullable
 #endif
@@ -134,17 +133,12 @@ fptr i_tofptr(allocfn allocator, isize val) {
 
   return (fptr){.ptr = buf, .len = len};
 }
-static inline void print_ast_indent(int indent, printerfunction_context _ctx) {
-  for (int i = 0; i < indent; i++)
-    PUTS(" ");
-}
+#define P_INDENT_IN "\x11"
+#define P_INDENT_OUT "\x12"
+
 typePrinter("ast", ast *) {
-  let indent = fptr_toi(PRINTARGS());
-
-  let b = (fba_buffer(myAlign[2])){};
-  let ndepth = i_tofptr(fba_initBuffer(b), indent + 1);
-
   if (!in) return PUTS("null\n");
+
   tu_match_void(
       (*in),
       (astId, id, {
@@ -167,70 +161,60 @@ typePrinter("ast", ast *) {
         if (decl.is_const) {
           PUTS(" [const]");
         }
-        PUTS("\n");
+        PUTS("\n" P_INDENT_IN);
 
-        PRINTARGS_PUSH(ndepth) {
-          print_ast_indent(indent + 1, _ctx);
-          PUTS("name: ");
-          USENAMEDPRINTER("ast", decl.name);
+        PUTS("name: ");
+        USENAMEDPRINTER("ast", decl.name);
 
-          print_ast_indent(indent + 1, _ctx);
-          PUTS("type: ");
-          USENAMEDPRINTER("ast", decl.type);
+        PUTS("type: ");
+        USENAMEDPRINTER("ast", decl.type);
 
-          print_ast_indent(indent + 1, _ctx);
-          PUTS("value: ");
-          USENAMEDPRINTER("ast", decl.value);
-        }
+        PUTS("value: ");
+        USENAMEDPRINTER("ast", decl.value);
+
+        PUTS(P_INDENT_OUT);
       }),
       (astOp, op, {
         PUTS("Op '");
         char s[countof(op.symLiteral) + 1] = {};
         memcpy(s, op.symLiteral, sizeof(op.symLiteral));
         USENAMEDPRINTER("cstr", (char *)s);
-        PUTS("'\n");
+        PUTS("'\n" P_INDENT_IN);
 
-        PRINTARGS_PUSH(ndepth) {
-          print_ast_indent(indent + 1, _ctx);
-          PUTS("l: ");
-          USENAMEDPRINTER("ast", op.left);
+        PUTS("l: ");
+        USENAMEDPRINTER("ast", op.left);
 
-          print_ast_indent(indent + 1, _ctx);
-          PUTS("r: ");
-          USENAMEDPRINTER("ast", op.right);
-        }
+        PUTS("r: ");
+        USENAMEDPRINTER("ast", op.right);
+
+        PUTS(P_INDENT_OUT);
       }),
       (astPBlock, block, {
-        PUTS("PBlock\n");
+        PUTS("PBlock\n" P_INDENT_IN);
         foreach (let stmt, vlap(sentList_vla(block.stmts))) {
-          PRINTARGS_PUSH(ndepth) {
-            print_ast_indent(indent + 1, _ctx);
-            USENAMEDPRINTER("ast", stmt);
-          }
+          USENAMEDPRINTER("ast", stmt);
         }
+        PUTS(P_INDENT_OUT);
       }),
       (astBBlock, block, {
-        PUTS("BBlock\n");
+        PUTS("BBlock\n" P_INDENT_IN);
         foreach (let stmt, vlap(sentList_vla(block.stmts))) {
-          PRINTARGS_PUSH(ndepth) {
-            print_ast_indent(indent + 1, _ctx);
-            USENAMEDPRINTER("ast", stmt);
-          }
+          USENAMEDPRINTER("ast", stmt);
         }
+        PUTS(P_INDENT_OUT);
       }),
       (astABlock, block, {
-        PUTS("ABlock\n");
+        PUTS("ABlock\n" P_INDENT_IN);
         foreach (let stmt, vlap(sentList_vla(block.items))) {
-          PRINTARGS_PUSH(ndepth) {
-            print_ast_indent(indent + 1, _ctx);
-            USENAMEDPRINTER("ast", stmt);
-          }
+          USENAMEDPRINTER("ast", stmt);
         }
+        PUTS(P_INDENT_OUT);
       }),
       (astEmptyStatement, _, { PUTS("Empty"); }),
       (default, unreachable())
   );
 }
+
 // }
 //
 __attribute__((noreturn)) void error_ast(ast a, slice(c8) message) {
@@ -440,4 +424,63 @@ ast ast_clone(allocfn allocator, ast a) {
       (astPBlock, bb, (ast)tu_of(astPBlock, {nullptr, sentlist_clone(allocator, bb.stmts)})),
       (astABlock, bb, (ast)tu_of(astABlock, {nullptr, sentlist_clone(allocator, bb.items)})),
   );
+}
+typedef struct DepthState {
+  outputFunction inner_put;
+  void *inner_arb;
+  usize depth;
+  usize indent_spaces;
+  bool at_line_start;
+} DepthState;
+void depth_output(const c8 *str, void *arb, usize length, bool is_last) {
+  DepthState *state = (DepthState *)arb;
+  if (!state || !state->inner_put) return;
+  if (!length) {
+    if (is_last) state->inner_put("", state->inner_arb, 0, true);
+    return;
+  }
+
+  usize last_flush = 0;
+
+  for (usize i = 0; i < length; ++i) {
+    // 1. Handle our control characters
+    if (str[i] == '\x11' || str[i] == '\x12') {
+      // Flush everything before the control character
+      if (i > last_flush) {
+        state->inner_put(str + last_flush, state->inner_arb, i - last_flush, false);
+      }
+
+      if (str[i] == '\x11') state->depth++;
+      if (str[i] == '\x12' && state->depth) state->depth--;
+
+      last_flush = i + 1; // Skip the control character
+      continue;
+    }
+
+    // 2. Handle newlines and indentation
+    if (state->at_line_start && str[i] != '\n' && str[i] != '\r') {
+      for (usize d = 0; d < state->depth * state->indent_spaces; ++d) {
+        state->inner_put(" ", state->inner_arb, 1, false);
+      }
+      state->at_line_start = false;
+    }
+
+    if (str[i] == '\n') {
+      state->inner_put(str + last_flush, state->inner_arb, (i - last_flush) + 1, false);
+      last_flush = i + 1;
+      state->at_line_start = true;
+    }
+  }
+
+  if (last_flush < length) {
+    if (state->at_line_start) {
+      for (usize d = 0; d < state->depth * state->indent_spaces; ++d) {
+        state->inner_put(" ", state->inner_arb, 1, false);
+      }
+      state->at_line_start = false;
+    }
+    state->inner_put(str + last_flush, state->inner_arb, length - last_flush, is_last);
+  } else if (is_last) {
+    state->inner_put("", state->inner_arb, 0, true);
+  }
 }
