@@ -3,6 +3,7 @@
 
 #include "ast.h"
 #include "wheels/oxmap.h"
+#include "wheels/print/print_pre.h"
 #include <wheels/bigint.h>
 #include <wheels/fptr.h>
 #include <wheels/hxmap.h>
@@ -31,6 +32,7 @@ typedef enum : u8 {
 } builtin_id;
 //{type
 typedef struct Type Type;
+struct typed_value *init;
 typedef struct r_struct_item r_struct_item;
 typedef struct r_bitf_item r_bitf_item;
 typedef mList(struct {
@@ -334,19 +336,38 @@ typePrinter(builtin_id) {
 typedef struct {
   slice(u8) str;
 } id_str;
+bool iscid(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
 typePrinter(id_str) {
   if (fptr_eq(PRINTARGS(), "decode")) {
-    assertMessage(!(in.str.len & 1));
-    foreach (let cp, span(in.str.ptr, in.str.len, 2))
-      PUTC((char)(((cp[0] - 'a') << 4) | (cp[1] - 'a')));
+    let p = in.str.ptr;
+    while (p < in.str.len + in.str.ptr) {
+      if (*p == '_') {
+        p++;
+        while (p < in.str.len + in.str.ptr && *p != '_') {
+          assertMessage(p + 1 < in.str.len + in.str.ptr);
+          PUTC((char)(((*p - 'a') << 4) | (*(p + 1) - 'a')));
+          p += 2;
+        }
+        p++;
+      } else PUTC((char)*p++);
+    }
   } else {
-    foreach (let c, span(in.str.ptr, in.str.len)) {
-      PUTC((char)(((*c >> 4) & 0xf) + 'a'));
-      PUTC((char)(((*c >> 0) & 0xf) + 'a'));
+    let p = in.str.ptr;
+    while (p < in.str.len + in.str.ptr) {
+      while (p < in.str.len + in.str.ptr && iscid(*p))
+        PUTC((char)(*(p++)));
+      if (p < in.str.len + in.str.ptr && !iscid(*p)) {
+        PUTC((char)'_');
+        while (p < in.str.len + in.str.ptr && !iscid(*p)) {
+          char c = *(p++);
+          PUTC((char)((((c) >> 4) & 0xf) + 'a'));
+          PUTC((char)((((c) >> 0) & 0xf) + 'a'));
+        }
+        PUTC((char)'_');
+      }
     }
   }
 }
-
 void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_context _ctx);
 static inline void typePrinterWorker_add(Type in, moxmap(Type, u32) visitedmap) {
   moxmap_set(visitedmap, in, ((u32)((oxmap *)visitedmap)->keys->length));
