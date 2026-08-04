@@ -121,10 +121,8 @@ IrBuilder IrBuilder_init(allocfn allocator) {
 }
 void IrBuilder_deinit(IrBuilder *b) {
   let realAllocator = cba_backing(b->alloc);
-  foreach (let i, mxmap_iter(b->pointers, void *, usize)) {
-    println("(log) free {ptr}:{}", i.key, *i.val);
+  foreach (let i, mxmap_iter(b->pointers, void *, usize))
     adestroy(realAllocator, (u8(*)[*i.val])i.key);
-  }
   cba_deinit(b->alloc);
   mxmap_deinit(b->pointers);
   mxmap_deinit(b->types);
@@ -410,9 +408,9 @@ void ir_av1(IrBuilder *b) {
   let code = b->env->code;
   let values = &b->env->values;
   let allocator = IrBuilder_allocator(b);
-  foreach (let i, vlap(msList_vla(code))) {
+  foreach (let ip, span(code, msList_len(code))) {
     tu_match_void(
-        i,
+        *ip,
         (oint, str, msList_push(allocator, *values, convertInt(b, str))),
         (ostr, str, msList_push(allocator, *values, convertString(b, str))),
         (obin, bin, msList_push(allocator, *values, {tu_of(builtin, bin)})),
@@ -422,7 +420,76 @@ void ir_av1(IrBuilder *b) {
             msList_push(allocator, *values, {value_asType((*values)[nit.l]), {}});
           else msList_push(allocator, *values, {tu_of(builtin, builtin_anyType)});
         }),
-        //
+        (omov, mov, {
+          assertMessage(mov.l < msList_len(*values));
+          assertMessage(mov.r < msList_len(*values));
+          let l = &(*values)[mov.l];
+          let r = &(*values)[mov.r];
+          if (Type_cmp(l->t, r->t)) {
+            assertMessage(tu_or(builtin, r->t, -1) == builtin_anyType);
+            assertMessage(!r->v.value);
+            *r = (typeof(*r)){l->t, nullptr};
+          }
+        }),
+        (ocall, cal, {
+          assertMessage(cal.l < msList_len(*values));
+          assertMessage(cal.off + cal.len < msList_len(*values));
+          let l = &(*values)[cal.l];
+          tu_match_void(
+              l->t,
+              (builtin, _, TODO()),
+              (r_uint, _, TODO()),
+              (r_sint, _, TODO()),
+              (r_tag, _, TODO()),
+              (r_ptr, _, TODO()),
+              (r_struct, _, TODO()),
+              (r_arr, _, TODO()),
+              (r_bitfield, _, TODO()),
+              (r_func, _, TODO()),
+              (c_int, _, TODO()),
+              (c_ast, _, TODO()),
+              (c_func, _, TODO()),
+              (c_type, _, TODO()),
+              (r_void, _, TODO()),
+          );
+          // foreach (let vals, span(cal.off + *values, cal.len))
+          //   ;
+        }),
+        (oscop, sco, {
+          TODO(); // figure out return type, recursivley
+        }),
+        (olelem, ell, {
+          assertMessage(ell.l < msList_len(*values));
+          let l = &(*values)[ell.l];
+          let t = tu_match_exp(
+              l->t,
+              (r_bitfield, bf, ({
+                 let t = (Type){};
+                 bool f = false;
+                 foreach (let v, mList_iter(bf))
+                   if (fptr_eq(v.name, ell.name)) f = true, t = v.init.t;
+                 if (!f)
+                   error_at(ell.name.ptr, "struct has no element with that name");
+                 t;
+               })),
+              (r_struct, st, ({
+                 let t = (Type){};
+                 bool f = false;
+                 foreach (let v, mList_iter(st))
+                   if (fptr_eq(v.name, ell.name)) f = true, t = v.init.t;
+                 if (!f)
+                   error_at(ell.name.ptr, "struct has no element with that name");
+                 t;
+               })),
+              // TODO: ast exeption
+              (default, ({
+                 assertMessage(false, "type does not support loading element");
+                 (Type){};
+               }))
+          );
+          msList_push(allocator, *values, {t});
+        }),
+        // dont need type inferance
         (oconst, _, ),
         (ojif, _, ),
     );
@@ -443,7 +510,6 @@ typePrinter(scope) {
   foreach (var_ o, vlap(msList_vla(in.code))) {
     if (op_creates(o)) {
       current_reg++;
-      PUTS("r");
       USETYPEPRINTER(u32, current_reg);
       PUTS(" = ");
     }
@@ -457,7 +523,7 @@ typePrinter(scope) {
         }),
         (obin, bin, {
           PUTS("obin ");
-          USETYPEPRINTER(u32, bin);
+          USETYPEPRINTER(builtin_id, bin);
           PUTS("\n");
         }),
         (ostr, str, {
@@ -476,74 +542,74 @@ typePrinter(scope) {
           PUTS(P_INDENT_OUT);
         }),
         (onew, val, {
-          PUTS("onew l:r");
+          PUTS("onew l:");
           USETYPEPRINTER(u32, val.l);
           PUTS("\n");
         }),
         (olelem, val, {
-          PUTS("olelem l:r");
+          PUTS("olelem l:");
           USETYPEPRINTER(u32, val.l);
           PUTS(" name:'");
           USENAMEDPRINTER("slice(c8)", val.name);
           PUTS("'\n");
         }),
         (oconst, val, {
-          PUTS("oconst l:r");
+          PUTS("oconst l:");
           USETYPEPRINTER(u32, val.l);
           PUTS("\n");
         }),
         (ojif, val, {
-          PUTS("ojif l:r");
+          PUTS("ojif l:");
           USETYPEPRINTER(u32, val.l);
           PUTS(" d:");
           USETYPEPRINTER(u32, val.d);
           PUTS("\n");
         }),
         (ocall, val, {
-          PUTS("ocall l:r");
+          PUTS("ocall l:");
           USETYPEPRINTER(u32, val.l);
           PUTS(" off:");
           USETYPEPRINTER(u32, val.off);
           PUTS(" len:");
           USETYPEPRINTER(u32, val.len);
-          PUTS(" d:r");
+          PUTS(" d:");
           USETYPEPRINTER(u32, val.d);
           PUTS("\n");
         }),
         (oop, val, {
-          PUTS("oop l:r");
+          PUTS("oop l:");
           USETYPEPRINTER(u32, val.l);
-          PUTS(" r:r");
+          PUTS(" r:");
           USETYPEPRINTER(u32, val.r);
-          PUTS(" d:r");
+          PUTS(" d:");
           USETYPEPRINTER(u32, val.d);
           PUTS(" o:");
           USETYPEPRINTER(u32, val.o);
           PUTS("\n");
         }),
         (oret, val, {
-          PUTS("oret l:r");
+          PUTS("oret l:");
           USETYPEPRINTER(u32, val.l);
           PUTS("\n");
         }),
         (omov, val, {
-          PUTS("omov l:r");
+          PUTS("omov l:");
           USETYPEPRINTER(u32, val.l);
-          PUTS(" r:r");
+          PUTS(" r:");
           USETYPEPRINTER(u32, val.r);
           PUTS("\n");
         }),
         (ocpy, val, {
-          PUTS("ocpy l:r");
+          PUTS("ocpy l:");
           USETYPEPRINTER(u32, val.l);
-          PUTS(" r:r");
+          PUTS(" r:");
           USETYPEPRINTER(u32, val.r);
           PUTS("\n");
         }),
         (oselem, val, {
-          PUTS("oselem l:r");
+          PUTS("oselem l:");
           USETYPEPRINTER(u32, val.l);
-          PUTS(" d:r");
+          PUTS(" d:");
           USETYPEPRINTER(u32, val.d);
           PUTS(" name:'");
           USENAMEDPRINTER("slice(c8)", val.name);
