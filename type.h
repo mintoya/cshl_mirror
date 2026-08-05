@@ -13,22 +13,23 @@
 #include <wheels/sList.h>
 
 typedef enum : u8 {
-  builtin_anyType,
-  builtin_if,
-  builtin_while,
+  builtin_anyType, // reserved, not user-facing
+  builtin_if,      // @if(cnd , then ,)
+                   //
+  builtin_while,   // @while(cnd , then) //
+  builtin_fn,      // fn((decl|type...) ,decl|type) c_func of this type,
+                   // then when called with expression, yields an r_func
+  builtin_ast,     // @ast() type of ast
+  // builtin_any,  // @any() type of any
+  builtin_int,    // @sint(N) integer with N bits
+  builtin_uint,   // @uint(N) unsigned integer with N bits
+  builtin_type,   // @type() the type of a type
+  builtin_typeof, // @typeof(V) type of argument
 
-  builtin_fn,
-  builtin_ast,
-  builtin_any,
-  builtin_int,
-  builtin_uint,
-  builtin_type,
-  builtin_typeof,
-
-  builtin_return,
-  builtin_break,
-  builtin_qot,
-  builtin_uqot,
+  builtin_return, // return x return
+  builtin_break,  // @break()
+  builtin_qot,    // @qot(arg) ast of arg
+  builtin_uqot,   // @unqot(arg) evaluate arg
 } builtin_id;
 //{type
 typedef struct Type Type;
@@ -319,7 +320,7 @@ typePrinter(builtin_id) {
     case(builtin_if):PUTS("if");break;
     case(builtin_fn):PUTS("fn");break;
     case(builtin_ast):PUTS("ast");break;
-    case(builtin_any):PUTS("any");break;
+    // case(builtin_any):PUTS("any");break;
     case(builtin_int):PUTS("int");break;
     case(builtin_uint):PUTS("uint");break;
     case(builtin_type):PUTS("type");break;

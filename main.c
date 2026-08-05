@@ -101,6 +101,8 @@ cmd_main(
     defer { IrBuilder_deinit(&builder); };
     emit_ir(&builder, ast, 0);
     print_wfO(depth_output, &dstate, "{IrBuilder}\n", builder);
+    ir_av1(&builder);
+    print_wfO(depth_output, &dstate, "{IrBuilder}\n", builder);
   }
 
   return 0;

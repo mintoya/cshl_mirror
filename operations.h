@@ -11,6 +11,9 @@
 #include <wheels/mylist.h>
 #include <wheels/sList.h>
 #include <wheels/smap.h>
+// #if defined noAssertMessage
+//   #error need asserrt messages
+// #endif
 typedef struct scope *scopeptr;
 // 0 in any location is null
 tu_def(
@@ -104,7 +107,7 @@ IrBuilder IrBuilder_init(allocfn allocator) {
       {"@if", builtin_if},
       {"@while", builtin_while},
       {"@ast", builtin_ast},
-      {"@any", builtin_any},
+      // {"@any", builtin_any},
       {"@int", builtin_int},
       {"@uint", builtin_uint},
       {"@type", builtin_type},
@@ -115,7 +118,7 @@ IrBuilder IrBuilder_init(allocfn allocator) {
       {"return", builtin_return},
       {"fn", builtin_fn},
   };
-  foreach (var_ it, vla(builtins))
+  foreach (let it, vla(builtins))
     env_bind(&res, fp(it.name), env_addOp(&res, ocode_of(obin, it.id)));
   return res;
 }
@@ -160,7 +163,7 @@ scopeptr scope_parent(scope *s) {
   return msList_len(s->relatives) ? s->relatives[0] : nullptr;
 }
 slice(scopeptr) scope_children(scope *s) {
-  if_decl (var_ len, msList_len(s->relatives))
+  if_decl (let len, msList_len(s->relatives))
     return (slice(scopeptr)){len - 1, s->relatives + 1};
   return (slice(scopeptr)){};
 }
@@ -173,7 +176,7 @@ void env_bind(IrBuilder *b, fptr id, u32 reg) {
 
 u32 env_lookup(IrBuilder *b, fptr id) {
   for (scope *s = b->env; s; s = scope_parent(s))
-    if_decl (var_ reg_ptr, msxmap_get(s->locals, id))
+    if_decl (let reg_ptr, msxmap_get(s->locals, id))
       if (reg_ptr->idx >= s->start_reg) return reg_ptr->idx;
   error_at(id.ptr, snprint(stdAlloc, "unknown variable {slice(c8)}", id));
 }
@@ -265,14 +268,14 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
       (astOp, op, ({
          u32 irc = 0;
          if (op.number_rep == opNumbers.call) {
-           var_ left = emit_ir(b, op.left, 0);
+           let left = emit_ir(b, op.left, 0);
 
-           var_ offset = b->env->next_reg;
+           let offset = b->env->next_reg + 1;
            u32 len = 0;
            tu_match_void(
                *op.right,
                (astPBlock, bb, {
-                 var_ lp = sentList_vla(bb.stmts);
+                 let lp = sentList_vla(bb.stmts);
                  len = countof(*lp);
                  foreach (ast *it, vlap(lp))
                    env_addOp(b, ocode_of(oast, it));
@@ -327,7 +330,7 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
        })),
       (astBBlock, bb, ({
          let last_reg = env_push(b);
-         foreach (var_ stmnt, vlap(sentList_vla(bb.stmts)))
+         foreach (let stmnt, vlap(sentList_vla(bb.stmts)))
            emit_ir(b, stmnt, ctx);
          env_pop(b);
          last_reg;
@@ -404,94 +407,438 @@ typed_value convertString(IrBuilder *b, fptr in) {
   };
 }
 
+typed_value *env_getVal(scope *sp, u32 idx) {
+  assertMessage(idx - 1 < sp->next_reg, "ascessing value that doesnt exist yet");
+  if (idx > sp->start_reg) {
+    let ridx = idx - sp->start_reg - 1;
+    assertMessage(ridx < msList_len(sp->values));
+    return sp->values + ridx;
+  } else {
+    let parent = scope_parent(sp);
+    assertMessage(parent);
+    return env_getVal(parent, idx);
+  }
+}
+scope *env_ind_scope(IrBuilder *b) {
+
+  scope *mscope = avalue(
+      b->alloc,
+      ((scope){
+          .relatives = P$(msList_init(b->alloc, scopeptr), ({ msList_push(b->alloc, $, b->env); $; })),
+          .locals = msxmap_init(b->alloc, msxmap_iType((itypeof(scope, locals))0)),
+          .values = msList_init(b->alloc, typed_value),
+          .code = msList_init(b->alloc, opcode),
+          .start_reg = b->env->next_reg,
+          .next_reg = b->env->next_reg,
+      })
+  );
+  b->env->next_reg++;
+  msList_push(b->alloc, b->env->relatives, mscope);
+  return mscope;
+}
+
+void ir_av1(IrBuilder *b);
+typed_value *hv_handle_evaltype(IrBuilder *b, ast *target_ast, opcode *creator_op) {
+  let old_env = b->env;
+  b->env = env_ind_scope(b);
+  u32 reg = emit_ir(b, target_ast, 0);
+  ir_av1(b);
+  typed_value *res = acreate(b->alloc, typed_value);
+  *res = *env_getVal(b->env, reg);
+
+  if (creator_op)
+    *creator_op = ocode_of(oscop, b->env);
+
+  b->env = old_env;
+  return res;
+}
+bool ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
+  let l = env_getVal(b->env, call.l);
+  let d = env_getVal(b->env, call.d);
+  bool reevaluate = false;
+  enum general_JMP {
+    ELSE_END = 0xEEEEEEEE,
+    LOOP_EXIT = 0xFFFFFFFF,
+    LOOP_START = 0xFFFFFFFE,
+  };
+
+  tu_match_void(
+      l->t,
+      (builtin, bin, {
+        switch (bin) {
+          case builtin_if: {
+            assertMessage(call.len >= 2);
+            let cond_val = env_getVal(b->env, call.off);
+            let then_val = env_getVal(b->env, call.off + 1);
+
+            assertMessage(tu_is(c_ast, cond_val->t));
+            assertMessage(tu_is(c_ast, then_val->t));
+
+            ast *cond_ast = cond_val->v.c_ast;
+            ast *then_ast = then_val->v.c_ast;
+            ast *else_ast = nullptr;
+
+            if (call.len > 2) {
+              let else_val = env_getVal(b->env, call.off + 2);
+              assertMessage(tu_is(c_ast, else_val->t));
+              else_ast = else_val->v.c_ast;
+            }
+
+            b->env = env_ind_scope(b);
+
+            u32 cond_reg = emit_ir(b, cond_ast, 0);
+            env_addOp(b, ocode_of(ojif, {.l = cond_reg, .d = ELSE_END}));
+            emit_ir(b, then_ast, 0);
+            if (else_ast) emit_ir(b, else_ast, 0);
+
+            *insloc = ocode_of(oscop, b->env);
+            b->env = scope_parent(b->env);
+            reevaluate = true;
+          } break;
+          case builtin_while: {
+            assertMessage(call.len == 2);
+            let cond_val = env_getVal(b->env, call.off);
+            let body_val = env_getVal(b->env, call.off + 1);
+
+            assertMessage(tu_is(c_ast, cond_val->t));
+            assertMessage(tu_is(c_ast, body_val->t));
+
+            ast *cond_ast = cond_val->v.c_ast;
+            ast *body_ast = body_val->v.c_ast;
+
+            b->env = env_ind_scope(b);
+
+            u32 cond_reg = emit_ir(b, cond_ast, 0);
+            env_addOp(b, ocode_of(ojif, {.l = cond_reg, .d = LOOP_EXIT}));
+            emit_ir(b, body_ast, 0);
+
+            u32 true_reg = env_addOp(b, ocode_of(oint, fp("1")));
+            env_addOp(b, ocode_of(ojif, {.l = true_reg, .d = LOOP_START}));
+
+            *insloc = ocode_of(oscop, b->env);
+            b->env = scope_parent(b->env);
+            reevaluate = true;
+          } break;
+          case builtin_break: {
+            u32 true_reg = env_addOp(b, ocode_of(oint, fp("1")));
+            *insloc = ocode_of(ojif, {.l = true_reg, .d = LOOP_EXIT});
+            reevaluate = true;
+          } break;
+          case builtin_return: {
+            assertMessage(call.len == 1);
+            let ret_val = env_getVal(b->env, call.off);
+            assertMessage(tu_is(c_ast, ret_val->t));
+            ast *ret_ast = ret_val->v.c_ast;
+
+            b->env = env_ind_scope(b);
+
+            u32 expr_reg = emit_ir(b, ret_ast, 0);
+            env_addOp(b, ocode_of(oret, {.l = expr_reg}));
+
+            *insloc = ocode_of(oscop, b->env);
+            b->env = scope_parent(b->env);
+            reevaluate = true;
+          } break;
+          case builtin_int:
+          case builtin_uint: {
+            assertMessage(call.len == 1);
+            let arg = env_getVal(b->env, call.off);
+            assertMessage(tu_is(c_ast, arg->t));
+            bigint bint = BInt.from.fptr(b->alloc, 10, tu_catch(astNumber, *arg->v.c_ast));
+            bigint_trim(&bint);
+            assertMessage(msList_len(bint) == 1, "bit width must fit in one limb");
+            u32 bits = bint[0];
+            assertMessage(bigint_cmp(bint, nullptr), "bit width must be positive");
+
+            Type created_type = bin == builtin_int ? (Type)tu_of(r_sint, bits) : (Type)tu_of(r_uint, bits);
+            *d = (typeof(*d)){(Type)tu_of(c_type, {}), IrBuilder_getType(b, created_type)};
+          } break;
+          case builtin_typeof: {
+            assertMessage(call.len == 1);
+            let arg = env_getVal(b->env, call.off);
+
+            d->t = (Type)tu_of(c_type, {});
+            d->v.c_type = IrBuilder_getType(b, typeof_Value(*arg));
+          } break;
+          case builtin_type: {
+            assertMessage(call.len == 0);
+
+            d->t = (Type)tu_of(c_type, {});
+            d->v.c_type = IrBuilder_getType(b, (Type)tu_of(c_type, {}));
+          } break;
+          case builtin_ast: {
+            assertMessage(call.len == 0);
+
+            d->t = (Type)tu_of(c_type, {});
+            d->v.c_type = IrBuilder_getType(b, (Type)tu_of(c_ast, {}));
+          } break;
+          case builtin_qot: {
+            assertMessage(call.len == 1);
+            let arg = env_getVal(b->env, call.off);
+            assertMessage(tu_is(c_ast, arg->t));
+
+            d->t = (Type)tu_of(c_ast, {});
+            d->v.c_ast = arg->v.c_ast;
+          } break;
+          case builtin_uqot: {
+            assertMessage(call.len == 1);
+            let arg = env_getVal(b->env, call.off);
+            assertMessage(tu_is(c_ast, arg->t));
+            b->env = env_ind_scope(b);
+            emit_ir(b, arg->v.c_ast, 0);
+            *insloc = ocode_of(oscop, b->env);
+            b->env = scope_parent(b->env);
+            reevaluate = true;
+          } break;
+          case builtin_fn: {
+            assertMessage(call.len == 2, "fn expects 2 arguments: (params) and return type");
+            let params_val = env_getVal(b->env, call.off);
+            let ret_val = env_getVal(b->env, call.off + 1);
+
+            assertMessage(tu_is(c_ast, params_val->t));
+            assertMessage(tu_is(c_ast, ret_val->t));
+
+            ast *params_ast = params_val->v.c_ast;
+            ast *ret_ast = ret_val->v.c_ast;
+
+            func_value fval = mList_init(b->alloc, mList_iType(fval));
+
+            if (tu_is(astPBlock, *params_ast)) {
+              let pblock = tu_catch(astPBlock, *params_ast);
+              var_ lp = sentList_vla(pblock.stmts);
+
+              foreach (ast *p_ast, vlap(lp)) {
+                fptr p_name = fp("");
+                ast *p_type_ast = p_ast;
+
+                if (tu_is(astDecl, *p_ast)) {
+                  let decl = tu_catch(astDecl, *p_ast);
+                  if (decl.name) p_name = tu_catch(astId, *decl.name);
+                  if (decl.type) p_type_ast = decl.type;
+                  else assertMessage(false, "fn parameter missing type");
+                } else if (!tu_is(astId, *p_ast) && !tu_is(astOp, *p_ast)) {
+                  assertMessage(false, "fn parameter must be a declaration or type identifier");
+                }
+
+                mList_push(fval, {.name = p_name, .init = hv_handle_evaltype(b, p_type_ast, nullptr)});
+              }
+            } else if (!tu_is(astEmptyStatement, *params_ast)) {
+              fptr p_name = fp("");
+              ast *p_type_ast = params_ast;
+
+              if (tu_is(astDecl, *params_ast)) {
+                let decl = tu_catch(astDecl, *params_ast);
+                if (decl.name) p_name = tu_catch(astId, *decl.name);
+                if (decl.type) p_type_ast = decl.type;
+                else assertMessage(false, "fn parameter missing type");
+              }
+
+              mList_push(fval, {.name = p_name, .init = hv_handle_evaltype(b, p_type_ast, nullptr)});
+            }
+
+            mList_push(fval, {.name = fp(""), .init = hv_handle_evaltype(b, ret_ast, nullptr)});
+
+            d->t = (Type)tu_of(c_func, {});
+
+            d->v.c_func = fval;
+          } break;
+          case builtin_anyType:
+            assertMessage(false, "anyType shouldnt be accesable");
+            break;
+        }
+      }),
+      (c_type, _, TODO()),
+      (r_tag, _, TODO()),
+      (c_func, _, TODO()),
+      (r_func, _, TODO()),
+      (r_arr, _, TODO()),
+      (r_ptr, _, TODO()),
+      (r_bitfield, _, TODO()),
+      (r_struct, _, TODO()),
+      (default, assertMessage(false, "attempted to call a non-callable type"))
+  );
+
+  return reevaluate;
+}
+void env_pushVal(allocfn allocator, scope *sp, typed_value v) { msList_push(allocator, sp->values, v); }
 void ir_av1(IrBuilder *b) {
   let code = b->env->code;
-  let values = &b->env->values;
   let allocator = IrBuilder_allocator(b);
   foreach (let ip, span(code, msList_len(code))) {
-    tu_match_void(
+    {try_again : } tu_match_void(
         *ip,
-        (oint, str, msList_push(allocator, *values, convertInt(b, str))),
-        (ostr, str, msList_push(allocator, *values, convertString(b, str))),
-        (obin, bin, msList_push(allocator, *values, {tu_of(builtin, bin)})),
-        (oast, ats, msList_push(allocator, *values, {tu_of(c_ast, {}), ats})),
+        (oint, str, env_pushVal(allocator, b->env, convertInt(b, str))),
+        (ostr, str, env_pushVal(allocator, b->env, convertString(b, str))),
+        (obin, bin, env_pushVal(allocator, b->env, (typed_value){tu_of(builtin, bin)})),
+        (oast, ats, env_pushVal(allocator, b->env, (typed_value){tu_of(c_ast, {}), ats})),
         (onew, nit, {
           if_decl (let x, nit.l)
-            msList_push(allocator, *values, {value_asType((*values)[nit.l]), {}});
-          else msList_push(allocator, *values, {tu_of(builtin, builtin_anyType)});
+            env_pushVal(allocator, b->env, (typed_value){value_asType(*env_getVal(b->env, nit.l)), {}});
+          else env_pushVal(allocator, b->env, (typed_value){tu_of(builtin, builtin_anyType)});
         }),
         (omov, mov, {
-          assertMessage(mov.l < msList_len(*values));
-          assertMessage(mov.r < msList_len(*values));
-          let l = &(*values)[mov.l];
-          let r = &(*values)[mov.r];
+          let l = env_getVal(b->env, mov.l);
+          let r = env_getVal(b->env, mov.r);
+
+          if (tu_is(c_ast, l->t) && !tu_is(c_ast, r->t)) {
+            opcode *creator_op = nullptr;
+
+            if (mov.l > b->env->start_reg) {
+              opcode *curr = ip;
+
+              // start_reg (12) + len (6) = exactly register 18.
+              u32 current_reg = b->env->start_reg + msList_len(b->env->values);
+
+              while (current_reg >= mov.l) {
+                if (op_creates(*curr)) {
+                  if (current_reg == mov.l) {
+                    creator_op = curr;
+                    break;
+                  }
+                  current_reg--;
+                }
+                curr--;
+              }
+            }
+
+            *l = *hv_handle_evaltype(b, l->v.c_ast, creator_op);
+          }
+
           if (Type_cmp(l->t, r->t)) {
-            assertMessage(tu_or(builtin, r->t, -1) == builtin_anyType);
-            assertMessage(!r->v.value);
+            assertMessage(tu_or(builtin, r->t, -1) == builtin_anyType, "type mismatch in omov assignment");
+            assertMessage(!r->v.value, "cannot mutate initialized value");
             *r = (typeof(*r)){l->t, nullptr};
           }
         }),
-        (ocall, cal, {
-          assertMessage(cal.l < msList_len(*values));
-          assertMessage(cal.off + cal.len < msList_len(*values));
-          let l = &(*values)[cal.l];
+        (ocall, cal, ir_handle_call(b, cal, ip)),
+        (olelem, ell, {
+          let l = env_getVal(b->env, ell.l);
+          Type t;
+          bool f = false;
           tu_match_void(
               l->t,
-              (builtin, _, TODO()),
-              (r_uint, _, TODO()),
-              (r_sint, _, TODO()),
-              (r_tag, _, TODO()),
-              (r_ptr, _, TODO()),
-              (r_struct, _, TODO()),
-              (r_arr, _, TODO()),
-              (r_bitfield, _, TODO()),
-              (r_func, _, TODO()),
-              (c_int, _, TODO()),
-              (c_ast, _, TODO()),
-              (c_func, _, TODO()),
-              (c_type, _, TODO()),
-              (r_void, _, TODO()),
+              (r_bitfield, bf, {
+                foreach (let v, mList_iter(bf))
+                  if (fptr_eq(v.name, ell.name))
+                    f = true, t = v.init.t, ({ break; });
+              }),
+              (r_struct, st, {
+                foreach (let v, mList_iter(st))
+                  if (fptr_eq(v.name, ell.name))
+                    f = true, t = v.init.t, ({ break; });
+              }),
+              // TODO: ast exeption
+              (default, assertMessage(false, "type does not support loading element"))
           );
-          // foreach (let vals, span(cal.off + *values, cal.len))
-          //   ;
+          if (!f) error_at(ell.name.ptr, "struct has no element with that name");
+          env_pushVal(allocator, b->env, (typed_value){t});
         }),
         (oscop, sco, {
-          TODO(); // figure out return type, recursivley
+          let old_env = b->env;
+          b->env = sco;
+          ir_av1(b);
+          b->env = old_env;
+
+          typed_value yield_val = (typed_value){tu_of(r_void, {})}; // todo (should be equivalent to getType)
+          if_decl (let len, msList_len(sco->values)) yield_val.t = sco->values[len - 1].t;
+          env_pushVal(allocator, b->env, yield_val);
         }),
-        (olelem, ell, {
-          assertMessage(ell.l < msList_len(*values));
-          let l = &(*values)[ell.l];
-          let t = tu_match_exp(
+        (oselem, sel, {
+          let l = env_getVal(b->env, sel.l); // The struct
+          let d = env_getVal(b->env, sel.d); // The value being stored
+
+          Type field_type;
+          bool found = false;
+
+          tu_match_void(
               l->t,
-              (r_bitfield, bf, ({
-                 let t = (Type){};
-                 bool f = false;
-                 foreach (let v, mList_iter(bf))
-                   if (fptr_eq(v.name, ell.name)) f = true, t = v.init.t;
-                 if (!f)
-                   error_at(ell.name.ptr, "struct has no element with that name");
-                 t;
-               })),
-              (r_struct, st, ({
-                 let t = (Type){};
-                 bool f = false;
-                 foreach (let v, mList_iter(st))
-                   if (fptr_eq(v.name, ell.name)) f = true, t = v.init.t;
-                 if (!f)
-                   error_at(ell.name.ptr, "struct has no element with that name");
-                 t;
-               })),
-              // TODO: ast exeption
-              (default, ({
-                 assertMessage(false, "type does not support loading element");
-                 (Type){};
-               }))
+              (r_bitfield, bf, {
+                foreach (let v, mList_iter(bf))
+                  if (fptr_eq(v.name, sel.name))
+                    found = true, field_type = v.init.t, ({ break; });
+              }),
+              (r_struct, st, {
+                foreach (let v, mList_iter(st))
+                  if (fptr_eq(v.name, sel.name))
+                    found = true, field_type = v.init.t, ({ break; });
+              }),
+              (default, assertMessage(false, "oselem target l is not a struct or bitfield"))
           );
-          msList_push(allocator, *values, {t});
+
+          if (!found) error_at(sel.name.ptr, "struct has no element with that name");
+
+          if (Type_cmp(d->t, field_type)) {
+            assertMessage(tu_or(builtin, d->t, -1) == builtin_anyType, "type mismatch in oselem assignment");
+            assertMessage(!d->v.value, "cannot mutate type of an initialized value");
+            d->t = field_type;
+          }
+        }),
+        (ocpy, cpy, {
+          let l = env_getVal(b->env, cpy.l);
+          let r = env_getVal(b->env, cpy.r);
+
+          assertMessage(tu_is(r_ptr, l->t), "ocpy source (l) must be a pointer");
+          assertMessage(tu_is(r_ptr, r->t), "ocpy destination (r) must be a pointer");
+
+          Type *l_pointee = tu_catch(r_ptr, l->t);
+          Type *r_pointee = tu_catch(r_ptr, r->t);
+
+          assertMessage(!Type_cmp(*l_pointee, *r_pointee), "ocpy pointee types do not match");
+        }),
+        (oop, opp, {
+          let l = env_getVal(b->env, opp.l);
+          let r = env_getVal(b->env, opp.r);
+          let d = env_getVal(b->env, opp.d);
+
+          if (opp.o == opNumbers.pipe) {
+            assertMessage(false, "pipe operator (%u) not implemented", opp.o);
+          } else if (opp.o == opNumbers.set) {
+            if (Type_cmp(l->t, r->t)) {
+              assertMessage(tu_or(builtin, r->t, -1) == builtin_anyType, "type mismatch in assignment (op %u)", opp.o);
+              r->t = l->t;
+            }
+            d->t = l->t;
+          } else if (
+              opp.o == opNumbers.eq ||
+              opp.o == opNumbers.neq ||
+              opp.o == opNumbers.les ||
+              opp.o == opNumbers.mor ||
+              opp.o == opNumbers.leq ||
+              opp.o == opNumbers.moq
+          ) {
+
+            assertMessage(!Type_cmp(l->t, r->t), "type mismatch in comparison (op %u)", opp.o);
+            assertMessage(tu_or(builtin, l->t, -1) != builtin_anyType, "cannot compare untyped values (op %u)", opp.o);
+
+            d->t = (Type)tu_of(r_uint, 1);
+          } else if (
+              opp.o == opNumbers.mul ||
+              opp.o == opNumbers.div ||
+              opp.o == opNumbers.mod ||
+              opp.o == opNumbers.plus ||
+              opp.o == opNumbers.minus ||
+              opp.o == opNumbers.oand ||
+              opp.o == opNumbers.oor ||
+              opp.o == opNumbers.oband ||
+              opp.o == opNumbers.obor ||
+              opp.o == opNumbers.shr ||
+              opp.o == opNumbers.shl
+          ) {
+            assertMessage(!Type_cmp(l->t, r->t), "type mismatch in binary operator (op %u)", opp.o);
+            assertMessage(tu_or(builtin, r->t, -1) != builtin_anyType, "cannot operate on untyped values (op %u)", opp.o);
+            d->t = r->t;
+          } else if (
+              opp.o == opNumbers.onot ||
+              opp.o == opNumbers.obnot
+          ) {
+            assertMessage(tu_or(builtin, r->t, -1) != builtin_anyType, "cannot operate on untyped values (unary op %u)", opp.o);
+            d->t = r->t;
+          } else assertMessage(false, "unhandled or unknown operator %u in oop", opp.o);
         }),
         // dont need type inferance
         (oconst, _, ),
         (ojif, _, ),
+        (oret, _, ),
     );
   }
 }
@@ -507,7 +854,7 @@ typePrinter(scope) {
 
   u32 current_reg = in.start_reg;
 
-  foreach (var_ o, vlap(msList_vla(in.code))) {
+  foreach (let o, vlap(msList_vla(in.code))) {
     if (op_creates(o)) {
       current_reg++;
       USETYPEPRINTER(u32, current_reg);
@@ -617,6 +964,10 @@ typePrinter(scope) {
         })
     );
   }
+  PUTS("values{\n" P_INDENT_IN);
+  foreach (let v, span(in.values, msList_len(in.values)))
+    USETYPEPRINTER(typed_value, *v), PUTS("\n");
+  PUTS(P_INDENT_OUT "}\n");
 
   PUTS(P_INDENT_OUT);
 }

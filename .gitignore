@@ -16,3 +16,5 @@ compile_commands.win64.json
 /nob_files/last_run.txt
 nob_files/zcc.exe
 /tags
+a.exe
+a.pdb
