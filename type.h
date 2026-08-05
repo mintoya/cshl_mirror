@@ -470,7 +470,7 @@ typePrinter(Type) {
 typePrinter(typed_value) {
   PUTS("{t:");
   USETYPEPRINTER(Type, in.t);
-  PUTS(",v:");
+  PUTS(",\tv:");
   tu_match_void(
       in.t,
       (c_int, _, USENAMEDPRINTER("bigint", in.v.c_int);),
@@ -480,7 +480,7 @@ typePrinter(typed_value) {
       (default, {
         if (in.v.value)
           USETYPEPRINTER(fptr, ((fptr){Type_rsize(in.t), in.v.value}));
-        else PUTS("empty poiner field?");
+        else PUTS("(nil)");
       })
   );
   PUTS("}");
