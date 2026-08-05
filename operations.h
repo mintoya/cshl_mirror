@@ -70,7 +70,7 @@ struct scope {
   msList(opcode) code;
   scope *parent;
   msList(struct { typed_value value ; u32 cidx; }) values;
-  msxmap(struct { u32 idx; bool isconst; }) locals;
+  moxmap(fptr, struct { u32 idx:31; bool isconst:1; }) locals;
 };
 typedef struct {
   allocfn alloc;
@@ -164,24 +164,24 @@ Type *IrBuilder_getType(IrBuilder *b, Type t) {
 scope *scope_parent(scope *s) { return s->parent; }
 
 void env_bind(IrBuilder *b, fptr id, u32 reg) {
-  if (msxmap_get(b->env->locals, id))
+  if (moxmap_get(b->env->locals, id))
     error_at(id.ptr, "item with same name exists in scope");
-  msxmap_set(b->env->locals, id, reg);
+  moxmap_set(b->env->locals, id, ((moxmap_vt(b->env->locals)){reg, false}));
 }
 
 u32 env_lookup(IrBuilder *b, fptr id) {
   for (scope *s = b->env; s; s = scope_parent(s))
-    if_decl (let reg_ptr, msxmap_get(s->locals, id))
+    if_decl (let reg_ptr, moxmap_get(s->locals, id))
       if (reg_ptr->idx >= s->start_reg) return reg_ptr->idx;
   error_at(id.ptr, snprint(stdAlloc, "unknown variable {slice(c8)}", id));
 }
-
+i8 fptr_cmp_hash(const void *a, const void *b) { return fptr_cmp(*(fptr *)a, *(fptr *)b); }
 u32 env_push(IrBuilder *b) {
   scope *new_scope = avalue(
       b->alloc,
       ((scope){
           .parent = b->env,
-          .locals = msxmap_init(b->alloc, msxmap_iType((itypeof(scope, locals))0)),
+          .locals = moxmap_init(b->alloc, fptr, moxmap_vt((itypeof(scope, locals))0), fptr_cmp_hash),
           .values = msList_init(b->alloc, ptrstype(new_scope->values)),
           .code = msList_init(b->alloc, opcode),
       })
@@ -206,6 +206,7 @@ bool op_creates(opcode o) {
       (ostr, _, true),
       (oint, _, true),
       (onew, _, true),
+      (oarg, _, true),
       (oast, _, true),
       (olelem, _, true),
       (default, false),
@@ -223,6 +224,7 @@ u32 env_addOp(IrBuilder *b, opcode o) {
       (onew, _, ++b->env->next_reg),
       (oast, _, ; ++b->env->next_reg),
       (olelem, _, ++b->env->next_reg),
+      (oarg, _, ++b->env->next_reg),
       (default, (u32)0),
 
   );
@@ -417,7 +419,7 @@ scope *env_replace(IrBuilder *b, scope *target, u32 cidx) {
       b->alloc,
       ((scope){
           .parent = target,
-          .locals = msxmap_init(b->alloc, msxmap_iType((itypeof(scope, locals))0)),
+          .locals = moxmap_init(b->alloc, fptr, moxmap_vt((itypeof(scope, locals))0), fptr_cmp_hash),
           .values = msList_init(b->alloc, ptrstype(new_scope->values)),
           .code = msList_init(b->alloc, opcode),
       })
@@ -460,6 +462,12 @@ typed_value hv_handle_evaltype(IrBuilder *b, ast *target_ast, scope *target, u32
   return env_getVal(b->env, reg)->value;
 }
 void env_pushVal(allocfn allocator, scope *sp, typed_value v, u32 cidx) { msList_push(allocator, sp->values, {v, cidx}); }
+#define assert_tu_is(tag, val)             \
+  assertMessage(                           \
+      tu_is(tag, val),                     \
+      "expected " #tag " but got %s",      \
+      snprint(stdAlloc, "{Type}", val).ptr \
+  )
 void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
   let l = &env_getVal(b->env, call.l)->value;
   let d = &env_getVal(b->env, call.d)->value;
@@ -468,7 +476,6 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
     LOOP_EXIT = 0xFFFFFFFF,
     LOOP_START = 0xFFFFFFFE,
   };
-
   tu_match_void(
       l->t,
       (builtin, bin, {
@@ -478,8 +485,8 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
             let cond_val = &env_getVal(b->env, call.off)->value;
             let then_val = &env_getVal(b->env, call.off + 1)->value;
 
-            assertMessage(tu_is(c_ast, cond_val->t));
-            assertMessage(tu_is(c_ast, then_val->t));
+            assert_tu_is(c_ast, cond_val->t);
+            assert_tu_is(c_ast, then_val->t);
 
             ast *cond_ast = cond_val->v.c_ast;
             ast *then_ast = then_val->v.c_ast;
@@ -487,7 +494,7 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
 
             if (call.len > 2) {
               let else_val = &env_getVal(b->env, call.off + 2)->value;
-              assertMessage(tu_is(c_ast, else_val->t));
+              assert_tu_is(c_ast, else_val->t);
               else_ast = else_val->v.c_ast;
             }
 
@@ -514,8 +521,8 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
             let cond_val = &env_getVal(b->env, call.off)->value;
             let body_val = &env_getVal(b->env, call.off + 1)->value;
 
-            assertMessage(tu_is(c_ast, cond_val->t));
-            assertMessage(tu_is(c_ast, body_val->t));
+            assert_tu_is(c_ast, cond_val->t);
+            assert_tu_is(c_ast, body_val->t);
 
             ast *cond_ast = cond_val->v.c_ast;
             ast *body_ast = body_val->v.c_ast;
@@ -556,7 +563,7 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
           case builtin_return: {
             assertMessage(call.len == 1);
             let ret_val = &env_getVal(b->env, call.off)->value;
-            assertMessage(tu_is(c_ast, ret_val->t));
+            assertMessage(tu_is(c_ast, ret_val->t), "unexpected %s", snprint(stdAlloc, "{Type}", ret_val->t).ptr);
             ast *ret_ast = ret_val->v.c_ast;
 
             b->env = P$(
@@ -624,7 +631,7 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
           case builtin_qot: {
             assertMessage(call.len == 1);
             let arg = &env_getVal(b->env, call.off)->value;
-            assertMessage(tu_is(c_ast, arg->t));
+            assert_tu_is(c_ast, arg->t);
 
             d->t = (Type)tu_of(c_ast, {});
             d->v.c_ast = arg->v.c_ast;
@@ -633,7 +640,7 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
           case builtin_uqot: {
             assertMessage(call.len == 1);
             let arg = &env_getVal(b->env, call.off)->value;
-            assertMessage(tu_is(c_ast, arg->t));
+            assert_tu_is(c_ast, arg->t);
 
             b->env = P$(
                 env_findOwner(b->env, call.d),
@@ -656,8 +663,8 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
             let params_val = &env_getVal(b->env, call.off)->value;
             let ret_val = &env_getVal(b->env, call.off + 1)->value;
 
-            assertMessage(tu_is(c_ast, params_val->t));
-            assertMessage(tu_is(c_ast, ret_val->t));
+            assert_tu_is(c_ast, params_val->t);
+            assert_tu_is(c_ast, ret_val->t);
 
             ast *params_ast = params_val->v.c_ast;
             ast *ret_ast = ret_val->v.c_ast;
@@ -739,9 +746,59 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
             assertMessage(false, "anyType shouldnt be accesable");
         }
       }),
-      (c_func, cf, TODO()),
-      (r_func, rf, TODO()),
-      (c_type, _, TODO()),
+      (r_func, rf, {
+        u32 nparams = mList_len(rf) - 1;
+        assertMessage(call.len == nparams, "call expected %u args, got %u", nparams, call.len);
+
+        for (u32 i = 0; i < nparams; i++) {
+          let arg = &env_getVal(b->env, call.off + i)->value;
+          Type param_type = mList_arr(rf)[i];
+
+          if (tu_is(c_ast, arg->t) && !tu_is(c_ast, arg->t))
+            *arg = P$(
+                env_findOwner(b->env, call.off + i),
+                hv_handle_evaltype(b, arg->v.c_ast, $.scope, $.idx)
+            );
+          assertMessage(!Type_cmp(arg->t, param_type), "argument %u type mismatch", i);
+        }
+        d->t = mList_arr(rf)[nparams];
+        // no replace
+      }),
+      (c_func, _, {
+        let cf = l->v.c_func;
+        assertMessage(call.len == 1, "block construction takes exactly one block argument");
+        let body_val = &env_getVal(b->env, call.off)->value;
+        assert_tu_is(c_ast, body_val->t);
+        ast *body_ast = body_val->v.c_ast;
+
+        u32 nparams = mList_len(cf) - 1;
+        mList(Type) param_types = mList_init(b->alloc, Type);
+        for (u32 i = 0; i <= nparams; i++)
+          mList_push(param_types, value_asType(*mList_arr(cf)[i].init));
+
+        Type *fn_type = IrBuilder_getType(b, (Type)tu_of(r_func, param_types));
+
+        b->env = P$(
+            env_findOwner(b->env, call.d),
+            env_replace(b, $.scope, $.idx)
+        );
+        defer { b->env = scope_parent(b->env); };
+
+        let saved_fnctx = b->fnctx;
+        b->fnctx = &tu_catch(r_func, *fn_type);
+        defer { b->fnctx = saved_fnctx; };
+
+        for (u32 i = 0; i < nparams; i++)
+          env_bind(b, mList_arr(cf)[i].name, env_addOp(b, ocode_of(oarg, i)));
+
+        emit_ir(b, body_ast, 0);
+        ir_av1(b);
+
+        d->t = *fn_type;
+        *insloc = ocode_of(onone, {});
+      }),
+      // (r_func, rf, TODO()),
+      // (c_type, _, TODO()),
       (r_tag, _, TODO()),
       (r_arr, _, TODO()),
       (r_ptr, _, TODO()),
@@ -750,6 +807,7 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
       (default, assertMessage(false, "attempted to call a non-callable type"))
   );
 }
+#undef assert_tu_is
 void ir_av1(IrBuilder *b) {
   let code = b->env->code;
   let allocator = IrBuilder_allocator(b);
@@ -757,6 +815,7 @@ void ir_av1(IrBuilder *b) {
   try_again:
     tu_match_void(
         *ip,
+        (onone, _, ),
         (oint, str, env_pushVal(allocator, b->env, convertInt(b, str), ip - code)),
         (ostr, str, env_pushVal(allocator, b->env, convertString(b, str), ip - code)),
         (obin, bin, env_pushVal(allocator, b->env, (typed_value){tu_of(builtin, bin)}, ip - code)),
@@ -928,6 +987,11 @@ typePrinter(scope) {
     tu_match_void(
         o,
         (onone, _, ),
+        (oarg, idx, {
+          PUTS("oarg ");
+          USETYPEPRINTER(u32, idx);
+          PUTS("\n");
+        }),
         (oint, str, {
           PUTS("oint '");
           USENAMEDPRINTER("slice(c8)", str);
@@ -1033,7 +1097,7 @@ typePrinter(scope) {
   foreach (let v, span(in.values, msList_len(in.values)))
     USETYPEPRINTER(typed_value, v->value), PUTS("\n");
   PUTS("named{\n" P_INDENT_IN);
-  foreach (let kv, msxmap_iter(in.locals)) {
+  foreach (let kv, moxmap_iter(in.locals, fptr, moxmap_vt(in.locals))) {
     USENAMEDPRINTER("slice(c8)", kv.key);
     PUTS(":");
 

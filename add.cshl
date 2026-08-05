@@ -3,5 +3,4 @@ b := 2;
 c := a + b;
 
 f :: fn((i : @int(8)),@int(8))
- ;
- // return 5;
+   return 5;

@@ -45,7 +45,7 @@ cmd_main(
 ) {
   var_ allocator = debugAllocator(.allocator = stdAlloc, .onalloc = on_allocation);
   defer {
-    println("stats : {dbga_stats}", debugAllocator_stats(allocator));
+    println("(log) stats : {dbga_stats}", debugAllocator_stats(allocator));
     debugAllocatorDeInit(allocator);
   };
 
@@ -70,9 +70,11 @@ cmd_main(
   filectx = &buffer;
   if (echo_file)
     println("file : \n{slice(c8)}\n", buffer);
+  println("(log) after fread : {dbga_stats}", debugAllocator_stats(allocator));
 
   var_ tokens = tokenize(allocator, buffer);
   defer { msList_deInit(allocator, tokens); };
+  println("(log) after tokenization : {dbga_stats}", debugAllocator_stats(allocator));
   if (log_tokens)
     foreach (var_ token, vla(*msList_vla(tokens)))
       println(" {Token} ", token);
@@ -81,8 +83,8 @@ cmd_main(
   defer { arena_cleanup(astArena); };
 
   var_ ast = parseBBlock(astArena, buffer.ptr, (slice(Token)){.len = msList_len(tokens), tokens});
+  println("(log) after ast : {dbga_stats}", debugAllocator_stats(allocator));
 
-  // Initialize the depth printer state for structured outputs
   DepthState dstate = {
       .inner_put = fileprint,
       .inner_arb = stdout,
@@ -98,8 +100,10 @@ cmd_main(
     var_ builder = IrBuilder_init(allocator);
     defer { IrBuilder_deinit(&builder); };
     emit_ir(&builder, ast, 0);
+    println("(log) after first ir : {dbga_stats}", debugAllocator_stats(allocator));
     print_wfO(depth_output, &dstate, "{IrBuilder}\n", builder);
     ir_av1(&builder);
+    println("(log) after second ir : {dbga_stats}", debugAllocator_stats(allocator));
     print_wfO(depth_output, &dstate, "{IrBuilder}\n", builder);
   }
 
