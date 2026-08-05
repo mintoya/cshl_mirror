@@ -30,9 +30,9 @@ __attribute__((noreturn)) void(error_at)(u8 *location, fptr message) {
   exit(1);
 }
 
-// void on_allocation(allocationType *t) {
-//   println("allocation from {} line {} , {}->{}", t->trace.fn, t->trace.ln, t->insize, t->outsize);
-// }
+void on_allocation(void *, usize in, usize out, void *, const char *file, uint line) {
+  // println("(alloc) {} -> {},{cstr}:{}", in, out, file, line);
+}
 cmd_main(
     int nargs,
     char **args,
@@ -43,12 +43,10 @@ cmd_main(
     (bool, echo_file /* */, ("--log-file") /*  */, "echo read file" /*      */, false),
     (bool, log_tokens /**/, ("--log-tokens") /**/, "emmit list of tokens" /**/, false),
 ) {
-  var_ allocator = arena_new_ext(stdAlloc, 1024);
+  var_ allocator = debugAllocator(.allocator = stdAlloc, .onalloc = on_allocation);
   defer {
-    println("blocks    : {}", arena_countBlocks(allocator));
-    println("footprint : {}", arena_footprint(allocator));
-    println("total mem : {}", arena_totalMem(allocator));
-    arena_cleanup(allocator);
+    println("stats : {dbga_stats}", debugAllocator_stats(allocator));
+    debugAllocatorDeInit(allocator);
   };
 
   char *progname = nargs ? *args : "cshl";

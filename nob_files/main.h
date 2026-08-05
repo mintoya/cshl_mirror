@@ -22,7 +22,7 @@
   #define INPUT_FLAGS "",
 #endif
 
-#define COMMON_CFLAGS INPUT_FLAGS "-std=c23", "-fdefer-ts", "-I", "deps", "-fno-sanitize=vla-bound"
+#define COMMON_CFLAGS INPUT_FLAGS "-std=c23", "-fdefer-ts", "-I", "deps", "-fno-sanitize=vla-bound" , "-fsanitize=address"
 
 //{timespec
 #include <time.h>

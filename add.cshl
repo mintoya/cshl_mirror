@@ -2,4 +2,6 @@ a := 1;
 b := 2;
 c := a + b;
 
-f :: fn((@int(8)),@int(8)){};
+f :: fn((i : @int(8)),@int(8))
+ ;
+ // return 5;

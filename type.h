@@ -470,7 +470,7 @@ typePrinter(Type) {
 typePrinter(typed_value) {
   PUTS("{t:");
   USETYPEPRINTER(Type, in.t);
-  PUTS(",\tv:");
+  PUTS(",v:");
   tu_match_void(
       in.t,
       (c_int, _, USENAMEDPRINTER("bigint", in.v.c_int);),
