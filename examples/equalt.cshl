@@ -4,5 +4,5 @@ b:="l";
 two::fn((t:@type(),b:t),@type())
   return [2]t;
 
-at :two(@typeof(a),a);
-bt :two(@typeof(b),b);
+// at :two(@typeof(a),a);
+// bt :two(@typeof(b),b);

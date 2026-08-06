@@ -71,7 +71,7 @@ struct scope {
   u32 next_reg;
   msList(opcode) code;
   scope *parent;
-  msList(struct { typed_value value ; u32 cidx; }) values;
+  msList(struct { typed_value value ; u32 cidx; } *) values;
   moxmap(fptr, struct { u32 idx:31; bool isconst:1; }) locals;
 };
 typedef struct {
@@ -177,13 +177,12 @@ u32 env_lookup(IrBuilder *b, fptr id) {
       if (reg_ptr->idx >= s->start_reg) return reg_ptr->idx;
   error_at(id.ptr, snprint(stdAlloc, "unknown variable {slice(c8)}", id));
 }
-i8 fptr_cmp_hash(const void *a, const void *b) { return fptr_cmp(*(fptr *)a, *(fptr *)b); }
 u32 env_push(IrBuilder *b) {
   scope *new_scope = avalue(
       b->alloc,
       ((scope){
           .parent = b->env,
-          .locals = moxmap_init(b->alloc, fptr, moxmap_vt((itypeof(scope, locals))0), fptr_cmp_hash),
+          .locals = moxmap_init(b->alloc, fptr, moxmap_vt((itypeof(scope, locals))0), cmpfptr),
           .values = msList_init(b->alloc, ptrstype(new_scope->values)),
           .code = msList_init(b->alloc, opcode),
       })
@@ -403,12 +402,12 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
 
   );
 }
-ptrstype(itypeof(scope, values)) * env_getVal(scope *sp, u32 idx) {
+ptrstype(itypeof(scope, values)) env_getVal(scope *sp, u32 idx) {
   assertMessage(idx - 1 < sp->next_reg, "ascessing value that doesnt exist yet");
   if (idx > sp->start_reg) {
     let ridx = idx - sp->start_reg - 1;
     assertMessage(ridx < msList_len(sp->values));
-    return &sp->values[ridx];
+    return sp->values[ridx];
   } else {
     let parent = scope_parent(sp);
     assertMessage(parent);
@@ -422,7 +421,7 @@ scope *env_replace(IrBuilder *b, scope *target, u32 cidx) {
       b->alloc,
       ((scope){
           .parent = target,
-          .locals = moxmap_init(b->alloc, fptr, moxmap_vt((itypeof(scope, locals))0), fptr_cmp_hash),
+          .locals = moxmap_init(b->alloc, fptr, moxmap_vt((itypeof(scope, locals))0), cmpfptr),
           .values = msList_init(b->alloc, ptrstype(new_scope->values)),
           .code = msList_init(b->alloc, opcode),
       })
@@ -445,7 +444,7 @@ struct env_findOwner_result env_findOwner(scope *sp, u32 idx) {
     let ridx = idx - sp->start_reg - 1;
     assertMessage(ridx < msList_len(sp->values));
     return (typeof(env_findOwner(sp, idx))){
-        sp->values[ridx].cidx,
+        sp->values[ridx]->cidx,
         sp,
     };
   }
@@ -464,7 +463,7 @@ typed_value hv_handle_evaltype(IrBuilder *b, ast *target_ast, scope *target, u32
 
   return env_getVal(b->env, reg)->value;
 }
-void env_pushVal(allocfn allocator, scope *sp, typed_value v, u32 cidx) { msList_push(allocator, sp->values, {v, cidx}); }
+void env_pushVal(allocfn allocator, scope *sp, typed_value v, u32 cidx) { msList_push(allocator, sp->values, avalue(allocator, ((typeof(**sp->values)){v, cidx}))); }
 #define assert_tu_is(tag, val)             \
   assertMessage(                           \
       tu_is(tag, val),                     \
@@ -473,6 +472,10 @@ void env_pushVal(allocfn allocator, scope *sp, typed_value v, u32 cidx) { msList
   )
 void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
   let l = &env_getVal(b->env, call.l)->value;
+  print("call {Type} (", l->t); // )
+  foreach (let i, span(call.off, call.len))
+    print("{Type},", env_getVal(b->env, i)->value.t);
+  /*(*/ println(")");
   let d = &env_getVal(b->env, call.d)->value;
   tu_match_void(
       l->t,
@@ -660,13 +663,13 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
             ir_av1(b);
             typed_value yield_val = (typed_value){tu_of(r_void, {})};
             if_decl (let len, msList_len(b->env->values))
-              yield_val = b->env->values[len - 1].value;
+              yield_val = b->env->values[len - 1]->value;
             *d = yield_val;
 
             *insloc = ocode_of(onone, {});
           } break;
           case builtin_fn: {
-            assertMessage(call.len == 2, "fn expects 2 arguments: (params) and return type");
+            assertMessage(call.len == 2, "fn expects 2 arguments");
             let params_val = &env_getVal(b->env, call.off)->value;
             let ret_val = &env_getVal(b->env, call.off + 1)->value;
 
@@ -689,22 +692,27 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
             }) pending_params = mList_init(b->alloc, mList_iType(pending_params));
             defer { mList_deinit(pending_params); };
 
-            if_tu_is (let pblock, astPBlock, (*params_ast)) {
-              foreach (ast *p_ast, vlap(sentList_vla(pblock.stmts))) {
-                let p_name = nullFptr;
-                let p_type_ast = p_ast;
+            let pblock = tu_catch(astPBlock, *params_ast);
+            foreach (ast *p_ast, vlap(sentList_vla(pblock.stmts))) {
+              // println("processing function arg \n{ast}", p_ast);
+              let p_name = nullFptr;
+              let p_type_ast = p_ast;
 
-                if_tu_is (let decl, astDecl, (*p_ast)) {
-                  if (decl.name) p_name = tu_catch(astId, *decl.name);
-                  if (decl.type) p_type_ast = decl.type;
-                  else assertMessage(false, "fn parameter missing type");
-                }
-                mList_push(pending_params, {p_name, emit_ir(b, p_type_ast, 0)});
+              if_tu_is (let decl, astDecl, (*p_ast)) {
+                if (decl.name) p_name = tu_catch(astId, *decl.name);
+                if (decl.type) p_type_ast = decl.type;
+                else assertMessage(false); // TODO: generate a type
               }
+              // println("to \n{ast}", p_type_ast);
+              let reg = emit_ir(b, p_type_ast, 0);
+              // if (!fptr_isNull(p_name)) env_bind(b, p_name, reg);
+              mList_push(pending_params, {p_name, reg});
             }
 
             u32 ret_reg = emit_ir(b, ret_ast, 0);
             ir_av1(b);
+            // foreach (let pp, mList_iter(pending_params))
+            //   println("binding {slice(c8)} to {} {Type}", pp.name, pp.reg, env_getVal(b->env, pp.reg)->value.t);
 
             // clang-format off
             func_value fval = mList_map(b->alloc, pending_params , (mList_iType(fval)){
@@ -780,7 +788,12 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
       (r_ptr, _, TODO()),
       (r_bitfield, _, TODO()),
       (r_struct, _, TODO()),
-      (default, assertMessage(false, "attempted to call a %s"), snprint(stdAlloc, "{Type}", l->t).ptr)
+      (default, {
+        let t = l->t;
+        println("{}", ((fptr){sizeof(t), (u8 *)&t}));
+        println("{Type}", t);
+        assertMessage(false);
+      }),
   );
 }
 #undef assert_tu_is
@@ -856,7 +869,7 @@ void ir_av1(IrBuilder *b) {
           b->env = old_env;
 
           typed_value yield_val = (typed_value){tu_of(r_void, {})};
-          if_decl (let len, msList_len(sco->values)) yield_val.t = sco->values[len - 1].value.t;
+          if_decl (let len, msList_len(sco->values)) yield_val.t = sco->values[len - 1]->value.t;
           env_pushVal(allocator, b->env, yield_val, ip - code);
         }),
         (oselem, sel, {
@@ -1079,7 +1092,7 @@ typePrinter(scope) {
   }
   PUTS("values{\n" P_INDENT_IN);
   foreach (let v, span(in.values, msList_len(in.values)))
-    USETYPEPRINTER(typed_value, v->value), PUTS("\n");
+    USETYPEPRINTER(typed_value, (*v)->value), PUTS("\n");
   PUTS("named{\n" P_INDENT_IN);
   foreach (let kv, moxmap_iter(in.locals, fptr, moxmap_vt(in.locals))) {
     USENAMEDPRINTER("slice(c8)", kv.key);
@@ -1088,7 +1101,7 @@ typePrinter(scope) {
     if (kv.val->idx > in.start_reg) {
       u32 ridx = kv.val->idx - in.start_reg - 1;
       if (ridx < msList_len(in.values))
-        USETYPEPRINTER(u32, kv.val->idx), PUTS(":"), USETYPEPRINTER(typed_value, in.values[ridx].value);
+        USETYPEPRINTER(u32, kv.val->idx), PUTS(":"), USETYPEPRINTER(typed_value, in.values[ridx]->value);
       else PUTS("<unevaluated?>");
 
     } else
