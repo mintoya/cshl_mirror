@@ -34,7 +34,7 @@ tu_def(
     // create value of tpye l
     // l is nullable
     // creates
-    (onew, /*  */ struct { u32 l; }),
+    (onew, /*  */ u32),
     // load element named  name in l into new reg
     // creates
     (olelem, struct {u32 l ; fptr name; }),
@@ -42,15 +42,17 @@ tu_def(
     // creates
     (oarg, u32),
     // set item in l to const
-    (oconst, /**/ struct { u32 l; }),
+    (oconst, /**/ u32),
     // jump to d if l
     (ojif, /*  */ struct { u32 l, d; }),
+    (ojmp, /*  */ u32),
+    (obreak, nothing_t),
     // call l with args starting at offset off and len len and store in d
     (ocall, /* */ struct { u32 l, off, len, d; }),
     // apply o to l and r and store in d
     (oop, /*   */ struct { u32 l, r, d, o; }),
     // return thing stored in l
-    (oret, /*  */ struct { u32 l; }),
+    (oret, /*  */ u32),
     // move thing in l to r
     (omov, /*   */ struct { u32 l, r; }),
     // copy thing pointed to by in l to thing pointed to by r
@@ -305,12 +307,12 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
          u32 val_reg = 0;
 
          if (decl.value || decl.type) {
-           val_reg = env_addOp(b, ocode_of(onew, {decl.type ? emit_ir(b, decl.type, 0) : 0}));
+           val_reg = env_addOp(b, ocode_of(onew, decl.type ? emit_ir(b, decl.type, 0) : 0));
            if (decl.value)
              env_addOp(b, ocode_of(omov, {.l = env_addOp(b, ocode_of(oast, decl.value)), .r = val_reg}));
-         } else val_reg = env_addOp(b, ocode_of(onew, {.l = 0}));
+         } else val_reg = env_addOp(b, ocode_of(onew, 0));
 
-         if (decl.is_const) env_addOp(b, ocode_of(oconst, {val_reg}));
+         if (decl.is_const) env_addOp(b, ocode_of(oconst, val_reg));
          if (decl.name) env_bind(b, tu_catch(astId, *decl.name), val_reg);
 
          val_reg;
@@ -471,11 +473,6 @@ void env_pushVal(allocfn allocator, scope *sp, typed_value v, u32 cidx) { msList
 void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
   let l = &env_getVal(b->env, call.l)->value;
   let d = &env_getVal(b->env, call.d)->value;
-  enum general_JMP {
-    ELSE_END = 0xEEEEEEEE,
-    LOOP_EXIT = 0xFFFFFFFF,
-    LOOP_START = 0xFFFFFFFE,
-  };
   tu_match_void(
       l->t,
       (builtin, bin, {
@@ -490,30 +487,41 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
 
             ast *cond_ast = cond_val->v.c_ast;
             ast *then_ast = then_val->v.c_ast;
-            ast *else_ast = nullptr;
+            ast *else_ast =
+                (call.len > 2)
+                    ? P$(
+                          &env_getVal(b->env, call.off + 2)->value,
+                          (assert_tu_is(c_ast, $->t), $->v.c_ast)
+                      )
+                    : nullptr;
 
-            if (call.len > 2) {
-              let else_val = &env_getVal(b->env, call.off + 2)->value;
-              assert_tu_is(c_ast, else_val->t);
-              else_ast = else_val->v.c_ast;
-            }
-
+            let osc = b->env;
             b->env = P$(
                 env_findOwner(b->env, call.d),
                 env_replace(b, $.scope, $.idx);
             );
-            defer { b->env = scope_parent(b->env); }
+            defer { b->env = osc; }
 
             u32 cond_reg = emit_ir(b, cond_ast, 0);
-            env_addOp(b, ocode_of(ojif, {.l = cond_reg, .d = ELSE_END}));
+            u32 jif_idx = msList_len(b->env->code);
+            env_addOp(b, ocode_of(ojif, {.l = cond_reg, .d = 0}));
             emit_ir(b, then_ast, 0);
-            if (else_ast) emit_ir(b, else_ast, 0);
+
+            if (else_ast) {
+              u32 jmp_idx = msList_len(b->env->code);
+              env_addOp(b, ocode_of(ojmp, 0));
+
+              b->env->code[jif_idx] = ocode_of(ojif, {.l = cond_reg, .d = msList_len(b->env->code)});
+
+              emit_ir(b, else_ast, 0);
+
+              b->env->code[jmp_idx] = ocode_of(ojmp, msList_len(b->env->code));
+            } else b->env->code[jif_idx] = ocode_of(ojif, {.l = cond_reg, .d = msList_len(b->env->code)});
 
             ir_av1(b);
 
             typed_value yield_val = (typed_value){tu_of(r_void, {})};
             *d = yield_val;
-
             *insloc = ocode_of(onone, {});
           } break;
           case builtin_while: {
@@ -527,18 +535,24 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
             ast *cond_ast = cond_val->v.c_ast;
             ast *body_ast = body_val->v.c_ast;
 
+            let osc = b->env;
             b->env = P$(
                 env_findOwner(b->env, call.d),
                 env_replace(b, $.scope, $.idx);
             );
-            defer { b->env = scope_parent(b->env); }
+            defer { b->env = osc; }
 
+            u32 loop_start_idx = msList_len(b->env->code);
             u32 cond_reg = emit_ir(b, cond_ast, 0);
-            env_addOp(b, ocode_of(ojif, {.l = cond_reg, .d = LOOP_EXIT}));
+
+            u32 jif_exit_idx = msList_len(b->env->code);
+            env_addOp(b, ocode_of(ojif, {.l = cond_reg, .d = 0}));
+
             emit_ir(b, body_ast, 0);
 
-            u32 true_reg = env_addOp(b, ocode_of(oint, fp("1")));
-            env_addOp(b, ocode_of(ojif, {.l = true_reg, .d = LOOP_START}));
+            env_addOp(b, ocode_of(ojmp, loop_start_idx));
+
+            b->env->code[jif_exit_idx] = ocode_of(ojif, {.l = cond_reg, .d = msList_len(b->env->code)});
 
             ir_av1(b);
             *d = (typed_value){tu_of(r_void, {})};
@@ -546,19 +560,9 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
             *insloc = ocode_of(onone, {});
           } break;
           case builtin_break: {
-            b->env = P$(
-                env_findOwner(b->env, call.d),
-                env_replace(b, $.scope, $.idx);
-            );
-            defer { b->env = scope_parent(b->env); };
-
-            u32 true_reg = env_addOp(b, ocode_of(oint, fp("1")));
-            env_addOp(b, ocode_of(ojif, {.l = true_reg, .d = LOOP_EXIT}));
-
-            ir_av1(b);
             *d = (typed_value){tu_of(r_void, {})};
 
-            *insloc = ocode_of(onone, {});
+            *insloc = ocode_of(obreak, {});
           } break;
           case builtin_return: {
             assertMessage(call.len == 1);
@@ -566,14 +570,15 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
             assertMessage(tu_is(c_ast, ret_val->t), "unexpected %s", snprint(stdAlloc, "{Type}", ret_val->t).ptr);
             ast *ret_ast = ret_val->v.c_ast;
 
+            let osc = b->env;
             b->env = P$(
                 env_findOwner(b->env, call.d),
                 env_replace(b, $.scope, $.idx);
             );
-            defer { b->env = scope_parent(b->env); };
+            defer { b->env = osc; };
 
             u32 expr_reg = emit_ir(b, ret_ast, 0);
-            env_addOp(b, ocode_of(oret, {.l = expr_reg}));
+            env_addOp(b, ocode_of(oret, expr_reg));
 
             ir_av1(b);
             *d = (typed_value){tu_of(r_void, {})};
@@ -642,11 +647,12 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
             let arg = &env_getVal(b->env, call.off)->value;
             assert_tu_is(c_ast, arg->t);
 
+            let osc = b->env;
             b->env = P$(
                 env_findOwner(b->env, call.d),
-                env_replace(b, $.scope, $.idx)
+                env_replace(b, $.scope, $.idx);
             );
-            defer { b->env = scope_parent(b->env); };
+            defer { b->env = osc; };
 
             emit_ir(b, arg->v.c_ast, 0);
 
@@ -669,11 +675,12 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
             ast *params_ast = params_val->v.c_ast;
             ast *ret_ast = ret_val->v.c_ast;
 
+            let osc = b->env;
             b->env = P$(
                 env_findOwner(b->env, call.d),
-                env_replace(b, $.scope, $.idx)
+                env_replace(b, $.scope, $.idx);
             );
-            defer { b->env = scope_parent(b->env); };
+            defer { b->env = osc; };
 
             typedef struct {
               fptr name;
@@ -754,12 +761,12 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
           let arg = &env_getVal(b->env, call.off + i)->value;
           Type param_type = mList_arr(rf)[i];
 
-          if (tu_is(c_ast, arg->t) && !tu_is(c_ast, arg->t))
+          if (tu_is(c_ast, arg->t) && !tu_is(c_ast, param_type))
             *arg = P$(
                 env_findOwner(b->env, call.off + i),
                 hv_handle_evaltype(b, arg->v.c_ast, $.scope, $.idx)
             );
-          assertMessage(!Type_cmp(arg->t, param_type), "argument %u type mismatch", i);
+          assertMessage(!Type_cmp(arg->t, param_type), "argument %u type mismatch , %s", i, snprint(stdAlloc, "{Type} != {Type}", arg->t, param_type).ptr);
         }
         d->t = mList_arr(rf)[nparams];
         // no replace
@@ -778,11 +785,12 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
 
         Type *fn_type = IrBuilder_getType(b, (Type)tu_of(r_func, param_types));
 
+        let osc = b->env;
         b->env = P$(
             env_findOwner(b->env, call.d),
-            env_replace(b, $.scope, $.idx)
+            env_replace(b, $.scope, $.idx);
         );
-        defer { b->env = scope_parent(b->env); };
+        defer { b->env = osc; };
 
         let saved_fnctx = b->fnctx;
         b->fnctx = &tu_catch(r_func, *fn_type);
@@ -797,8 +805,6 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
         d->t = *fn_type;
         *insloc = ocode_of(onone, {});
       }),
-      // (r_func, rf, TODO()),
-      // (c_type, _, TODO()),
       (r_tag, _, TODO()),
       (r_arr, _, TODO()),
       (r_ptr, _, TODO()),
@@ -815,7 +821,6 @@ void ir_av1(IrBuilder *b) {
   try_again:
     tu_match_void(
         *ip,
-        (onone, _, ),
         (oint, str, env_pushVal(allocator, b->env, convertInt(b, str), ip - code)),
         (ostr, str, env_pushVal(allocator, b->env, convertString(b, str), ip - code)),
         (obin, bin, env_pushVal(allocator, b->env, (typed_value){tu_of(builtin, bin)}, ip - code)),
@@ -832,8 +837,8 @@ void ir_av1(IrBuilder *b) {
           env_pushVal(allocator, b->env, (typed_value){mList_arr(fnc)[oag]}, ip - code);
         }),
         (onew, nit, {
-          if_decl (let x, nit.l)
-            env_pushVal(allocator, b->env, (typed_value){value_asType(env_getVal(b->env, nit.l)->value), {}}, ip - code);
+          if_decl (let x, nit)
+            env_pushVal(allocator, b->env, (typed_value){value_asType(env_getVal(b->env, nit)->value), {}}, ip - code);
           else env_pushVal(allocator, b->env, (typed_value){tu_of(builtin, builtin_anyType)}, ip - code);
         }),
         (omov, mov, {
@@ -960,9 +965,12 @@ void ir_av1(IrBuilder *b) {
             d->t = r->t;
           } else assertMessage(false, "unhandled or unknown operator %u in oop", opp.o);
         }),
-        (oconst, _, ),
+        (oconst, con, ),
+        (obreak, _, ),
+        (onone, _, ),
+        (oret, _, ),
         (ojif, _, ),
-        (oret, _, )
+        (ojmp, _, ),
     );
   }
 }
@@ -987,6 +995,7 @@ typePrinter(scope) {
     tu_match_void(
         o,
         (onone, _, ),
+        (obreak, bre, PUTS("obreak\n")),
         (oarg, idx, {
           PUTS("oarg ");
           USETYPEPRINTER(u32, idx);
@@ -1019,7 +1028,7 @@ typePrinter(scope) {
         }),
         (onew, val, {
           PUTS("onew l:");
-          USETYPEPRINTER(u32, val.l);
+          USETYPEPRINTER(u32, val);
           PUTS("\n");
         }),
         (olelem, val, {
@@ -1031,7 +1040,12 @@ typePrinter(scope) {
         }),
         (oconst, val, {
           PUTS("oconst l:");
-          USETYPEPRINTER(u32, val.l);
+          USETYPEPRINTER(u32, val);
+          PUTS("\n");
+        }),
+        (ojmp, val, {
+          PUTS("ojmp ");
+          USETYPEPRINTER(u32, val);
           PUTS("\n");
         }),
         (ojif, val, {
@@ -1065,7 +1079,7 @@ typePrinter(scope) {
         }),
         (oret, val, {
           PUTS("oret l:");
-          USETYPEPRINTER(u32, val.l);
+          USETYPEPRINTER(u32, val);
           PUTS("\n");
         }),
         (omov, val, {
@@ -1104,7 +1118,7 @@ typePrinter(scope) {
     if (kv.val->idx > in.start_reg) {
       u32 ridx = kv.val->idx - in.start_reg - 1;
       if (ridx < msList_len(in.values))
-        USETYPEPRINTER(typed_value, in.values[ridx].value);
+        USETYPEPRINTER(u32, kv.val->idx), PUTS(":"), USETYPEPRINTER(typed_value, in.values[ridx].value);
       else PUTS("<unevaluated?>");
 
     } else

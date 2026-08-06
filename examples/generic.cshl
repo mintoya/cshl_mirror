@@ -1,0 +1,5 @@
+a:= 1;
+c::fn((arg : @typeof(a)) ,@type()) 
+  return @typeof(arg);
+b:= c a;
+// d:c a:0;

@@ -3,7 +3,7 @@
 #endif
 #if defined(_WIN32)
   #undef CC
-  #define CC "./nob_files/zcc.exe"
+  #define CC "clang"
 #endif
 
 #if defined(_WIN32)
@@ -13,7 +13,7 @@
 #endif
 
 #if !defined INPUT_FLAGS
-  #define INPUT_FLAGS "-fsanitize=address",
+  #define INPUT_FLAGS  ""
 #endif
 
 #if __has_include("deps/nob.h/nob.h")

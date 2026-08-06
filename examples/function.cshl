@@ -1,0 +1,6 @@
+a:= 1;
+c::fn((arg : @typeof(a)) , @typeof(a)) 
+  return a * 2;
+b:= c a;
+b = c b;
+b = c(b);

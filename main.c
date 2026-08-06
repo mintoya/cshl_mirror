@@ -6,6 +6,7 @@
 #include "operations.h"
 #include "tok1.h"
 #include "tok2.h"
+#include "wheels/fptr.h"
 #include <wheels/allocators/debugallocator.h>
 #include <wheels/mytypes.h>
 
