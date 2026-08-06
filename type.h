@@ -475,7 +475,7 @@ typePrinter(typed_value) {
       in.t,
       (c_int, _, USENAMEDPRINTER("bigint", in.v.c_int);),
       (c_ast, _, USENAMEDPRINTER("ast", in.v.c_ast);),
-      (c_type, _, USETYPEPRINTER(Type, *in.v.c_type);),
+      (c_type, _, in.v.c_type ? USETYPEPRINTER(Type, *in.v.c_type) : PUTS("??");),
       (c_func, _, PUTS("fn");),
       (default, {
         if (in.v.value)

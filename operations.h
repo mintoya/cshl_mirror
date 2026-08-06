@@ -236,9 +236,10 @@ typed_value Type_asValue(Type *t) {
   return (typed_value){tu_of(c_type, {}), {.c_type = t}};
 }
 Type value_asType(typed_value t) {
-  if (tu_is(c_type, t.t))
+  if (tu_is(c_type, t.t)) {
+    assertMessage(t.v.c_type, "type is unknown");
     return t.v.c_type[0];
-  else assertMessage(false, "thing is not a type");
+  } else assertMessage(false, "thing is not a type");
 }
 Type typeof_Value(typed_value t) { return t.t; }
 typed_value convertInt(IrBuilder *b, fptr in) {
@@ -631,7 +632,7 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
             assertMessage(call.len == 0);
             d->t = (Type)tu_of(c_type, {});
             d->v.c_type = IrBuilder_getType(b, (Type)tu_of(c_ast, {}));
-            *insloc = ocode_of(omov, {.l = call.d, .r = call.d});
+            *insloc = ocode_of(onone, {});
           } break;
           case builtin_qot: {
             assertMessage(call.len == 1);
@@ -682,69 +683,38 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
             );
             defer { b->env = osc; };
 
-            typedef struct {
+            mList(struct {
               fptr name;
               u32 reg;
-            } pending_param;
-            mList(pending_param) pending_params = mList_init(b->alloc, pending_param);
+            }) pending_params = mList_init(b->alloc, mList_iType(pending_params));
+            defer { mList_deinit(pending_params); };
 
-            if (tu_is(astPBlock, *params_ast)) {
-              let pblock = tu_catch(astPBlock, *params_ast);
-              var_ lp = sentList_vla(pblock.stmts);
+            if_tu_is (let pblock, astPBlock, (*params_ast)) {
+              foreach (ast *p_ast, vlap(sentList_vla(pblock.stmts))) {
+                let p_name = nullFptr;
+                let p_type_ast = p_ast;
 
-              foreach (ast *p_ast, vlap(lp)) {
-                fptr p_name = fp("");
-                ast *p_type_ast = p_ast;
-
-                if (tu_is(astDecl, *p_ast)) {
-                  let decl = tu_catch(astDecl, *p_ast);
+                if_tu_is (let decl, astDecl, (*p_ast)) {
                   if (decl.name) p_name = tu_catch(astId, *decl.name);
                   if (decl.type) p_type_ast = decl.type;
                   else assertMessage(false, "fn parameter missing type");
-                } else if (!tu_is(astId, *p_ast) && !tu_is(astOp, *p_ast)) {
-                  assertMessage(false, "fn parameter must be a declaration or type identifier");
                 }
-
                 mList_push(pending_params, {p_name, emit_ir(b, p_type_ast, 0)});
               }
-            } else if (!tu_is(astEmptyStatement, *params_ast)) {
-              fptr p_name = fp("");
-              ast *p_type_ast = params_ast;
-
-              if (tu_is(astDecl, *params_ast)) {
-                let decl = tu_catch(astDecl, *params_ast);
-                if (decl.name) p_name = tu_catch(astId, *decl.name);
-                if (decl.type) p_type_ast = decl.type;
-                else assertMessage(false, "fn parameter missing type");
-              }
-
-              mList_push(pending_params, ((pending_param){p_name, emit_ir(b, p_type_ast, 0)}));
             }
 
             u32 ret_reg = emit_ir(b, ret_ast, 0);
             ir_av1(b);
 
-            func_value fval = mList_init(b->alloc, mList_iType(fval));
-            for (u32 i = 0; i < mList_len(pending_params); i++) {
-              mList_push(
-                  fval,
-                  {
-                      .name = mList_arr(pending_params)[i].name,
-                      .init = avalue(
-                          b->alloc,
-                          env_getVal(b->env, mList_arr(pending_params)[i].reg)->value
-                      ),
-                  }
-              );
-            }
-            mList_deinit(pending_params);
-
-            mList_push(
-                fval, {
-                          .name = fp(""),
-                          .init = avalue(b->alloc, env_getVal(b->env, ret_reg)->value),
-                      }
-            );
+            // clang-format off
+            func_value fval = mList_map(b->alloc, pending_params , (mList_iType(fval)){
+                $.name ,avalue(b->alloc, env_getVal(b->env,$.reg)->value)
+            });
+            mList_push( fval, { 
+                nullFptr,
+                avalue(b->alloc, env_getVal(b->env, ret_reg)->value),
+            });
+            // clang-format on
 
             *d = (typeof(*d)){tu_of(c_func, {}), fval};
             *insloc = ocode_of(onone, {});
@@ -810,7 +780,7 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
       (r_ptr, _, TODO()),
       (r_bitfield, _, TODO()),
       (r_struct, _, TODO()),
-      (default, assertMessage(false, "attempted to call a non-callable type"))
+      (default, assertMessage(false, "attempted to call a %s"), snprint(stdAlloc, "{Type}", l->t).ptr)
   );
 }
 #undef assert_tu_is
