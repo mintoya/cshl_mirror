@@ -1,5 +1,5 @@
 a:=1;
-b:=1;
+b:@typeof(a)=1;
 c:=a+b;
 d:=c*a+b;
 e:=c*a+(b);

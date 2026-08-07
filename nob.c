@@ -13,7 +13,7 @@
 #endif
 
 #if !defined INPUT_FLAGS
-  #define INPUT_FLAGS  ""
+  #define INPUT_FLAGS  "-finstrument-functions"
 #endif
 
 #if __has_include("deps/nob.h/nob.h")

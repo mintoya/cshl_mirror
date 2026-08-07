@@ -5,6 +5,7 @@
 #include "wheels/fptr.h"
 #include "wheels/mytypes.h"
 #include "wheels/print/print_pre.h"
+#include <stdcountof.h>
 #include <wheels/allocators/fbaAllocator.h>
 #include <wheels/bigint.h>
 #include <wheels/macros.h>
@@ -19,10 +20,10 @@ typedef struct {
   moxmap(slice(Type), scopeptr) fun;
 } gfn;
 tu_def((op_tv, u8), (tv, typed_value), (gfn, gfn));
-#define Op_tv(x) match_type(       \
-    x,                             \
-    (tv, t, (op_tv)tu_of(tv, t)),  \
-    (gfn, t, (op_tv)tu_of(gfn, t)) \
+#define Op_tv(x) match_type(         \
+    x,                               \
+    (tv, _t, (op_tv)tu_of(tv, _t)),  \
+    (gfn, _t, (op_tv)tu_of(gfn, _t)) \
 )
 // 0 in any location is null
 tu_def(
@@ -492,362 +493,352 @@ void env_pushVal(allocfn allocator, scope *sp, op_tv v, u32 cidx) {
       "expected " #tag " but got %s",      \
       snprint(stdAlloc, "{Type}", val).ptr \
   )
+#define iflet_tu if_tu_is
 void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
-  let l = &env_getVal(b->env, call.l)->value;
-  print("call {op_tv} (", l); // )
+  let l_op = env_getVal(b->env, call.l)->value;
+  print("call {op_tv} (", l_op); // removed &
   foreach (let i, span(call.off, call.len))
-    print("{op_tv},", env_getVal(b->env, i)->value);
+    print("{op_tv},", env_getVal(b->env, i)->value); // removed &
   /*(*/ println(")");
-  let d = &env_getVal(b->env, call.d)->value;
-  tu_match_void(
-      l->t,
-      (builtin, bin, {
-        switch (bin) {
-          case builtin_if: {
-            assertMessage(call.len >= 2);
-            let cond_val = &env_getVal(b->env, call.off)->value;
-            let then_val = &env_getVal(b->env, call.off + 1)->value;
 
-            assert_tu_is(c_ast, cond_val->t);
-            assert_tu_is(c_ast, then_val->t);
+  if_tu_is (let it, gfn, l_op) {
+    TODO();
+  } else if_tu_is (let it, tv, l_op) {
+    tu_match_void(
+        it.t,
+        (builtin, bin, {
+          switch (bin) {
+            case builtin_if: {
+              assertMessage(call.len >= 2);
+              let cond_val = tu_catch(tv, env_getVal(b->env, call.off)->value);
+              let then_val = tu_catch(tv, env_getVal(b->env, call.off + 1)->value);
 
-            ast *cond_ast = cond_val->v.c_ast;
-            ast *then_ast = then_val->v.c_ast;
-            ast *else_ast =
-                (call.len > 2)
-                    ? P$(
-                          &env_getVal(b->env, call.off + 2)->value,
-                          (assert_tu_is(c_ast, $->t), $->v.c_ast)
-                      )
-                    : nullptr;
+              assert_tu_is(c_ast, cond_val.t);
+              assert_tu_is(c_ast, then_val.t);
 
-            let osc = b->env;
-            b->env = P$(
-                env_findOwner(b->env, call.d),
-                env_replace(b, $.scope, $.idx);
-            );
-            defer { b->env = osc; }
+              ast *cond_ast = cond_val.v.c_ast;
+              ast *then_ast = then_val.v.c_ast;
+              ast *else_ast =
+                  (call.len > 2)
+                      ? P$(
+                            &env_getVal(b->env, call.off + 2)->value,
+                            (tu_catch(tv, *$)),
+                            (assert_tu_is(c_ast, $.t), $.v.c_ast)
+                        )
+                      : nullptr;
 
-            u32 cond_reg = emit_ir(b, cond_ast, 0);
-            u32 jif_idx = msList_len(b->env->code);
-            env_addOp(b, ocode_of(ojif, {.l = cond_reg, .d = 0}));
-            emit_ir(b, then_ast, 0);
-
-            if (else_ast) {
-              u32 jmp_idx = msList_len(b->env->code);
-              env_addOp(b, ocode_of(ojmp, 0));
-
-              b->env->code[jif_idx] = ocode_of(ojif, {.l = cond_reg, .d = msList_len(b->env->code)});
-
-              emit_ir(b, else_ast, 0);
-
-              b->env->code[jmp_idx] = ocode_of(ojmp, msList_len(b->env->code));
-            } else b->env->code[jif_idx] = ocode_of(ojif, {.l = cond_reg, .d = msList_len(b->env->code)});
-
-            ir_av1(b);
-
-            typed_value yield_val = (typed_value){tu_of(r_void, {})};
-            *d = yield_val;
-            *insloc = ocode_of(onone, {});
-          } break;
-          case builtin_while: {
-            assertMessage(call.len == 2);
-            let cond_val = &env_getVal(b->env, call.off)->value;
-            let body_val = &env_getVal(b->env, call.off + 1)->value;
-
-            assert_tu_is(c_ast, cond_val->t);
-            assert_tu_is(c_ast, body_val->t);
-
-            ast *cond_ast = cond_val->v.c_ast;
-            ast *body_ast = body_val->v.c_ast;
-
-            let osc = b->env;
-            b->env = P$(
-                env_findOwner(b->env, call.d),
-                env_replace(b, $.scope, $.idx);
-            );
-            defer { b->env = osc; }
-
-            u32 loop_start_idx = msList_len(b->env->code);
-            u32 cond_reg = emit_ir(b, cond_ast, 0);
-
-            u32 jif_exit_idx = msList_len(b->env->code);
-            env_addOp(b, ocode_of(ojif, {.l = cond_reg, .d = 0}));
-
-            emit_ir(b, body_ast, 0);
-
-            env_addOp(b, ocode_of(ojmp, loop_start_idx));
-
-            b->env->code[jif_exit_idx] = ocode_of(ojif, {.l = cond_reg, .d = msList_len(b->env->code)});
-
-            ir_av1(b);
-            *d = (typed_value){tu_of(r_void, {})};
-
-            *insloc = ocode_of(onone, {});
-          } break;
-          case builtin_break: {
-            *d = (typed_value){tu_of(r_void, {})};
-
-            *insloc = ocode_of(obreak, {});
-          } break;
-          case builtin_return: {
-            assertMessage(call.len == 1);
-            let ret_val = &env_getVal(b->env, call.off)->value;
-            assertMessage(tu_is(c_ast, ret_val->t), "unexpected %s", snprint(stdAlloc, "{Type}", ret_val->t).ptr);
-            ast *ret_ast = ret_val->v.c_ast;
-
-            let osc = b->env;
-            b->env = P$(
-                env_findOwner(b->env, call.d),
-                env_replace(b, $.scope, $.idx);
-            );
-            defer { b->env = osc; };
-
-            u32 expr_reg = emit_ir(b, ret_ast, 0);
-            env_addOp(b, ocode_of(oret, expr_reg));
-
-            ir_av1(b);
-            *d = (typed_value){tu_of(r_void, {})};
-
-            *insloc = ocode_of(onone, {});
-          } break;
-          case builtin_int:
-          case builtin_uint: {
-            assertMessage(call.len == 1);
-            let arg = &env_getVal(b->env, call.off)->value;
-
-            if (tu_is(c_ast, arg->t))
-              *arg = P$(
-                  env_findOwner(b->env, call.off),
-                  hv_handle_evaltype(b, arg->v.c_ast, $.scope, $.idx);
+              let osc = b->env;
+              b->env = P$(
+                  env_findOwner(b->env, call.d),
+                  env_replace(b, $.scope, $.idx);
               );
+              defer { b->env = osc; }
 
-            assertMessage(tu_is(c_int, arg->t), "bit width must be a constant integer");
-            bigint bint = arg->v.c_int;
-            bigint_trim(&bint);
-            assertMessage(msList_len(bint) == 1, "bit width must fit in one limb");
-            u32 bits = bint[0];
-            assertMessage(bigint_cmp(bint, nullptr), "bit width must be positive");
+              u32 cond_reg = emit_ir(b, cond_ast, 0);
+              u32 jif_idx = msList_len(b->env->code);
+              env_addOp(b, ocode_of(ojif, {.l = cond_reg, .d = 0}));
+              emit_ir(b, then_ast, 0);
 
-            Type created_type = bin == builtin_int ? (Type)tu_of(r_sint, bits) : (Type)tu_of(r_uint, bits);
-            *d = (typeof(*d)){(Type)tu_of(c_type, {}), IrBuilder_getType(b, created_type)};
-            *insloc = ocode_of(onone, {});
-          } break;
-          case builtin_typeof: {
-            assertMessage(call.len == 1);
-            let arg = &env_getVal(b->env, call.off)->value;
+              if (else_ast) {
+                u32 jmp_idx = msList_len(b->env->code);
+                env_addOp(b, ocode_of(ojmp, 0));
 
-            if (tu_is(c_ast, arg->t))
-              *arg = P$(
-                  env_findOwner(b->env, call.off),
-                  hv_handle_evaltype(b, arg->v.c_ast, $.scope, $.idx)
+                b->env->code[jif_idx] = ocode_of(ojif, {.l = cond_reg, .d = msList_len(b->env->code)});
+
+                emit_ir(b, else_ast, 0);
+
+                b->env->code[jmp_idx] = ocode_of(ojmp, msList_len(b->env->code));
+              } else b->env->code[jif_idx] = ocode_of(ojif, {.l = cond_reg, .d = msList_len(b->env->code)});
+
+              ir_av1(b);
+
+              env_getVal(osc, call.d)->value = Op_tv(((typed_value){tu_of(r_void, {})}));
+              *insloc = ocode_of(onone, {});
+            } break;
+            case builtin_while: {
+              assertMessage(call.len == 2);
+              let cond_val = tu_catch(tv, env_getVal(b->env, call.off)->value);
+              let body_val = tu_catch(tv, env_getVal(b->env, call.off + 1)->value);
+
+              assert_tu_is(c_ast, cond_val.t);
+              assert_tu_is(c_ast, body_val.t);
+
+              ast *cond_ast = cond_val.v.c_ast;
+              ast *body_ast = body_val.v.c_ast;
+
+              let osc = b->env;
+              b->env = P$(
+                  env_findOwner(b->env, call.d),
+                  env_replace(b, $.scope, $.idx);
               );
+              defer { b->env = osc; }
 
-            d->t = (Type)tu_of(c_type, {});
-            d->v.c_type = IrBuilder_getType(b, typeof_Value(*arg));
-            *insloc = ocode_of(onone, {});
-          } break;
-          case builtin_type: {
-            assertMessage(call.len == 0);
-            d->t = (Type)tu_of(c_type, {});
-            d->v.c_type = IrBuilder_getType(b, (Type)tu_of(c_type, {}));
-            *insloc = ocode_of(onone, {});
-          } break;
-          case builtin_ast: {
-            assertMessage(call.len == 0);
-            d->t = (Type)tu_of(c_type, {});
-            d->v.c_type = IrBuilder_getType(b, (Type)tu_of(c_ast, {}));
-            *insloc = ocode_of(onone, {});
-          } break;
-          case builtin_qot: {
-            assertMessage(call.len == 1);
-            let arg = &env_getVal(b->env, call.off)->value;
-            assert_tu_is(c_ast, arg->t);
+              u32 loop_start_idx = msList_len(b->env->code);
+              u32 cond_reg = emit_ir(b, cond_ast, 0);
 
-            d->t = (Type)tu_of(c_ast, {});
-            d->v.c_ast = arg->v.c_ast;
-            *insloc = ocode_of(onone, {});
-          } break;
-          case builtin_uqot: {
-            assertMessage(call.len == 1);
-            let arg = &env_getVal(b->env, call.off)->value;
-            assert_tu_is(c_ast, arg->t);
+              u32 jif_exit_idx = msList_len(b->env->code);
+              env_addOp(b, ocode_of(ojif, {.l = cond_reg, .d = 0}));
 
-            let osc = b->env;
-            b->env = P$(
-                env_findOwner(b->env, call.d),
-                env_replace(b, $.scope, $.idx);
-            );
-            defer { b->env = osc; };
+              emit_ir(b, body_ast, 0);
 
-            emit_ir(b, arg->v.c_ast, 0);
+              env_addOp(b, ocode_of(ojmp, loop_start_idx));
 
-            ir_av1(b);
-            typed_value yield_val = (typed_value){tu_of(r_void, {})};
-            if_decl (let len, msList_len(b->env->values))
-              yield_val = b->env->values[len - 1]->value;
-            *d = yield_val;
+              b->env->code[jif_exit_idx] = ocode_of(ojif, {.l = cond_reg, .d = msList_len(b->env->code)});
 
-            *insloc = ocode_of(onone, {});
-          } break;
-          case builtin_fn: {
-            assertMessage(call.len == 2, "fn expects 2 arguments");
-            let params_val = &env_getVal(b->env, call.off)->value;
-            let ret_val = &env_getVal(b->env, call.off + 1)->value;
+              ir_av1(b);
+              env_getVal(osc, call.d)->value = Op_tv(((typed_value){tu_of(r_void, {})}));
 
-            assert_tu_is(c_ast, params_val->t);
-            assert_tu_is(c_ast, ret_val->t);
+              *insloc = ocode_of(onone, {});
+            } break;
+            case builtin_break: {
+              env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(r_void, {})}));
 
-            ast *params_ast = params_val->v.c_ast;
-            ast *ret_ast = ret_val->v.c_ast;
+              *insloc = ocode_of(obreak, {});
+            } break;
+            case builtin_return: {
+              assertMessage(call.len == 1);
+              let ret_val = tu_catch(tv, env_getVal(b->env, call.off)->value);
+              assertMessage(tu_is(c_ast, ret_val.t), "unexpected %s", snprint(stdAlloc, "{Type}", ret_val.t).ptr);
+              ast *ret_ast = ret_val.v.c_ast;
 
-            let osc = b->env;
-            b->env = P$(
-                env_findOwner(b->env, call.d),
-                env_replace(b, $.scope, $.idx);
-            );
-            defer { b->env = osc; };
+              let osc = b->env;
+              b->env = P$(
+                  env_findOwner(b->env, call.d),
+                  env_replace(b, $.scope, $.idx);
+              );
+              defer { b->env = osc; };
 
-            mList(struct {
-              fptr name;
-              u32 reg;
-            }) pending_params = mList_init(b->alloc, mList_iType(pending_params));
-            defer { mList_deinit(pending_params); };
+              u32 expr_reg = emit_ir(b, ret_ast, 0);
+              env_addOp(b, ocode_of(oret, expr_reg));
 
-            let pblock = tu_catch(astPBlock, *params_ast);
-            foreach (ast *p_ast, vlap(sentList_vla(pblock.stmts))) {
-              // println("processing function arg \n{ast}", p_ast);
-              let p_name = nullFptr;
-              let p_type_ast = p_ast;
+              ir_av1(b);
+              env_getVal(osc, call.d)->value = Op_tv(((typed_value){tu_of(r_void, {})}));
 
-              if_tu_is (let decl, astDecl, (*p_ast)) {
-                if (decl.name) p_name = tu_catch(astId, *decl.name);
-                if (decl.type) p_type_ast = decl.type;
-                else assertMessage(false); // TODO: generate a type
+              *insloc = ocode_of(onone, {});
+            } break;
+            case builtin_int:
+            case builtin_uint: {
+              assertMessage(call.len == 1);
+              let arg_op = &env_getVal(b->env, call.off)->value;
+              let arg = tu_catch(tv, *arg_op);
+
+              if (tu_is(c_ast, arg.t)) {
+                arg = tu_catchr(tv, P$(env_findOwner(b->env, call.off), hv_handle_evaltype(b, arg.v.c_ast, $.scope, $.idx);));
+                *arg_op = Op_tv(arg);
               }
-              // println("to \n{ast}", p_type_ast);
-              let reg = emit_ir(b, p_type_ast, 0);
-              if (!fptr_isNull(p_name)) env_bind(b, p_name, reg);
-              mList_push(pending_params, {p_name, reg});
+
+              assertMessage(tu_is(c_int, arg.t), "bit width must be a constant integer");
+              bigint bint = arg.v.c_int;
+              bigint_trim(&bint);
+              assertMessage(msList_len(bint) == 1, "bit width must fit in one limb");
+              u32 bits = bint[0];
+              assertMessage(bigint_cmp(bint, nullptr), "bit width must be positive");
+
+              Type created_type = bin == builtin_int ? (Type)tu_of(r_sint, bits) : (Type)tu_of(r_uint, bits);
+              env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(c_type, {}), {.c_type = IrBuilder_getType(b, created_type)}}));
+              *insloc = ocode_of(onone, {});
+            } break;
+            case builtin_typeof: {
+              assertMessage(call.len == 1);
+              let arg_op = &env_getVal(b->env, call.off)->value;
+              let arg = tu_catch(tv, *arg_op);
+
+              if (tu_is(c_ast, arg.t)) {
+                arg = tu_catchr(tv, P$(env_findOwner(b->env, call.off), hv_handle_evaltype(b, arg.v.c_ast, $.scope, $.idx)));
+                *arg_op = Op_tv(arg);
+              }
+
+              env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(c_type, {}), {.c_type = IrBuilder_getType(b, typeof_Value(arg))}}));
+              *insloc = ocode_of(onone, {});
+            } break;
+            case builtin_type: {
+              assertMessage(call.len == 0);
+              env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(c_type, {}), {.c_type = IrBuilder_getType(b, (Type)tu_of(c_type, {}))}}));
+              *insloc = ocode_of(onone, {});
+            } break;
+            case builtin_ast: {
+              assertMessage(call.len == 0);
+              env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(c_type, {}), {.c_type = IrBuilder_getType(b, (Type)tu_of(c_ast, {}))}}));
+              *insloc = ocode_of(onone, {});
+            } break;
+            case builtin_qot: {
+              assertMessage(call.len == 1);
+              let arg = tu_catch(tv, env_getVal(b->env, call.off)->value);
+              assert_tu_is(c_ast, arg.t);
+
+              env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(c_ast, {}), {.c_ast = arg.v.c_ast}}));
+              *insloc = ocode_of(onone, {});
+            } break;
+            case builtin_uqot: {
+              assertMessage(call.len == 1);
+              let arg = tu_catch(tv, env_getVal(b->env, call.off)->value);
+              assert_tu_is(c_ast, arg.t);
+
+              let osc = b->env;
+              b->env = P$(
+                  env_findOwner(b->env, call.d),
+                  env_replace(b, $.scope, $.idx);
+              );
+              defer { b->env = osc; };
+
+              emit_ir(b, arg.v.c_ast, 0);
+
+              ir_av1(b);
+              typed_value yield_val = (typed_value){tu_of(r_void, {})};
+              if_decl (let len, msList_len(b->env->values))
+                yield_val = tu_catch(tv, b->env->values[len - 1]->value);
+              env_getVal(osc, call.d)->value = Op_tv(yield_val);
+
+              *insloc = ocode_of(onone, {});
+            } break;
+            case builtin_fn: {
+              assertMessage(call.len == 2, "fn expects 2 arguments");
+              let params_val = tu_catch(tv, env_getVal(b->env, call.off)->value);
+              let ret_val = tu_catch(tv, env_getVal(b->env, call.off + 1)->value);
+
+              assert_tu_is(c_ast, params_val.t);
+              assert_tu_is(c_ast, ret_val.t);
+
+              ast *params_ast = params_val.v.c_ast;
+              ast *ret_ast = ret_val.v.c_ast;
+
+              let osc = b->env;
+              b->env = P$(
+                  env_findOwner(b->env, call.d),
+                  env_replace(b, $.scope, $.idx);
+              );
+              defer { b->env = osc; };
+
+              mList(struct {
+                fptr name;
+                u32 reg;
+              }) pending_params = mList_init(b->alloc, mList_iType(pending_params));
+              defer { mList_deinit(pending_params); };
+
+              let pblock = tu_catch(astPBlock, *params_ast);
+              foreach (ast *p_ast, vlap(sentList_vla(pblock.stmts))) {
+                let p_name = nullFptr;
+                let p_type_ast = p_ast;
+
+                if_tu_is (let decl, astDecl, (*p_ast)) {
+                  if (decl.name) p_name = tu_catch(astId, *decl.name);
+                  if (decl.type) p_type_ast = decl.type;
+                  else assertMessage(false); // TODO: generate a type
+                }
+
+                let reg = emit_ir(b, p_type_ast, 0);
+                if (!fptr_isNull(p_name)) env_bind(b, p_name, reg);
+                mList_push(pending_params, {p_name, reg});
+              }
+
+              u32 ret_reg = emit_ir(b, ret_ast, 0);
+              ir_av1(b);
+
+              func_value fval = mList_map(b->alloc, pending_params, (mList_iType(fval)){$.name, avalue(b->alloc, tu_catch(tv, env_getVal(b->env, $.reg)->value))});
+              mList_push(fval, {
+                                   nullFptr,
+                                   avalue(b->alloc, tu_catch(tv, env_getVal(b->env, ret_reg)->value)),
+                               });
+
+              env_getVal(osc, call.d)->value = Op_tv(((typed_value){tu_of(c_func, {}), {.c_func = fval}}));
+              *insloc = ocode_of(onone, {});
+            } break;
+            case builtin_anyType:
+              assertMessage(false, "anyType shouldnt be accesable");
+          }
+        }),
+        (r_func, rf, {
+          u32 nparams = mList_len(rf) - 1;
+          assertMessage(call.len == nparams, "call expected %u args, got %u", nparams, call.len);
+
+          for (u32 i = 0; i < nparams; i++) {
+            let arg_op = &env_getVal(b->env, call.off + i)->value;
+            let arg = tu_catch(tv, *arg_op);
+            Type param_type = mList_arr(rf)[i];
+
+            if (tu_is(c_ast, arg.t) && !tu_is(c_ast, param_type)) {
+              arg = tu_catchr(tv, P$(env_findOwner(b->env, call.off + i), hv_handle_evaltype(b, arg.v.c_ast, $.scope, $.idx)));
+              *arg_op = Op_tv(arg);
             }
+            assertMessage(!Type_cmp(arg.t, param_type), "argument %u type mismatch , %s", i, snprint(stdAlloc, "{Type} != {Type}", arg.t, param_type).ptr);
+          }
+          env_getVal(b->env, call.d)->value = Op_tv(((typed_value){mList_arr(rf)[nparams]}));
+          // no replace
+        }),
+        (c_func, _, {
+          let cf = it.v.c_func;
+          assertMessage(call.len == 1, "block construction takes exactly one block argument");
+          let body_val = tu_catch(tv, env_getVal(b->env, call.off)->value);
+          assert_tu_is(c_ast, body_val.t);
+          ast *body_ast = body_val.v.c_ast;
 
-            u32 ret_reg = emit_ir(b, ret_ast, 0);
-            ir_av1(b);
-            // foreach (let pp, mList_iter(pending_params))
-            //   println("binding {slice(c8)} to {} {Type}", pp.name, pp.reg, env_getVal(b->env, pp.reg)->value.t);
+          u32 nparams = mList_len(cf) - 1;
+          mList(Type) param_types = mList_init(b->alloc, Type);
+          for (u32 i = 0; i <= nparams; i++)
+            mList_push(param_types, value_asType(*mList_arr(cf)[i].init));
 
-            // clang-format off
-            func_value fval = mList_map(b->alloc, pending_params , (mList_iType(fval)){
-                $.name ,avalue(b->alloc, env_getVal(b->env,$.reg)->value)
-            });
-            mList_push( fval, { 
-                nullFptr,
-                avalue(b->alloc, env_getVal(b->env, ret_reg)->value),
-            });
-            // clang-format on
+          Type *fn_type = IrBuilder_getType(b, (Type)tu_of(r_func, param_types));
 
-            *d = (typeof(*d)){tu_of(c_func, {}), fval};
-            *insloc = ocode_of(onone, {});
-          } break;
-          case builtin_anyType:
-            assertMessage(false, "anyType shouldnt be accesable");
-        }
-      }),
-      (r_func, rf, {
-        u32 nparams = mList_len(rf) - 1;
-        assertMessage(call.len == nparams, "call expected %u args, got %u", nparams, call.len);
-
-        for (u32 i = 0; i < nparams; i++) {
-          let arg = &env_getVal(b->env, call.off + i)->value;
-          Type param_type = mList_arr(rf)[i];
-
-          if (tu_is(c_ast, arg->t) && !tu_is(c_ast, param_type))
-            *arg = P$(
-                env_findOwner(b->env, call.off + i),
-                hv_handle_evaltype(b, arg->v.c_ast, $.scope, $.idx)
-            );
-          assertMessage(!Type_cmp(arg->t, param_type), "argument %u type mismatch , %s", i, snprint(stdAlloc, "{Type} != {Type}", arg->t, param_type).ptr);
-        }
-        d->t = mList_arr(rf)[nparams];
-        // no replace
-      }),
-      (c_func, _, {
-        let cf = l->v.c_func;
-        assertMessage(call.len == 1, "block construction takes exactly one block argument");
-        let body_val = &env_getVal(b->env, call.off)->value;
-        assert_tu_is(c_ast, body_val->t);
-        ast *body_ast = body_val->v.c_ast;
-
-        u32 nparams = mList_len(cf) - 1;
-        mList(Type) param_types = mList_init(b->alloc, Type);
-        for (u32 i = 0; i <= nparams; i++)
-          mList_push(param_types, value_asType(*mList_arr(cf)[i].init));
-
-        Type *fn_type = IrBuilder_getType(b, (Type)tu_of(r_func, param_types));
-
-        let osc = b->env;
-        b->env = P$(
-            env_findOwner(b->env, call.d),
-            env_replace(b, $.scope, $.idx);
-        );
-        defer { b->env = osc; };
-
-        let saved_fnctx = b->fnctx;
-        b->fnctx = &tu_catch(r_func, *fn_type);
-        defer { b->fnctx = saved_fnctx; };
-
-        for (u32 i = 0; i < nparams; i++)
-          env_bind(b, mList_arr(cf)[i].name, env_addOp(b, ocode_of(oarg, i)));
-
-        emit_ir(b, body_ast, 0);
-        ir_av1(b);
-
-        d->t = *fn_type;
-        *insloc = ocode_of(onone, {});
-      }),
-      (r_tag, _, TODO()),
-      (r_arr, _, TODO()),
-      (r_ptr, _, TODO()),
-      (r_bitfield, _, TODO()),
-      (r_struct, _, TODO()),
-      (c_ast, _, {
-        assertMessage(l->v.c_ast);
-        let ats = sentList_vla(tu_catch(astABlock, (*l->v.c_ast)).items);
-        assertMessage(countof((*ats)) == 1); // [] is it's own token, it will never get here
-        let n = tu_catch(astNumber, *(*ats)[0]);
-
-        // 1. Evaluate the array size
-        let num_val = convertInt(b, n);
-        bigint bint = num_val.v.c_int;
-        bigint_trim(&bint);
-        assertMessage(msList_len(bint) == 1, "array size must fit in one limb");
-        u32 array_size = bint[0];
-
-        // 2. Evaluate the element type (the argument)
-        assertMessage(call.len == 1, "array type construction takes exactly one argument");
-        let arg = &env_getVal(b->env, call.off)->value;
-
-        if (tu_is(c_ast, arg->t))
-          *arg = P$(
-              env_findOwner(b->env, call.off),
-              hv_handle_evaltype(b, arg->v.c_ast, $.scope, $.idx)
+          let osc = b->env;
+          b->env = P$(
+              env_findOwner(b->env, call.d),
+              env_replace(b, $.scope, $.idx);
           );
+          defer { b->env = osc; };
 
-        Type elem_type = value_asType(*arg);
+          let saved_fnctx = b->fnctx;
+          b->fnctx = &tu_catch(r_func, *fn_type);
+          defer { b->fnctx = saved_fnctx; };
 
-        // 3. Construct and yield the r_arr Type
-        d->t = (Type)tu_of(c_type, {});
-        d->v.c_type = IrBuilder_getType(b, (Type)tu_of(r_arr, {IrBuilder_getType(b, elem_type), array_size}));
+          for (u32 i = 0; i < nparams; i++)
+            env_bind(b, mList_arr(cf)[i].name, env_addOp(b, ocode_of(oarg, i)));
 
-        *insloc = ocode_of(onone, {});
-      }),
-      (default, {
-        let t = l->t;
-        println("{}", ((fptr){sizeof(t), (u8 *)&t}));
-        println("{Type}", t);
-        assertMessage(false);
-      }),
-  );
+          emit_ir(b, body_ast, 0);
+          ir_av1(b);
+
+          env_getVal(osc, call.d)->value = Op_tv(((typed_value){*fn_type}));
+          *insloc = ocode_of(onone, {});
+        }),
+        (r_tag, _, TODO()),
+        (r_arr, _, TODO()),
+        (r_ptr, _, TODO()),
+        (r_bitfield, _, TODO()),
+        (r_struct, _, TODO()),
+        (c_ast, _, {
+          assertMessage(it.v.c_ast);
+          let ats = sentList_vla(tu_catch(astABlock, (*it.v.c_ast)).items);
+          assertMessage(countof((*ats)) == 1);
+          let n = tu_catch(astNumber, *(*ats)[0]);
+
+          let num_val = convertInt(b, n);
+          bigint bint = num_val.v.c_int;
+          bigint_trim(&bint);
+          assertMessage(msList_len(bint) == 1, "array size must fit in one limb");
+          u32 array_size = bint[0];
+
+          assertMessage(call.len == 1, "array type construction takes exactly one argument");
+          let arg_op = &env_getVal(b->env, call.off)->value;
+          let arg = tu_catch(tv, *arg_op);
+
+          if (tu_is(c_ast, arg.t)) {
+            arg = tu_catchr(tv, P$(env_findOwner(b->env, call.off), hv_handle_evaltype(b, arg.v.c_ast, $.scope, $.idx)));
+            *arg_op = Op_tv(arg);
+          }
+
+          Type elem_type = value_asType(arg);
+
+          env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(c_type, {}), {.c_type = IrBuilder_getType(b, (Type)tu_of(r_arr, {IrBuilder_getType(b, elem_type), array_size}))}}));
+
+          *insloc = ocode_of(onone, {});
+        }),
+        (default, {
+          let t = it.t;
+          println("{}", ((fptr){sizeof(t), (u8 *)&t}));
+          println("{Type}", t);
+          assertMessage(false);
+        }),
+    );
+  } else unreachable();
 }
 #undef assert_tu_is
 void ir_av1(IrBuilder *b) {
@@ -857,10 +848,10 @@ void ir_av1(IrBuilder *b) {
   try_again:
     tu_match_void(
         *ip,
-        (oint, str, env_pushVal(allocator, b->env, convertInt(b, str), ip - code)),
-        (ostr, str, env_pushVal(allocator, b->env, convertString(b, str), ip - code)),
-        (obin, bin, env_pushVal(allocator, b->env, (typed_value){tu_of(builtin, bin)}, ip - code)),
-        (oast, ats, env_pushVal(allocator, b->env, (typed_value){tu_of(c_ast, {}), ats}, ip - code)),
+        (oint, str, env_pushVal(allocator, b->env, Op_tv(convertInt(b, str)), ip - code)),
+        (ostr, str, env_pushVal(allocator, b->env, Op_tv(convertString(b, str)), ip - code)),
+        (obin, bin, env_pushVal(allocator, b->env, Op_tv(((typed_value){tu_of(builtin, bin)})), ip - code)),
+        (oast, ats, env_pushVal(allocator, b->env, Op_tv(((typed_value){tu_of(c_ast, {}), ats})), ip - code)),
         (oarg, oag, {
           assertMessage(b->fnctx, "");
           let fnc = *b->fnctx;
@@ -870,36 +861,38 @@ void ir_av1(IrBuilder *b) {
               oag,
               mList_len(fnc)
           );
-          env_pushVal(allocator, b->env, (typed_value){mList_arr(fnc)[oag]}, ip - code);
+          env_pushVal(allocator, b->env, Op_tv(((typed_value){mList_arr(fnc)[oag]})), ip - code);
         }),
         (onew, nit, {
           if_decl (let x, nit)
-            env_pushVal(allocator, b->env, (typed_value){value_asType(env_getVal(b->env, nit)->value), {}}, ip - code);
-          else env_pushVal(allocator, b->env, (typed_value){tu_of(builtin, builtin_anyType)}, ip - code);
+            env_pushVal(allocator, b->env, Op_tv(((typed_value){value_asType(tu_catch(tv, env_getVal(b->env, nit)->value)), {}})), ip - code);
+          else env_pushVal(allocator, b->env, Op_tv(((typed_value){tu_of(builtin, builtin_anyType)})), ip - code);
         }),
         (omov, mov, {
-          let l = env_getVal(b->env, mov.l);
-          let r = env_getVal(b->env, mov.r);
+          let l_op = &env_getVal(b->env, mov.l)->value;
+          let r_op = &env_getVal(b->env, mov.r)->value;
+          let l = tu_catch(tv, *l_op);
+          let r = tu_catch(tv, *r_op);
 
-          if (tu_is(c_ast, l->value.t) && !tu_is(c_ast, r->value.t))
-            l->value = P$(
-                env_findOwner(b->env, mov.l),
-                hv_handle_evaltype(b, l->value.v.c_ast, $.scope, $.idx)
-            );
+          if (tu_is(c_ast, l.t) && !tu_is(c_ast, r.t)) {
+            l = tu_catchr(tv, P$(env_findOwner(b->env, mov.l), hv_handle_evaltype(b, l.v.c_ast, $.scope, $.idx)));
+            *l_op = Op_tv(l);
+          }
 
-          if (Type_cmp(l->value.t, r->value.t)) {
-            assertMessage(tu_or(builtin, r->value.t, -1) == builtin_anyType, "type mismatch in omov assignment");
-            assertMessage(!r->value.v.value, "cannot mutate initialized value");
-            r->value = (typed_value){l->value.t, nullptr};
+          if (Type_cmp(l.t, r.t)) {
+            assertMessage(tu_or(builtin, r.t, -1) == builtin_anyType, "type mismatch in omov assignment");
+            assertMessage(!r.v.value, "cannot mutate initialized value");
+            r = (typed_value){l.t, nullptr};
+            *r_op = Op_tv(r);
           }
         }),
         (ocall, cal, ir_handle_call(b, cal, ip)),
         (olelem, ell, {
-          let l = &env_getVal(b->env, ell.l)->value;
+          let l = tu_catch(tv, env_getVal(b->env, ell.l)->value);
           Type t;
           bool f = false;
           tu_match_void(
-              l->t,
+              l.t,
               (r_bitfield, bf, {
                 foreach (let v, mList_iter(bf))
                   if (fptr_eq(v.name, ell.name))
@@ -913,7 +906,7 @@ void ir_av1(IrBuilder *b) {
               (default, assertMessage(false, "type does not support loading element"))
           );
           if (!f) error_at(ell.name.ptr, "struct has no element with that name");
-          env_pushVal(allocator, b->env, (typed_value){t}, ip - code);
+          env_pushVal(allocator, b->env, Op_tv(((typed_value){t})), ip - code);
         }),
         (oscop, sco, {
           let old_env = b->env;
@@ -922,18 +915,19 @@ void ir_av1(IrBuilder *b) {
           b->env = old_env;
 
           typed_value yield_val = (typed_value){tu_of(r_void, {})};
-          if_decl (let len, msList_len(sco->values)) yield_val.t = sco->values[len - 1]->value.t;
-          env_pushVal(allocator, b->env, yield_val, ip - code);
+          if_decl (let len, msList_len(sco->values)) yield_val.t = tu_catch(tv, sco->values[len - 1]->value).t;
+          env_pushVal(allocator, b->env, Op_tv(yield_val), ip - code);
         }),
         (oselem, sel, {
-          let l = &env_getVal(b->env, sel.l)->value;
-          let d = &env_getVal(b->env, sel.d)->value;
+          let l = tu_catch(tv, env_getVal(b->env, sel.l)->value);
+          let d_op = &env_getVal(b->env, sel.d)->value;
+          let d = tu_catch(tv, *d_op);
 
           Type field_type;
           bool found = false;
 
           tu_match_void(
-              l->t,
+              l.t,
               (r_bitfield, bf, {
                 foreach (let v, mList_iter(bf))
                   if (fptr_eq(v.name, sel.name))
@@ -949,57 +943,62 @@ void ir_av1(IrBuilder *b) {
 
           if (!found) error_at(sel.name.ptr, "struct has no element with that name");
 
-          if (Type_cmp(d->t, field_type)) {
-            assertMessage(tu_or(builtin, d->t, -1) == builtin_anyType, "type mismatch in oselem assignment");
-            assertMessage(!d->v.value, "cannot mutate type of an initialized value");
-            d->t = field_type;
+          if (Type_cmp(d.t, field_type)) {
+            assertMessage(tu_or(builtin, d.t, -1) == builtin_anyType, "type mismatch in oselem assignment");
+            assertMessage(!d.v.value, "cannot mutate type of an initialized value");
+            d.t = field_type;
+            *d_op = Op_tv(d);
           }
         }),
         (ocpy, cpy, {
-          let l = &env_getVal(b->env, cpy.l)->value;
-          let r = &env_getVal(b->env, cpy.r)->value;
+          let l = tu_catch(tv, env_getVal(b->env, cpy.l)->value);
+          let r = tu_catch(tv, env_getVal(b->env, cpy.r)->value);
 
-          assertMessage(tu_is(r_ptr, l->t), "ocpy source (l) must be a pointer");
-          assertMessage(tu_is(r_ptr, r->t), "ocpy destination (r) must be a pointer");
+          assertMessage(tu_is(r_ptr, l.t), "ocpy source (l) must be a pointer");
+          assertMessage(tu_is(r_ptr, r.t), "ocpy destination (r) must be a pointer");
 
-          Type *l_pointee = tu_catch(r_ptr, l->t);
-          Type *r_pointee = tu_catch(r_ptr, r->t);
+          Type *l_pointee = tu_catch(r_ptr, l.t);
+          Type *r_pointee = tu_catch(r_ptr, r.t);
 
           assertMessage(!Type_cmp(*l_pointee, *r_pointee), "ocpy pointee types do not match");
         }),
         (oop, opp, {
-          let l = &env_getVal(b->env, opp.l)->value;
-          let r = &env_getVal(b->env, opp.r)->value;
-          let d = &env_getVal(b->env, opp.d)->value;
+          let l = tu_catch(tv, env_getVal(b->env, opp.l)->value);
+          let r = tu_catch(tv, env_getVal(b->env, opp.r)->value);
+          let d_op = &env_getVal(b->env, opp.d)->value;
+          let d = tu_catch(tv, *d_op);
 
           if (opp.o == opNumbers.pipe) {
             assertMessage(false, "pipe operator (%u) not implemented", opp.o);
           } else if (opp.o == opNumbers.set) { // TODO: should probably just be omov & try again
-            if (Type_cmp(l->t, r->t)) {
-              assertMessage(tu_or(builtin, r->t, -1) == builtin_anyType, "type mismatch in assignment (op %u)", opp.o);
-              r->t = l->t;
+            if (Type_cmp(l.t, r.t)) {
+              assertMessage(tu_or(builtin, r.t, -1) == builtin_anyType, "type mismatch in assignment (op %u)", opp.o);
+              r.t = l.t;
+              // update r in env if necessary
             }
-            d->t = l->t;
+            d.t = l.t;
           } else if (
               opp.o == opNumbers.eq || opp.o == opNumbers.neq || opp.o == opNumbers.les ||
               opp.o == opNumbers.mor || opp.o == opNumbers.leq || opp.o == opNumbers.moq
           ) {
-            assertMessage(!Type_cmp(l->t, r->t), "type mismatch in comparison (op %u)", opp.o);
-            assertMessage(tu_or(builtin, l->t, -1) != builtin_anyType, "cannot compare untyped values (op %u)", opp.o);
-            d->t = (Type)tu_of(r_uint, 1);
+            assertMessage(!Type_cmp(l.t, r.t), "type mismatch in comparison (op %u)", opp.o);
+            assertMessage(tu_or(builtin, l.t, -1) != builtin_anyType, "cannot compare untyped values (op %u)", opp.o);
+            d.t = (Type)tu_of(r_uint, 1);
           } else if (
               opp.o == opNumbers.mul || opp.o == opNumbers.div || opp.o == opNumbers.mod ||
               opp.o == opNumbers.plus || opp.o == opNumbers.minus || opp.o == opNumbers.oand ||
               opp.o == opNumbers.oor || opp.o == opNumbers.oband || opp.o == opNumbers.obor ||
               opp.o == opNumbers.shr || opp.o == opNumbers.shl
           ) {
-            assertMessage(!Type_cmp(l->t, r->t), "type mismatch in binary operator (op %u)", opp.o);
-            assertMessage(tu_or(builtin, r->t, -1) != builtin_anyType, "cannot operate on untyped values (op %u)", opp.o);
-            d->t = r->t;
+            assertMessage(!Type_cmp(l.t, r.t), "type mismatch in binary operator (op %u)", opp.o);
+            assertMessage(tu_or(builtin, r.t, -1) != builtin_anyType, "cannot operate on untyped values (op %u)", opp.o);
+            d.t = r.t;
           } else if (opp.o == opNumbers.onot || opp.o == opNumbers.obnot) {
-            assertMessage(tu_or(builtin, r->t, -1) != builtin_anyType, "cannot operate on untyped values (unary op %u)", opp.o);
-            d->t = r->t;
+            assertMessage(tu_or(builtin, r.t, -1) != builtin_anyType, "cannot operate on untyped values (unary op %u)", opp.o);
+            d.t = r.t;
           } else assertMessage(false, "unhandled or unknown operator %u in oop", opp.o);
+
+          *d_op = Op_tv(d);
         }),
         (oconst, con, ),
         (obreak, _, ),
@@ -1145,7 +1144,7 @@ typePrinter(scope) {
   }
   PUTS("values{\n" P_INDENT_IN);
   foreach (let v, span(in.values, msList_len(in.values)))
-    USETYPEPRINTER(typed_value, (*v)->value), PUTS("\n");
+    USETYPEPRINTER(op_tv, (*v)->value), PUTS("\n");
   PUTS("named{\n" P_INDENT_IN);
   foreach (let kv, moxmap_iter(in.locals, fptr, moxmap_vt(in.locals))) {
     USENAMEDPRINTER("slice(c8)", kv.key);
@@ -1154,7 +1153,7 @@ typePrinter(scope) {
     if (kv.val->idx > in.start_reg) {
       u32 ridx = kv.val->idx - in.start_reg - 1;
       if (ridx < msList_len(in.values))
-        USETYPEPRINTER(u32, kv.val->idx), PUTS(":"), USETYPEPRINTER(typed_value, in.values[ridx]->value);
+        USETYPEPRINTER(u32, kv.val->idx), PUTS(":"), USETYPEPRINTER(op_tv, in.values[ridx]->value);
       else PUTS("<unevaluated?>");
 
     } else
@@ -1171,91 +1170,4 @@ typePrinter(IrBuilder) {
   PUTS("IrBuilder {\n" P_INDENT_IN);
   USETYPEPRINTER(scope, *in.env);
   PUTS(P_INDENT_OUT "}\n");
-}
-
-//}
-
-//
-//
-
-test_fn(type_interns) {
-  let irb = IrBuilder_init(allocator);
-  defer { IrBuilder_deinit(&irb); };
-
-  let v = (Type)tu_of(
-      r_struct,
-      mList_init(irb.alloc, r_struct_item)
-  );
-  mList_push(
-      tu_catch(r_struct, v),
-      {
-          .alignment = 8,
-          .isconst = false,
-          .name = fp("val"),
-          .offset = 16,
-          .init = (typed_value){tu_of(r_uint, 64)},
-      }
-  );
-  mList_push(
-      tu_catch(r_struct, v),
-      {
-          .alignment = 8,
-          .isconst = false,
-          .name = fp("next"),
-          .offset = 0,
-          .init = (typed_value){tu_of(r_ptr, &v)},
-      }
-  );
-  mList_push(
-      tu_catch(r_struct, v),
-      {
-          .alignment = 8,
-          .isconst = false,
-          .name = fp("prev"),
-          .offset = 8,
-          .init = (typed_value){tu_of(r_ptr, &v)},
-      }
-  );
-  println("{Type}", v);
-
-  let strArena = arena_new_ext(allocator, 1024);
-  defer { arena_cleanup(strArena); };
-  let str = snprint(strArena, "{Type}", v);
-  let idstr = snprint(strArena, "{id_str}", str);
-  let decoded = snprint(strArena, "{id_str:decode}", fptr_CSP(idstr.ptr));
-  println("`{slice(c8)}' -> {slice(c8)} -> `{slice(c8)}'", str, idstr, decoded);
-
-  let p1 = IrBuilder_getType(&irb, v);
-  let p2 = IrBuilder_getType(&irb, *p1);
-  let p3 = IrBuilder_getType(&irb, *p2);
-  test_assert(p1 && p2 && p3);
-  test_assert(!Type_cmp(*p1, *p2));
-  test_assert(!Type_cmp(*p1, *p3));
-  test_assert(p1 == p2);
-  test_assert(p1 == p3);
-}
-test_fn(type_typeof) {
-  u64 mem = 0xF00;
-  u64 mem2 = ~(u64)0;
-  let foo = (typed_value){
-      tu_of(r_uint, 64), {.value = &mem}
-  };
-  let bar = (typed_value){
-      tu_of(r_uint, 64), {.value = &mem2}
-  };
-  println("values : {typed_value} , {typed_value} ", foo, bar);
-  let typeof_foo = typeof_Value(foo);
-  let typeof_bar = typeof_Value(bar);
-  test_assert(!Type_cmp(typeof_bar, typeof_foo));
-
-  let typetype = typeof_Value(Type_asValue(&typeof_foo));
-
-  test_assert(Type_cmp(typeof_Value(bar), typetype));
-  println("{Type}", typetype);
-  test_assert(!Type_cmp(typeof_Value(Type_asValue(&typeof_bar)), typetype));
-  let typeof_typeof_bar = typeof_Value(Type_asValue(&typeof_bar));
-  test_assert(!Type_cmp(typeof_Value(Type_asValue(&typeof_typeof_bar)), typetype));
-  println("t\t: {}", ((fptr){sizeof(typeof_foo), (u8 *)&typeof_foo}));
-  println("t(t)\t: {}", ((fptr){sizeof(typetype), (u8 *)&typetype}));
-  println("t(t(t))\t: {}", ((fptr){sizeof(typeof_typeof_bar), (u8 *)&typeof_typeof_bar}));
 }
