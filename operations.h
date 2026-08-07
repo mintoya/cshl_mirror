@@ -15,9 +15,12 @@
 typedef struct scope *scopeptr;
 
 sliceDef(Type);
+sliceDef(fptr);
+
 typedef struct {
   ast *code;
-  moxmap(slice(Type), scopeptr) fun;
+  slice(fptr) names;
+  mList(struct {Type(*spec)[/*names.len*/] ; scopeptr sc; }) fun;
 } gfn;
 tu_def((op_tv, u8), (tv, typed_value), (gfn, gfn));
 #define Op_tv(x) match_type(         \
@@ -79,14 +82,6 @@ _Static_assert(sizeof(opcode));
 typedef struct scope scope;
 sliceDef(scopeptr);
 
-typePrinter(op_tv) {
-  tu_match(
-      in,
-      (tv, x, USETYPEPRINTER(typed_value, x)),
-      (gfn, y, PUTS("TODO")),
-  );
-}
-
 struct scope {
   u32 start_reg;
   u32 next_reg;
@@ -95,6 +90,39 @@ struct scope {
   msList(struct { op_tv value ; u32 cidx; } *) values;
   moxmap(fptr, struct { u32 idx:31; bool isconst:1; }) locals;
 };
+typePrinter(op_tv) {
+  tu_match(
+      in,
+      (tv, x, USETYPEPRINTER(typed_value, x)),
+      (gfn, y, {
+        PUTS("gfn [names: ");
+        foreach (let n, span(y.names.ptr, y.names.len)) {
+          USENAMEDPRINTER("slice(c8)", *n);
+          PUTS(" ");
+        }
+        PUTS("]\n" P_INDENT_IN);
+
+        PUTS("code:\n" P_INDENT_IN);
+        USENAMEDPRINTER("ast", y.code);
+        PUTS(P_INDENT_OUT);
+
+        PUTS("specializations{\n" P_INDENT_IN);
+        foreach (let s, mList_iter(y.fun)) {
+          PUTS("spec: [");
+          for (u32 i = 0; i < y.names.len; i++) {
+            USETYPEPRINTER(Type, (*s.spec)[i]);
+            PUTS(" ");
+          }
+          PUTS("]\n" P_INDENT_IN);
+          USENAMEDPRINTER("scope", *s.sc);
+          PUTS(P_INDENT_OUT);
+        }
+        PUTS(P_INDENT_OUT "}\n");
+
+        PUTS(P_INDENT_OUT);
+      }),
+  );
+}
 typedef struct {
   allocfn alloc;
   scope *env;
@@ -702,45 +730,24 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
               ast *params_ast = params_val.v.c_ast;
               ast *ret_ast = ret_val.v.c_ast;
 
-              let osc = b->env;
-              b->env = P$(
-                  env_findOwner(b->env, call.d),
-                  env_replace(b, $.scope, $.idx);
-              );
-              defer { b->env = osc; };
+              let stmts = sentList_vla(tu_catch(astPBlock, *params_ast).stmts);
+              u32 nparams = countof(*stmts);
 
-              mList(struct {
-                fptr name;
-                u32 reg;
-              }) pending_params = mList_init(b->alloc, mList_iType(pending_params));
-              defer { mList_deinit(pending_params); };
-
-              let pblock = tu_catch(astPBlock, *params_ast);
-              foreach (ast *p_ast, vlap(sentList_vla(pblock.stmts))) {
-                let p_name = nullFptr;
-                let p_type_ast = p_ast;
-
-                if_tu_is (let decl, astDecl, (*p_ast)) {
-                  if (decl.name) p_name = tu_catch(astId, *decl.name);
-                  if (decl.type) p_type_ast = decl.type;
-                  else assertMessage(false); // TODO: generate a type
-                }
-
-                let reg = emit_ir(b, p_type_ast, 0);
-                if (!fptr_isNull(p_name)) env_bind(b, p_name, reg);
-                mList_push(pending_params, {p_name, reg});
+              let nams = slice_alloc(b->alloc, fptr, nparams);
+              foreach (let i, span(nams.ptr, nams.len)) {
+                let n = nullFptr;
+                if_tu_is (let decl, astDecl, (*(*stmts)[i - nams.ptr]))
+                  if (decl.name) n = tu_catch(astId, *decl.name);
+                *i = n;
               }
 
-              u32 ret_reg = emit_ir(b, ret_ast, 0);
-              ir_av1(b);
+              gfn g = {
+                  .code = nullptr,
+                  .names = nams,
+                  .fun = mList_init(b->alloc, mList_iType(g.fun)),
+              };
 
-              func_value fval = mList_map(b->alloc, pending_params, (mList_iType(fval)){$.name, avalue(b->alloc, tu_catch(tv, env_getVal(b->env, $.reg)->value))});
-              mList_push(fval, {
-                                   nullFptr,
-                                   avalue(b->alloc, tu_catch(tv, env_getVal(b->env, ret_reg)->value)),
-                               });
-
-              env_getVal(osc, call.d)->value = Op_tv(((typed_value){tu_of(c_func, {}), {.c_func = fval}}));
+              env_getVal(b->env, call.d)->value = Op_tv(g);
               *insloc = ocode_of(onone, {});
             } break;
             case builtin_anyType:
@@ -767,7 +774,7 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
         }),
         (c_func, _, {
           let cf = it.v.c_func;
-          assertMessage(call.len == 1, "block construction takes exactly one block argument");
+          assertMessage(call.len == 1, "expected 1 arg");
           let body_val = tu_catch(tv, env_getVal(b->env, call.off)->value);
           assert_tu_is(c_ast, body_val.t);
           ast *body_ast = body_val.v.c_ast;
