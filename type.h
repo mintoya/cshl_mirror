@@ -13,14 +13,13 @@
 #include <wheels/sList.h>
 
 typedef enum : u8 {
-  builtin_anyType, // reserved, not user-facing
-  builtin_if,      // @if(cnd , then ,)
-                   //
-  builtin_while,   // @while(cnd , then) //
-  builtin_fn,      // fn((decl|type...) ,decl|type) c_func of this type,
-                   // then when called with expression, yields an r_func
-  builtin_ast,     // @ast() type of ast
-  // builtin_any,  // @any() type of any
+  builtin_if,     // @if(cnd , then ,)
+                  //
+  builtin_while,  // @while(cnd , then) //
+  builtin_fn,     // fn((decl|type...) ,decl|type) c_func of this type,
+                  // then when called with expression, yields an r_func
+  builtin_ast,    // @ast() type of ast
+  builtin_any,    // @any() type of any
   builtin_int,    // @sint(N) integer with N bits
   builtin_uint,   // @uint(N) unsigned integer with N bits
   builtin_type,   // @type() the type of a type
@@ -36,12 +35,6 @@ typedef struct Type Type;
 struct typed_value *init;
 typedef struct r_struct_item r_struct_item;
 typedef struct r_bitf_item r_bitf_item;
-typedef mList(struct {
-  fptr name;
-  // not nullable
-  // the type is in there
-  struct typed_value *init;
-}) func_value;
 tu_def( // type
     (Type, u8),
     (builtin /*      */, builtin_id),
@@ -58,10 +51,10 @@ tu_def( // type
     // compile time
     // they could all be nothing_t's, i'd rather show here what they a re but also
     // not have them take up any storage space
+    (c_any /*        */, nothing_t),
     (c_int /*        */, typeof(bigint[0])),
     (c_type /*       */, typeof(Type *[0])),
     (c_ast /*        */, typeof(ast *[0])),
-    (c_func /*      */, typeof(func_value[0])),
 );
 typedef union {
   void *value;
@@ -69,7 +62,6 @@ typedef union {
   arrstype(c_int) c_int;
   arrstype(c_ast) c_ast;
   arrstype(c_type) c_type;
-  arrstype(c_func) c_func;
 } value_store;
 typedef struct typed_value {
   Type t;
@@ -154,9 +146,9 @@ i8 Type_cmp_ex(Type a, Type b, mList(type_cmp_pair) followed) {
 
       (r_void, _, return 0;),
       (c_int, _, return 0;),
+      (c_any, _, return 0;),
       (c_ast, _, return 0;),
       (c_type, _, return 0;),
-      (c_func, _, return 0;),
 
       (r_tag, ai, return fptr_cmp(ai.name, tu_catch(r_tag, b).name);),
       (r_uint, ai, return icmp(ai, tu_catch(r_uint, b));),
@@ -253,7 +245,7 @@ static u64 Type_hash_ex(Type a, bool follow_ptr) {
       (c_int, _, return 1;),
       (c_type, _, return 2;),
       (c_ast, _, return 3;),
-      (c_func, _, return 4;),
+      (c_any, _, return 5;),
       (r_uint, v, return (u64)v ^ 0x1000;),
       (r_sint, v, return (u64)v ^ 0x2000;),
       (r_ptr, p, return follow_ptr ? Type_hash_ex(*p, false) * 31 ^ 0x3000 : 0x3000;),
@@ -316,11 +308,10 @@ typedef struct value {
 typePrinter(builtin_id) {
   switch (in) {
       // clang-format off
-    case(builtin_anyType):PUTS("anyType");break;
     case(builtin_if):PUTS("if");break;
     case(builtin_fn):PUTS("fn");break;
     case(builtin_ast):PUTS("ast");break;
-    // case(builtin_any):PUTS("any");break;
+    case(builtin_any):PUTS("any");break;
     case(builtin_int):PUTS("int");break;
     case(builtin_uint):PUTS("uint");break;
     case(builtin_type):PUTS("type");break;
@@ -387,10 +378,10 @@ void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_co
         USETYPEPRINTER(builtin_id, builtin);
         PUTS(")");
       }),
-      (c_func, f, PUTS("cfn");),
       (c_int, i, PUTS("int");),
       (c_type, t, PUTS("type");),
       (c_ast, t, PUTS("ast");),
+      (c_any, t, PUTS("any");),
       (r_void, _, PUTS("void");),
       (r_tag, t, {
         PUTS("(id ");
@@ -476,7 +467,6 @@ typePrinter(typed_value) {
       (c_int, _, USENAMEDPRINTER("bigint", in.v.c_int);),
       (c_ast, _, USENAMEDPRINTER("ast", in.v.c_ast);),
       (c_type, _, in.v.c_type ? USETYPEPRINTER(Type, *in.v.c_type) : PUTS("??");),
-      (c_func, _, PUTS("fn");),
       (default, {
         if (in.v.value)
           USETYPEPRINTER(fptr, ((fptr){Type_rsize(in.t), in.v.value}));

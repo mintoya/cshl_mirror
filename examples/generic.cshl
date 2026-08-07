@@ -1,5 +1,10 @@
-a:= 1;
-c::fn((arg : @typeof(a)) ,@type()) 
-  return @typeof(arg);
-b:= c a;
-d:c a:0;
+type::
+  @type();
+typeof :: fn((a:@any()),type)
+  return @typeof(a);
+
+a::1;
+b:typeof(a) 
+  = 5;
+c:typeof(a + b) 
+  = a + b;

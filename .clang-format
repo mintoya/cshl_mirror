@@ -9,6 +9,7 @@ IfMacros:
   - if_unlikely
   - if_decl
   - if_tu_is
+  - iflet_tu
   - mutex_critical
 
 BinPackParameters: false
