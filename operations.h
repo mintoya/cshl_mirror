@@ -12,6 +12,18 @@
 #include <wheels/sList.h>
 #include <wheels/smap.h>
 typedef struct scope *scopeptr;
+
+sliceDef(Type);
+typedef struct {
+  ast *code;
+  moxmap(slice(Type), scopeptr) fun;
+} gfn;
+tu_def((op_tv, u8), (tv, typed_value), (gfn, gfn));
+#define Op_tv(x) match_type(       \
+    x,                             \
+    (tv, t, (op_tv)tu_of(tv, t)),  \
+    (gfn, t, (op_tv)tu_of(gfn, t)) \
+)
 // 0 in any location is null
 tu_def(
     (opcode, u8),
@@ -66,12 +78,20 @@ _Static_assert(sizeof(opcode));
 typedef struct scope scope;
 sliceDef(scopeptr);
 
+typePrinter(op_tv) {
+  tu_match(
+      in,
+      (tv, x, USETYPEPRINTER(typed_value, x)),
+      (gfn, y, PUTS("TODO")),
+  );
+}
+
 struct scope {
   u32 start_reg;
   u32 next_reg;
   msList(opcode) code;
   scope *parent;
-  msList(struct { typed_value value ; u32 cidx; } *) values;
+  msList(struct { op_tv value ; u32 cidx; } *) values;
   moxmap(fptr, struct { u32 idx:31; bool isconst:1; }) locals;
 };
 typedef struct {
@@ -454,7 +474,7 @@ struct env_findOwner_result env_findOwner(scope *sp, u32 idx) {
 }
 
 void ir_av1(IrBuilder *b);
-typed_value hv_handle_evaltype(IrBuilder *b, ast *target_ast, scope *target, u32 cidx) {
+op_tv hv_handle_evaltype(IrBuilder *b, ast *target_ast, scope *target, u32 cidx) {
   let old_env = b->env;
   defer { b->env = old_env; };
   b->env = env_replace(b, target, cidx);
@@ -463,7 +483,9 @@ typed_value hv_handle_evaltype(IrBuilder *b, ast *target_ast, scope *target, u32
 
   return env_getVal(b->env, reg)->value;
 }
-void env_pushVal(allocfn allocator, scope *sp, typed_value v, u32 cidx) { msList_push(allocator, sp->values, avalue(allocator, ((typeof(**sp->values)){v, cidx}))); }
+void env_pushVal(allocfn allocator, scope *sp, op_tv v, u32 cidx) {
+  msList_push(allocator, sp->values, avalue(allocator, ((typeof(**sp->values)){v, cidx})));
+}
 #define assert_tu_is(tag, val)             \
   assertMessage(                           \
       tu_is(tag, val),                     \
@@ -472,9 +494,9 @@ void env_pushVal(allocfn allocator, scope *sp, typed_value v, u32 cidx) { msList
   )
 void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
   let l = &env_getVal(b->env, call.l)->value;
-  print("call {Type} (", l->t); // )
+  print("call {op_tv} (", l); // )
   foreach (let i, span(call.off, call.len))
-    print("{Type},", env_getVal(b->env, i)->value.t);
+    print("{op_tv},", env_getVal(b->env, i)->value);
   /*(*/ println(")");
   let d = &env_getVal(b->env, call.d)->value;
   tu_match_void(
@@ -705,7 +727,7 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
               }
               // println("to \n{ast}", p_type_ast);
               let reg = emit_ir(b, p_type_ast, 0);
-              // if (!fptr_isNull(p_name)) env_bind(b, p_name, reg);
+              if (!fptr_isNull(p_name)) env_bind(b, p_name, reg);
               mList_push(pending_params, {p_name, reg});
             }
 
@@ -788,6 +810,37 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
       (r_ptr, _, TODO()),
       (r_bitfield, _, TODO()),
       (r_struct, _, TODO()),
+      (c_ast, _, {
+        assertMessage(l->v.c_ast);
+        let ats = sentList_vla(tu_catch(astABlock, (*l->v.c_ast)).items);
+        assertMessage(countof((*ats)) == 1); // [] is it's own token, it will never get here
+        let n = tu_catch(astNumber, *(*ats)[0]);
+
+        // 1. Evaluate the array size
+        let num_val = convertInt(b, n);
+        bigint bint = num_val.v.c_int;
+        bigint_trim(&bint);
+        assertMessage(msList_len(bint) == 1, "array size must fit in one limb");
+        u32 array_size = bint[0];
+
+        // 2. Evaluate the element type (the argument)
+        assertMessage(call.len == 1, "array type construction takes exactly one argument");
+        let arg = &env_getVal(b->env, call.off)->value;
+
+        if (tu_is(c_ast, arg->t))
+          *arg = P$(
+              env_findOwner(b->env, call.off),
+              hv_handle_evaltype(b, arg->v.c_ast, $.scope, $.idx)
+          );
+
+        Type elem_type = value_asType(*arg);
+
+        // 3. Construct and yield the r_arr Type
+        d->t = (Type)tu_of(c_type, {});
+        d->v.c_type = IrBuilder_getType(b, (Type)tu_of(r_arr, {IrBuilder_getType(b, elem_type), array_size}));
+
+        *insloc = ocode_of(onone, {});
+      }),
       (default, {
         let t = l->t;
         println("{}", ((fptr){sizeof(t), (u8 *)&t}));
