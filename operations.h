@@ -12,6 +12,12 @@
 #include <wheels/mylist.h>
 #include <wheels/sList.h>
 #include <wheels/smap.h>
+#define assert_type(tag, val)              \
+  assertMessage(                           \
+      tu_is(tag, val),                     \
+      "expected " #tag " but got %s",      \
+      snprint(stdAlloc, "{Type}", val).ptr \
+  )
 typedef struct scope *scopeptr;
 
 sliceDef(Type);
@@ -25,6 +31,11 @@ typedef struct {
   ast *body;
   moxmap(r_func, scopeptr) spec;
 } gfn;
+i8 r_func_cmp(const void *a, const void *b) {
+  let af = *(r_func *)a;
+  let bf = *(r_func *)b;
+  return Type_cmp((Type)tu_of(r_func, af), (Type)tu_of(r_func, bf));
+}
 
 tu_def((op_tv, u8), (tv, typed_value), (gfn, gfn));
 
@@ -33,6 +44,7 @@ tu_def((op_tv, u8), (tv, typed_value), (gfn, gfn));
     (tv, _t, (op_tv)tu_of(tv, _t)),  \
     (gfn, _t, (op_tv)tu_of(gfn, _t)) \
 )
+#define Op_tv_is(first, second, value) (tu_is(first, value) && tu_is(second, tu_catch(first, value).t))
 
 // 0 in any location is null
 tu_def(
@@ -296,10 +308,9 @@ typed_value Type_asValue(Type *t) {
   return (typed_value){tu_of(c_type, {}), {.c_type = t}};
 }
 Type value_asType(typed_value t) {
-  if (tu_is(c_type, t.t)) {
-    assertMessage(t.v.c_type, "type is unknown");
-    return t.v.c_type[0];
-  } else assertMessage(false, "thing is not a type");
+  assert_type(c_type, t.t);
+  assertMessage(t.v.c_type, "type is unknown");
+  return t.v.c_type[0];
 }
 Type typeof_Value(typed_value t) { return t.t; }
 typed_value convertInt(IrBuilder *b, fptr in) {
@@ -527,12 +538,6 @@ op_tv hv_handle_evaltype(IrBuilder *b, ast *target_ast, scope *target, u32 cidx)
 void env_pushVal(allocfn allocator, scope *sp, op_tv v, u32 cidx) {
   msList_push(allocator, sp->values, avalue(allocator, ((typeof(**sp->values)){v, cidx})));
 }
-#define assert_type(tag, val)              \
-  assertMessage(                           \
-      tu_is(tag, val),                     \
-      "expected " #tag " but got %s",      \
-      snprint(stdAlloc, "{Type}", val).ptr \
-  )
 void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
   let l_op = env_getVal(b->env, call.l)->value;
   print("call {op_tv} (", l_op);
@@ -547,12 +552,66 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
       assert_type(c_ast, body_val.t);
 
       it.body = body_val.v.c_ast;
-      it.spec = moxmap_init(b->alloc, r_func, scopeptr);
+      it.spec = moxmap_init(b->alloc, r_func, scopeptr, r_func_cmp);
 
       env_getVal(b->env, call.d)->value = Op_tv(it);
       *insloc = ocode_of(onone, {});
     } else {
-      TODO();
+      let params = sentList_vla(it.type.p->stmts);
+      assertMessage(call.len == countof(*params), "argument count mismatch");
+
+      let osc = b->env;
+      b->env = P$(
+          env_findOwner(b->env, call.d),
+          env_replace(b, $.scope, $.idx);
+      );
+      defer { b->env = osc; };
+
+      //-parameter & return types
+      typeof(u32[call.len]) param_regs = {};
+      foreach (let reg, span(param_regs, countof(param_regs))) {
+        let i = reg - param_regs;
+        let param_ast = (*params)[i];
+        *reg = emit_ir(b, param_ast, 0);
+        env_addOp(b, ocode_of(omov, {.l = call.off + i, .r = *reg}));
+      }
+
+      u32 ret_type_reg = emit_ir(b, it.type.r, 0);
+      ir_av1(b);
+
+      mList(Type) sig_types = mList_init(b->alloc, Type, call.len + 1);
+      defer { mList_deinit(sig_types); };
+
+      for (u32 i = 0; i < call.len; i++) {
+        u32 param_reg = param_regs[i];
+        mList_push(sig_types, tu_catch(tv, env_getVal(b->env, param_reg)->value).t);
+      }
+      let ret_type_val = tu_catch(tv, env_getVal(b->env, ret_type_reg)->value);
+      mList_push(sig_types, value_asType(ret_type_val));
+
+      //-functoin check
+
+      Type fn_type = *IrBuilder_getType(b, (Type)tu_of(r_func, sig_types));
+
+      if (Type_is_comptime(ret_type_val.t)) {
+        TODO(function must be interpreted);
+      } else {
+        if_decl (let made, moxmap_get(it.spec, sig_types)) {
+          TODO(function already made);
+        } else {
+          op_tv yield_val = Op_tv(((typed_value){ret_type_val.t}));
+          env_push(b);
+          {
+            moxmap_set(it.spec, sig_types, b->env);
+            emit_ir(b, it.body, 0);
+            ir_av1(b);
+          }
+          env_pop(b);
+
+          env_getVal(osc, call.d)->value = yield_val;
+          *insloc = ocode_of(onone, {});
+        }
+      }
     }
   } else iflet_tu (let it, tv, l_op) {
     tu_match_void(
@@ -852,21 +911,29 @@ void ir_av1(IrBuilder *b) {
         (omov, mov, {
           let l_op = &env_getVal(b->env, mov.l)->value;
           let r_op = &env_getVal(b->env, mov.r)->value;
-          let l = tu_catch(tv, *l_op);
-          let r = tu_catch(tv, *r_op);
+          let l = *l_op;
+          let r = *r_op;
 
-          if (tu_is(c_ast, l.t) && !tu_is(c_ast, r.t)) {
-            l = tu_catchr(tv, P$(env_findOwner(b->env, mov.l), hv_handle_evaltype(b, l.v.c_ast, $.scope, $.idx)));
-            *l_op = Op_tv(l);
+          if (tu_is(c_ast, tu_or(tv, l, {}).t) && !tu_is(c_ast, tu_or(tv, r, {}).t)) {
+            l = P$(env_findOwner(b->env, mov.l), hv_handle_evaltype(b, tu_catch(tv, l).v.c_ast, $.scope, $.idx));
+            *l_op = l;
           }
 
-          if (Type_cmp(l.t, r.t)) {
+          if (tu_is(tv, l) && tu_is(tv, r)) {
+            let l_tv = tu_catch(tv, l);
+            let r_tv = tu_catch(tv, r);
 
-            assertMessage(tu_is(c_any, r.t), "type mismatch in omov assignment");
-            assertMessage(!r.v.value, "cannot mutate initialized value");
-            r = (typed_value){l.t, nullptr};
-            *r_op = Op_tv(r);
+            if (Type_cmp(l_tv.t, r_tv.t)) {
+              assertMessage(
+                  tu_is(c_any, r_tv.t),
+                  "type mismatch %s",
+                  snprint(stdAlloc, "{Type} != {Type}", r_tv.t, l_tv.t).ptr
+              );
+              assertMessage(!r_tv.v.value, "cannot mutate initialized value");
+            }
           }
+
+          *r_op = l;
         }),
         (ocall, cal, ir_handle_call(b, cal, ip)),
         (olelem, ell, {
@@ -956,7 +1023,6 @@ void ir_av1(IrBuilder *b) {
             if (Type_cmp(l.t, r.t)) {
               assertMessage(tu_is(c_any, r.t), "type mismatch in omov assignment");
               r.t = l.t;
-              // update r in env if necessary
             }
             d.t = l.t;
           } else if (

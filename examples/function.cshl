@@ -1,5 +1,5 @@
 a:= 1;
-c::fn((arg : @typeof(a)) , @typeof(a)) 
+c::fn((arg : @int(32)) , @typeof(arg)) 
   return a * 2;
 b:= c a;
 b = c b;

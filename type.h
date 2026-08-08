@@ -282,6 +282,27 @@ static u64 Type_hash_ex(Type a, bool follow_ptr) {
 
 u64 Type_hash(Type a) { return Type_hash_ex(a, true); }
 u64 Type_hash_hash(const void *t) { return Type_hash(*(Type *)t); }
+bool Type_is_comptime(Type t) {
+  return tu_match_exp(
+      t,
+      (r_tag, t, Type_is_comptime(*t.type)),
+
+      (builtin, _, true),
+      (c_ast, _, true),
+      (c_any, _, true),
+      (c_int, _, true),
+      (c_type, _, true),
+
+      (r_func, _, false),
+      (r_struct, _, false),
+      (r_bitfield, _, false),
+      (r_void, _, false),
+      (r_uint, _, false),
+      (r_sint, _, false),
+      (r_ptr, _, false),
+      (r_arr, _, false),
+  );
+}
 //}
 //{value
 typedef struct value {
