@@ -187,6 +187,9 @@ IrBuilder IrBuilder_init(allocfn allocator) {
       {"@ast", builtin_ast},
       {"@any", builtin_any},
       {"@int", builtin_int},
+      {"@sint", builtin_sint},
+      {"@arr", builtin_arrof},
+      {"@ptr", builtin_ptrof},
       {"@uint", builtin_uint},
       {"@type", builtin_type},
       {"@typeof", builtin_typeof},
@@ -292,14 +295,10 @@ u32 env_addOp(IrBuilder *b, opcode o) {
   return tu_match_exp(
       o,
       (oscop, _, assertMessage(false, "pushing scope by itself not allowed"), (u32)0),
-      (obin, _, ++b->env->next_reg),
-      (ostr, _, ++b->env->next_reg),
-      (oint, _, ; ++b->env->next_reg),
-      (onew, _, ++b->env->next_reg),
-      (oast, _, ; ++b->env->next_reg),
-      (olelem, _, ++b->env->next_reg),
-      (oarg, _, ++b->env->next_reg),
-      (default, (u32)0),
+      (default,
+       (u32)(op_creates(o)
+                 ? ++b->env->next_reg
+                 : 0)),
 
   );
 }
@@ -538,12 +537,19 @@ op_tv hv_handle_evaltype(IrBuilder *b, ast *target_ast, scope *target, u32 cidx)
 void env_pushVal(allocfn allocator, scope *sp, op_tv v, u32 cidx) {
   msList_push(allocator, sp->values, avalue(allocator, ((typeof(**sp->values)){v, cidx})));
 }
+
+typedef struct {
+  bool returned, broke;
+  op_tv value;
+} exec_signal;
+
+exec_signal ir_interpret_scope(IrBuilder *b);
 void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
   let l_op = env_getVal(b->env, call.l)->value;
-  print("call {op_tv} (", l_op);
-  foreach (let i, span(call.off, call.len))
-    print("{op_tv},", env_getVal(b->env, i)->value); // removed &
-  println(")");
+  // print("call {op_tv} (", l_op);
+  // foreach (let i, span(call.off, call.len))
+  //   print("{op_tv},", env_getVal(b->env, i)->value); // removed &
+  // println(")");
 
   iflet_tu (let it, gfn, l_op) {
     if (!it.body) {
@@ -593,11 +599,28 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
 
       Type fn_type = *IrBuilder_getType(b, (Type)tu_of(r_func, sig_types));
 
-      if (Type_is_comptime(ret_type_val.t)) {
-        TODO(function must be interpreted);
+      if (Type_is_comptime(value_asType(ret_type_val))) {
+        env_push(b);
+        emit_ir(b, it.body, 0);
+        ir_av1(b);
+        exec_signal sig = ir_interpret_scope(b);
+
+        op_tv yield_val =
+            sig.returned
+                ? sig.value
+                : ({
+                    let r = Op_tv(((typed_value){tu_of(r_void, {})}));
+                    if_decl (let len, msList_len(b->env->values))
+                      r = b->env->values[len - 1]->value;
+                    r;
+                  });
+        env_pop(b);
+
+        env_getVal(osc, call.d)->value = yield_val;
+        *insloc = ocode_of(onone, {});
       } else {
         if_decl (let made, moxmap_get(it.spec, sig_types)) {
-          TODO(function already made);
+          TODO("function already made");
         } else {
           op_tv yield_val = Op_tv(((typed_value){ret_type_val.t}));
           env_push(b);
@@ -726,7 +749,7 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
 
               *insloc = ocode_of(onone, {});
             } break;
-            case builtin_int:
+            case builtin_sint:
             case builtin_uint: {
               assertMessage(call.len == 1);
               let arg_op = &env_getVal(b->env, call.off)->value;
@@ -746,6 +769,53 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
 
               Type created_type = bin == builtin_int ? (Type)tu_of(r_sint, bits) : (Type)tu_of(r_uint, bits);
               env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(c_type, {}), {.c_type = IrBuilder_getType(b, created_type)}}));
+              *insloc = ocode_of(onone, {});
+            } break;
+            case builtin_arrof: {
+              assertMessage(call.len == 2, "@arr expects 2 arguments: size and type");
+              let size_op = &env_getVal(b->env, call.off)->value;
+              let type_op = &env_getVal(b->env, call.off + 1)->value;
+
+              let size_arg = tu_catch(tv, *size_op);
+              if (tu_is(c_ast, size_arg.t)) {
+                size_arg = tu_catchr(tv, P$(env_findOwner(b->env, call.off), hv_handle_evaltype(b, size_arg.v.c_ast, $.scope, $.idx)));
+                *size_op = Op_tv(size_arg);
+              }
+              assertMessage(tu_is(c_int, size_arg.t), "array size must evaluate to an integer");
+
+              let type_arg = tu_catch(tv, *type_op);
+              if (tu_is(c_ast, type_arg.t)) {
+                type_arg = tu_catchr(tv, P$(env_findOwner(b->env, call.off + 1), hv_handle_evaltype(b, type_arg.v.c_ast, $.scope, $.idx)));
+                *type_op = Op_tv(type_arg);
+              }
+
+              bigint bint = size_arg.v.c_int;
+              if (bint) bigint_trim(&bint);
+              assertMessage(!bint || msList_len(bint) == 1, "array size must fit in one limb");
+              u32 array_size = bint ? bint[0] : 0;
+
+              Type elem_type = value_asType(type_arg);
+              Type arr_type = (Type)tu_of(r_arr, {IrBuilder_getType(b, elem_type), array_size});
+
+              env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(c_type, {}), {.c_type = IrBuilder_getType(b, arr_type)}}));
+              *insloc = ocode_of(onone, {});
+            } break;
+
+            case builtin_ptrof: {
+              assertMessage(call.len == 1, "@ptr expects 1 argument: type");
+              let type_op = &env_getVal(b->env, call.off)->value;
+              let type_arg = tu_catch(tv, *type_op);
+
+              if (tu_is(c_ast, type_arg.t)) {
+                type_arg = tu_catchr(tv, P$(env_findOwner(b->env, call.off), hv_handle_evaltype(b, type_arg.v.c_ast, $.scope, $.idx)));
+                *type_op = Op_tv(type_arg);
+              }
+
+              Type elem_type = value_asType(type_arg);
+              assertMessage(!Type_is_comptime(elem_type), "array of comptime has no meaning");
+              Type ptr_type = (Type)tu_of(r_ptr, IrBuilder_getType(b, elem_type));
+
+              env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(c_type, {}), {.c_type = IrBuilder_getType(b, ptr_type)}}));
               *insloc = ocode_of(onone, {});
             } break;
             case builtin_typeof: {
@@ -769,6 +839,11 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
             case builtin_any: {
               assertMessage(call.len == 0);
               env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(c_type, {}), {.c_type = IrBuilder_getType(b, (Type)tu_of(c_any, {}))}}));
+              *insloc = ocode_of(onone, {});
+            } break;
+            case builtin_int: {
+              assertMessage(call.len == 0);
+              env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(c_type, {}), {.c_type = IrBuilder_getType(b, (Type)tu_of(c_int, {}))}}));
               *insloc = ocode_of(onone, {});
             } break;
             case builtin_ast: {
@@ -799,10 +874,10 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
               emit_ir(b, arg.v.c_ast, 0);
 
               ir_av1(b);
-              typed_value yield_val = (typed_value){tu_of(r_void, {})};
+              op_tv yield_val = Op_tv(((typed_value){tu_of(r_void, {})}));
               if_decl (let len, msList_len(b->env->values))
-                yield_val = tu_catch(tv, b->env->values[len - 1]->value);
-              env_getVal(osc, call.d)->value = Op_tv(yield_val);
+                yield_val = b->env->values[len - 1]->value;
+              env_getVal(osc, call.d)->value = yield_val;
 
               *insloc = ocode_of(onone, {});
             } break;
@@ -846,39 +921,149 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
         (r_ptr, _, TODO()),
         (r_bitfield, _, TODO()),
         (r_struct, _, TODO()),
-        (c_ast, _, {
-          assertMessage(it.v.c_ast);
-          let ats = sentList_vla(tu_catch(astABlock, (*it.v.c_ast)).items);
-          assertMessage(countof((*ats)) == 1);
-          let n = tu_catch(astNumber, *(*ats)[0]);
-
-          let num_val = convertInt(b, n);
-          bigint bint = num_val.v.c_int;
-          bigint_trim(&bint);
-          assertMessage(msList_len(bint) == 1, "array size must fit in one limb");
-          u32 array_size = bint[0];
-
-          assertMessage(call.len == 1, "array type construction takes exactly one argument");
-          let arg_op = &env_getVal(b->env, call.off)->value;
-          let arg = tu_catch(tv, *arg_op);
-
-          if (tu_is(c_ast, arg.t)) {
-            arg = tu_catchr(tv, P$(env_findOwner(b->env, call.off), hv_handle_evaltype(b, arg.v.c_ast, $.scope, $.idx)));
-            *arg_op = Op_tv(arg);
-          }
-
-          Type elem_type = value_asType(arg);
-
-          env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(c_type, {}), {.c_type = IrBuilder_getType(b, (Type)tu_of(r_arr, {IrBuilder_getType(b, elem_type), array_size}))}}));
-
-          *insloc = ocode_of(onone, {});
-        }),
         (default, {
           println("called type {Type}", it.t);
           assertMessage(false);
         }),
     );
   } else unreachable();
+}
+
+bool runtime_truthy(typed_value v) {
+  assertMessage(!Type_is_comptime(v.t));
+  return fptr_isEmpty((fptr){Type_rsize(v.t), (u8 *)v.v.value});
+}
+bool tv_truthy(typed_value v) {
+  return tu_match_exp(
+      v.t,
+      (builtin, _, assertMessage(false, "builtin has no value"), false),
+      (r_void, _, false),
+      (r_tag, t, tv_truthy((typed_value){*t.type, v.v})),
+      (c_int, _, (bool)bigint_cmp(v.v.c_int, nullptr)),
+      (c_type, t, (bool)Type_cmp((Type)tu_of(r_void, {}), *v.v.c_type)),
+      (c_ast, _, (bool)!tu_is(astEmptyStatement, *v.v.c_ast)),
+      (c_any, _, false),
+      (default, runtime_truthy(v)),
+  );
+}
+bigint mk_bool(allocfn a, bool v) { return v ? BInt.from.i64(a, 1) : nullptr; }
+exec_signal ir_interpret_scope(IrBuilder *b) {
+  let code = b->env->code;
+  let allocator = IrBuilder_allocator(b);
+  exec_signal sig = {0};
+
+  for (u32 ipidx = 0; ipidx < msList_len(code);) {
+    opcode *ip = &code[ipidx];
+    u32 next = ipidx + 1;
+
+    tu_match_void(
+        *ip,
+        (oop, opp, {
+          let l = tu_catch(tv, env_getVal(b->env, opp.l)->value);
+          let r = tu_catch(tv, env_getVal(b->env, opp.r)->value);
+          let d_op = &env_getVal(b->env, opp.d)->value;
+          let d = tu_catch(tv, *d_op);
+
+          if (opp.o == opNumbers.pipe) {
+            assertMessage(false, "pipe operator (%u) not implemented", opp.o);
+          } else if (opp.o == opNumbers.set) {
+            if (Type_cmp(l.t, r.t)) {
+              assertMessage(tu_is(c_any, r.t), "type mismatch in omov assignment");
+              r.t = l.t;
+            }
+            d = l;
+          } else if (opp.o == opNumbers.eq || opp.o == opNumbers.neq || opp.o == opNumbers.les || opp.o == opNumbers.mor || opp.o == opNumbers.leq || opp.o == opNumbers.moq) {
+            assertMessage(!Type_cmp(l.t, r.t), "type mismatch in comparison (op %u)", opp.o);
+            assertMessage(tu_is(c_any, l.t), "type mismatch in omov assignment"); // <-- see note
+            i8 c = bigint_cmp(l.v.c_int, r.v.c_int);
+            bool res = opp.o == opNumbers.eq ? c == 0 : opp.o == opNumbers.neq ? c != 0
+                                                    : opp.o == opNumbers.les   ? c < 0
+                                                    : opp.o == opNumbers.mor   ? c > 0
+                                                    : opp.o == opNumbers.leq   ? c <= 0
+                                                                               : c >= 0;
+            d.t = (Type)tu_of(r_uint, 1);
+            d.v.c_int = mk_bool(allocator, res);
+          } else if (opp.o == opNumbers.mul || opp.o == opNumbers.div || opp.o == opNumbers.mod || opp.o == opNumbers.plus || opp.o == opNumbers.minus || opp.o == opNumbers.oand || opp.o == opNumbers.oor || opp.o == opNumbers.oband || opp.o == opNumbers.obor || opp.o == opNumbers.shr || opp.o == opNumbers.shl) {
+            assertMessage(!Type_cmp(l.t, r.t), "type mismatch in binary operator (op %u)", opp.o);
+            assertMessage(tu_is(c_any, r.t), "type mismatch in omov assignment"); // <-- see note
+            d.t = r.t;
+            if (opp.o == opNumbers.plus) d.v.c_int = bigint_add(allocator, l.v.c_int, r.v.c_int);
+            else if (opp.o == opNumbers.minus) d.v.c_int = bigint_sub(allocator, l.v.c_int, r.v.c_int);
+            else if (opp.o == opNumbers.mul) d.v.c_int = bigint_mul(allocator, l.v.c_int, r.v.c_int);
+            else if (opp.o == opNumbers.div) {
+              let dm = bigint_div(allocator, l.v.c_int, r.v.c_int);
+              msList_deInit(allocator, dm.mod);
+              d.v.c_int = dm.div;
+            } else if (opp.o == opNumbers.mod) {
+              let dm = bigint_div(allocator, l.v.c_int, r.v.c_int);
+              msList_deInit(allocator, dm.div);
+              d.v.c_int = dm.mod;
+            } else if (opp.o == opNumbers.oand) d.v.c_int = mk_bool(allocator, tv_truthy(l) && tv_truthy(r));
+            else if (opp.o == opNumbers.oor) d.v.c_int = mk_bool(allocator, tv_truthy(l) || tv_truthy(r));
+            else if (opp.o == opNumbers.shl || opp.o == opNumbers.shr) {
+              bigint rt = bigint_copy(allocator, r.v.c_int);
+              bigint_trim(&rt);
+              assertMessage(msList_len(rt) == 1, "shift amount must fit in one limb");
+              u32 n = rt[0];
+              msList_deInit(allocator, rt);
+              assertMessage(n < 63, "shift amount too large for this implementation");
+              let pow2 = BInt.from.i64(allocator, (i64)1 << n);
+              if (opp.o == opNumbers.shl) d.v.c_int = bigint_mul(allocator, l.v.c_int, pow2);
+              else {
+                let dm = bigint_div(allocator, l.v.c_int, pow2);
+                msList_deInit(allocator, dm.mod);
+                d.v.c_int = dm.div;
+              }
+              msList_deInit(allocator, pow2);
+            } else assertMessage(false, "bitwise and/or (op %u) not implemented — see note", opp.o);
+          } else if (opp.o == opNumbers.onot || opp.o == opNumbers.obnot) {
+            assertMessage(tu_is(c_any, r.t), "type mismatch in omov assignment");
+            d.t = r.t;
+            if (opp.o == opNumbers.onot) d.v.c_int = mk_bool(allocator, !tv_truthy(r));
+            else {
+              let one = BInt.from.i64(allocator, 1);
+              let inc = bigint_add(allocator, r.v.c_int, one);
+              d.v.c_int = bigint_negate(allocator, inc);
+              msList_deInit(allocator, one);
+              msList_deInit(allocator, inc);
+            }
+          } else assertMessage(false, "unhandled or unknown operator %u in oop", opp.o);
+
+          *d_op = Op_tv(d);
+        }),
+
+        (oret, l, { sig.value = env_getVal(b->env, l)->value; sig.returned = true; }),
+        (obreak, _, { sig.broke = true; }),
+        (oscop, sco, {
+          let old_env = b->env;
+          b->env = sco;
+          exec_signal sub = ir_interpret_scope(b);
+          b->env = old_env;
+
+          if (sub.returned || sub.broke) {
+            sig.returned = sub.returned;
+            sig.broke = sub.broke;
+            sig.value = sub.value;
+          } else {
+            op_tv yield_val = Op_tv(((typed_value){tu_of(r_void, {})}));
+            if_decl (let len, msList_len(sco->values))
+              yield_val = sco->values[len - 1]->value;
+            env_pushVal(allocator, b->env, yield_val, ipidx);
+          }
+        }),
+        (ojif, jmp, {
+          let cond = tu_catch(tv, env_getVal(b->env, jmp.l)->value);
+          if (!tv_truthy(cond)) next = jmp.d;
+        }),
+        (ojmp, tgt, { next = tgt; }),
+        (oconst, _, ),
+        (onone, _, ),
+    );
+
+    if (sig.returned || sig.broke) return sig;
+    ipidx = next;
+  }
+  return sig;
 }
 #undef assert_type
 void ir_av1(IrBuilder *b) {
@@ -904,9 +1089,23 @@ void ir_av1(IrBuilder *b) {
           env_pushVal(allocator, b->env, Op_tv(((typed_value){mList_arr(fnc)[oag]})), ip - code);
         }),
         (onew, nit, {
-          if_decl (let x, nit)
-            env_pushVal(allocator, b->env, Op_tv(((typed_value){value_asType(tu_catch(tv, env_getVal(b->env, nit)->value)), {}})), ip - code);
-          else env_pushVal(allocator, b->env, Op_tv(((typed_value){tu_of(c_any, {})})), ip - code);
+          if_decl (let x, nit) {
+            Type t = value_asType(tu_catch(tv, env_getVal(b->env, nit)->value));
+            value_store vs = {0};
+
+            if (!Type_is_comptime(t)) {
+              usize sz = Type_rsize(t);
+              if (sz > 0) {
+                let tmp = mList_init(b->alloc, u8, sz);
+                for (usize _i = 0; _i < sz; _i++)
+                  mList_push(tmp, 0);
+                vs.value = mList_toOwned(b->alloc, tmp);
+              }
+            }
+            env_pushVal(allocator, b->env, Op_tv(((typed_value){t, vs})), ip - code);
+          } else {
+            env_pushVal(allocator, b->env, Op_tv(((typed_value){tu_of(c_any, {}), {0}})), ip - code);
+          }
         }),
         (omov, mov, {
           let l_op = &env_getVal(b->env, mov.l)->value;
@@ -930,6 +1129,9 @@ void ir_av1(IrBuilder *b) {
                   snprint(stdAlloc, "{Type} != {Type}", r_tv.t, l_tv.t).ptr
               );
               assertMessage(!r_tv.v.value, "cannot mutate initialized value");
+            } else if (!Type_is_comptime(l_tv.t) && r_tv.v.value && l_tv.v.value) {
+              memcpy(r_tv.v.value, l_tv.v.value, Type_rsize(l_tv.t));
+              continue; // retain the destination memory pointer
             }
           }
 
@@ -963,9 +1165,15 @@ void ir_av1(IrBuilder *b) {
           ir_av1(b);
           b->env = old_env;
 
-          typed_value yield_val = (typed_value){tu_of(r_void, {})};
-          if_decl (let len, msList_len(sco->values)) yield_val.t = tu_catch(tv, sco->values[len - 1]->value).t;
-          env_pushVal(allocator, b->env, Op_tv(yield_val), ip - code);
+          op_tv yield_val = Op_tv(((typed_value){tu_of(r_void, {})}));
+          if_decl (let len, msList_len(sco->values)) {
+            op_tv last_val = sco->values[len - 1]->value;
+            if_tu_is (let tval, tv, last_val) {
+              if (!Type_is_comptime(tval.t)) tval.v = (value_store){0};
+              yield_val = Op_tv(tval);
+            } else yield_val = last_val;
+          }
+          env_pushVal(allocator, b->env, yield_val, ip - code);
         }),
         (oselem, sel, {
           let l = tu_catch(tv, env_getVal(b->env, sel.l)->value);
@@ -1019,7 +1227,7 @@ void ir_av1(IrBuilder *b) {
 
           if (opp.o == opNumbers.pipe) {
             assertMessage(false, "pipe operator (%u) not implemented", opp.o);
-          } else if (opp.o == opNumbers.set) { // TODO: should probably just be omov & try again
+          } else if (opp.o == opNumbers.set) {
             if (Type_cmp(l.t, r.t)) {
               assertMessage(tu_is(c_any, r.t), "type mismatch in omov assignment");
               r.t = l.t;
@@ -1032,23 +1240,97 @@ void ir_av1(IrBuilder *b) {
             assertMessage(!Type_cmp(l.t, r.t), "type mismatch in comparison (op %u)", opp.o);
             assertMessage(tu_is(c_any, l.t), "type mismatch in omov assignment");
             d.t = (Type)tu_of(r_uint, 1);
+
+            if (tu_is(c_int, l.t) && tu_is(c_int, r.t)) {
+              i8 c = bigint_cmp(l.v.c_int, r.v.c_int);
+              bool res = opp.o == opNumbers.eq ? c == 0 : opp.o == opNumbers.neq ? c != 0
+                                                      : opp.o == opNumbers.les   ? c < 0
+                                                      : opp.o == opNumbers.mor   ? c > 0
+                                                      : opp.o == opNumbers.leq   ? c <= 0
+                                                                                 : c >= 0;
+              d.v.c_int = res ? BInt.from.i64(allocator, 1) : nullptr;
+            }
           } else if (
               opp.o == opNumbers.mul || opp.o == opNumbers.div || opp.o == opNumbers.mod ||
               opp.o == opNumbers.plus || opp.o == opNumbers.minus || opp.o == opNumbers.oand ||
               opp.o == opNumbers.oor || opp.o == opNumbers.oband || opp.o == opNumbers.obor ||
               opp.o == opNumbers.shr || opp.o == opNumbers.shl
           ) {
-            assertMessage(!Type_cmp(l.t, r.t), "type mismatch in binary operator (op %u)", opp.o);
-            assertMessage(tu_is(c_any, r.t), "type mismatch in omov assignment");
+            assertMessage(!Type_cmp(l.t, r.t) || tu_is(c_any, r.t), "type mismatch in binary operator (op %u)", opp.o);
             d.t = r.t;
+
+            if (tu_is(c_int, l.t) && tu_is(c_int, r.t)) {
+              if (opp.o == opNumbers.plus) d.v.c_int = bigint_add(allocator, l.v.c_int, r.v.c_int);
+              else if (opp.o == opNumbers.minus) d.v.c_int = bigint_sub(allocator, l.v.c_int, r.v.c_int);
+              else if (opp.o == opNumbers.mul) d.v.c_int = bigint_mul(allocator, l.v.c_int, r.v.c_int);
+              else if (opp.o == opNumbers.div) {
+                let dm = bigint_div(allocator, l.v.c_int, r.v.c_int);
+                msList_deInit(allocator, dm.mod);
+                d.v.c_int = dm.div;
+              } else if (opp.o == opNumbers.mod) {
+                let dm = bigint_div(allocator, l.v.c_int, r.v.c_int);
+                msList_deInit(allocator, dm.div);
+                d.v.c_int = dm.mod;
+              } else if (opp.o == opNumbers.oand) {
+                bool lv = bigint_cmp(l.v.c_int, nullptr) != 0;
+                bool rv = bigint_cmp(r.v.c_int, nullptr) != 0;
+                d.v.c_int = (lv && rv) ? BInt.from.i64(allocator, 1) : nullptr;
+              } else if (opp.o == opNumbers.oor) {
+                bool lv = bigint_cmp(l.v.c_int, nullptr) != 0;
+                bool rv = bigint_cmp(r.v.c_int, nullptr) != 0;
+                d.v.c_int = (lv || rv) ? BInt.from.i64(allocator, 1) : nullptr;
+              } else if (opp.o == opNumbers.shl || opp.o == opNumbers.shr) {
+                bigint rt = bigint_copy(allocator, r.v.c_int);
+                if (rt) bigint_trim(&rt);
+                assertMessage(rt == nullptr || msList_len(rt) == 1, "shift amount must fit in one limb");
+                u32 n = rt ? rt[0] : 0;
+                if (rt) msList_deInit(allocator, rt);
+
+                let pow2 = BInt.from.i64(allocator, (i64)1 << n);
+                if (opp.o == opNumbers.shl) d.v.c_int = bigint_mul(allocator, l.v.c_int, pow2);
+                else {
+                  let dm = bigint_div(allocator, l.v.c_int, pow2);
+                  msList_deInit(allocator, dm.mod);
+                  d.v.c_int = dm.div;
+                }
+                msList_deInit(allocator, pow2);
+              } else {
+                assertMessage(false, "bitwise and/or (op %u) not implemented", opp.o);
+              }
+            }
           } else if (opp.o == opNumbers.onot || opp.o == opNumbers.obnot) {
             assertMessage(tu_is(c_any, r.t), "type mismatch in omov assignment");
             d.t = r.t;
+
+            if (tu_is(c_int, r.t)) {
+              if (opp.o == opNumbers.onot) {
+                bool rv = bigint_cmp(r.v.c_int, nullptr) != 0;
+                d.v.c_int = rv ? nullptr : BInt.from.i64(allocator, 1);
+              } else {
+                let one = BInt.from.i64(allocator, 1);
+                let inc = bigint_add(allocator, r.v.c_int, one);
+                d.v.c_int = bigint_negate(allocator, inc);
+                msList_deInit(allocator, one);
+                msList_deInit(allocator, inc);
+              }
+            }
           } else assertMessage(false, "unhandled or unknown operator %u in oop", opp.o);
 
           *d_op = Op_tv(d);
         }),
-        (oconst, con, ),
+        (oconst, con, {
+          for (scope *s = b->env; s; s = scope_parent(s)) {
+            bool found = false;
+            foreach (let kv, moxmap_iter(s->locals, fptr, moxmap_vt(s->locals))) {
+              if (kv.val->idx == con) {
+                kv.val->isconst = true;
+                found = true;
+                break;
+              }
+            }
+            if (found) break;
+          }
+        }),
         (obreak, _, ),
         (onone, _, ),
         (oret, _, ),

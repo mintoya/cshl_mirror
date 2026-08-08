@@ -86,7 +86,7 @@ cmd_main(
   var_ ast = parseBBlock(astArena, buffer.ptr, (slice(Token)){.len = msList_len(tokens), tokens});
   println("(log) after ast : {dbga_stats}", debugAllocator_stats(allocator));
 
-  DepthState dstate = {
+  let dstate = (DepthState){
       .inner_put = fileprint,
       .inner_arb = stdout,
       .depth = 0,

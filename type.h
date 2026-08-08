@@ -20,10 +20,13 @@ typedef enum : u8 {
                   // then when called with expression, yields an r_func
   builtin_ast,    // @ast() type of ast
   builtin_any,    // @any() type of any
-  builtin_int,    // @sint(N) integer with N bits
+  builtin_int,    // @int() compile time bigint
+  builtin_sint,   // @sint(N) integer with N bits
   builtin_uint,   // @uint(N) unsigned integer with N bits
   builtin_type,   // @type() the type of a type
   builtin_typeof, // @typeof(V) type of argument
+  builtin_arrof,  // @arrof(N,t) array of N t's
+  builtin_ptrof,  // @ptrof(t) pionter to t
 
   builtin_return, // return x return
   builtin_break,  // @break()
@@ -332,8 +335,11 @@ typePrinter(builtin_id) {
     case(builtin_if):PUTS("if");break;
     case(builtin_fn):PUTS("fn");break;
     case(builtin_ast):PUTS("ast");break;
+    case(builtin_arrof):PUTS("arrof");break;
+    case(builtin_ptrof):PUTS("ptrof");break;
     case(builtin_any):PUTS("any");break;
     case(builtin_int):PUTS("int");break;
+    case(builtin_sint):PUTS("sint");break;
     case(builtin_uint):PUTS("uint");break;
     case(builtin_type):PUTS("type");break;
     case(builtin_while):PUTS("while");break;
