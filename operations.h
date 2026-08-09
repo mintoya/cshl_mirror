@@ -5,6 +5,7 @@
 #include "wheels/fptr.h"
 #include "wheels/mytypes.h"
 #include "wheels/print/print_pre.h"
+#include <assert.h>
 #include <stdcountof.h>
 #include <wheels/allocators/fbaAllocator.h>
 #include <wheels/bigint.h>
@@ -275,6 +276,13 @@ u32 env_push(IrBuilder *b) {
 }
 
 void env_pop(IrBuilder *b) { b->env = scope_parent(b->env); }
+void env_destroy(IrBuilder *b, scope *s) {
+  let allocator = b->alloc;
+  moxmap_deinit(s->locals);
+  msList_deInit(b->alloc, s->values);
+  msList_deInit(b->alloc, s->code);
+  adestroy(allocator, s);
+}
 bool op_creates(opcode o) {
   return tu_match_exp(
       o,
@@ -428,16 +436,16 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
                )
            );
          } else if (op.number_rep == opNumbers.dot) {
-           irc = env_addOp(
-               b,
-               ocode_of(
-                   olelem,
-                   {
-                       .l = op.left ? emit_ir(b, op.left, 0) : ctx,
-                       .name = tu_catch(astId, op.right[0]),
-                   }
-               )
-           );
+           fptr field_name;
+           if (tu_is(astId, op.right[0])) {
+             field_name = tu_catch(astId, op.right[0]);
+           } else if (tu_is(astString, op.right[0])) {
+             fptr raw_str = tu_catch(astString, op.right[0]);
+             assertMessage(raw_str.len >= 2, "invalid string literal after dot");
+             field_name = (fptr){raw_str.len - 2, raw_str.ptr + 1};
+           } else assertMessage(false, "right side of dot operator must be an identifier or string");
+
+           irc = env_addOp(b, ocode_of(olelem, {.l = op.left ? emit_ir(b, op.left, 0) : ctx, .name = field_name}));
          } else {
            env_addOp(
                b,
@@ -593,28 +601,33 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
         mList_push(sig_types, tu_catch(tv, env_getVal(b->env, param_reg)->value).t);
       }
       let ret_type_val = tu_catch(tv, env_getVal(b->env, ret_type_reg)->value);
-      mList_push(sig_types, value_asType(ret_type_val));
+      Type expected_ret = value_asType(ret_type_val);
+      mList_push(sig_types, expected_ret);
 
-      //-functoin check
+      //-function check
 
       Type fn_type = *IrBuilder_getType(b, (Type)tu_of(r_func, sig_types));
-
-      if (Type_is_comptime(value_asType(ret_type_val))) {
+      if (Type_is_comptime(expected_ret)) {
         env_push(b);
         emit_ir(b, it.body, 0);
         ir_av1(b);
-        exec_signal sig = ir_interpret_scope(b);
-
-        op_tv yield_val =
-            sig.returned
-                ? sig.value
-                : ({
-                    let r = Op_tv(((typed_value){tu_of(r_void, {})}));
-                    if_decl (let len, msList_len(b->env->values))
-                      r = b->env->values[len - 1]->value;
-                    r;
-                  });
+        let sig = ir_interpret_scope(b);
+        assertMessage(sig.returned, "compile time function didnt return ");
+        op_tv yield_val = sig.value;
         env_pop(b);
+
+        env_destroy(b, tu_catch(oscop, msList_last(b->env->code)));
+        msList_len(b->env->code)--;
+
+        if (tu_is(tv, yield_val)) {
+          Type actual_ret = tu_catch(tv, yield_val).t;
+          assertMessage(
+              !Type_cmp(expected_ret, actual_ret) || tu_is(c_any, expected_ret),
+              "return type mismatch: expected %s, got %s",
+              snprint(stdAlloc, "{Type}", expected_ret).ptr,
+              snprint(stdAlloc, "{Type}", actual_ret).ptr
+          );
+        }
 
         env_getVal(osc, call.d)->value = yield_val;
         *insloc = ocode_of(onone, {});
@@ -795,6 +808,7 @@ void ir_handle_call(IrBuilder *b, ocall call, opcode *insloc) {
               u32 array_size = bint ? bint[0] : 0;
 
               Type elem_type = value_asType(type_arg);
+              assertMessage(!Type_is_comptime(elem_type), "array of comptime is meaningless");
               Type arr_type = (Type)tu_of(r_arr, {IrBuilder_getType(b, elem_type), array_size});
 
               env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(c_type, {}), {.c_type = IrBuilder_getType(b, arr_type)}}));
@@ -984,8 +998,7 @@ exec_signal ir_interpret_scope(IrBuilder *b) {
             d.t = (Type)tu_of(r_uint, 1);
             d.v.c_int = mk_bool(allocator, res);
           } else if (opp.o == opNumbers.mul || opp.o == opNumbers.div || opp.o == opNumbers.mod || opp.o == opNumbers.plus || opp.o == opNumbers.minus || opp.o == opNumbers.oand || opp.o == opNumbers.oor || opp.o == opNumbers.oband || opp.o == opNumbers.obor || opp.o == opNumbers.shr || opp.o == opNumbers.shl) {
-            assertMessage(!Type_cmp(l.t, r.t), "type mismatch in binary operator (op %u)", opp.o);
-            assertMessage(tu_is(c_any, r.t), "type mismatch in omov assignment"); // <-- see note
+            assertMessage(!Type_cmp(l.t, r.t) || tu_is(c_any, r.t), "type mismatch in binary operator (op %u)", opp.o);
             d.t = r.t;
             if (opp.o == opNumbers.plus) d.v.c_int = bigint_add(allocator, l.v.c_int, r.v.c_int);
             else if (opp.o == opNumbers.minus) d.v.c_int = bigint_sub(allocator, l.v.c_int, r.v.c_int);
@@ -1032,12 +1045,16 @@ exec_signal ir_interpret_scope(IrBuilder *b) {
           *d_op = Op_tv(d);
         }),
 
-        (oret, l, { sig.value = env_getVal(b->env, l)->value; sig.returned = true; }),
+        (oret, l, {
+          sig.value = env_getVal(b->env, l)->value;
+          println("returning {op_tv}", sig.value);
+          sig.returned = true;
+        }),
         (obreak, _, { sig.broke = true; }),
         (oscop, sco, {
           let old_env = b->env;
           b->env = sco;
-          exec_signal sub = ir_interpret_scope(b);
+          let sub = ir_interpret_scope(b);
           b->env = old_env;
 
           if (sub.returned || sub.broke) {
@@ -1052,10 +1069,22 @@ exec_signal ir_interpret_scope(IrBuilder *b) {
           }
         }),
         (ojif, jmp, {
-          let cond = tu_catch(tv, env_getVal(b->env, jmp.l)->value);
-          if (!tv_truthy(cond)) next = jmp.d;
+          if (!tv_truthy(tu_catch(tv, env_getVal(b->env, jmp.l)->value)))
+            next = jmp.d;
         }),
-        (ojmp, tgt, { next = tgt; }),
+        (ojmp, tgt, next = tgt;),
+
+        (onew, _, ),
+        (oint, _, ),
+        (ostr, _, ),
+        (oast, _, ),
+        (olelem, _, ),
+        (obin, _, ),
+        (oarg, _, ),
+
+        (omov, _, ),
+        (ocall, _, ),
+        (oselem, _, ),
         (oconst, _, ),
         (onone, _, ),
     );
@@ -1140,24 +1169,104 @@ void ir_av1(IrBuilder *b) {
         (ocall, cal, ir_handle_call(b, cal, ip)),
         (olelem, ell, {
           let l = tu_catch(tv, env_getVal(b->env, ell.l)->value);
-          Type t;
-          bool f = false;
-          tu_match_void(
-              l.t,
-              (r_bitfield, bf, {
-                foreach (let v, mList_iter(bf))
-                  if (fptr_eq(v.name, ell.name))
-                    f = true, t = v.init.t, ({ break; });
-              }),
-              (r_struct, st, {
-                foreach (let v, mList_iter(st))
-                  if (fptr_eq(v.name, ell.name))
-                    f = true, t = v.init.t, ({ break; });
-              }),
-              (default, assertMessage(false, "type does not support loading element"))
-          );
-          if (!f) error_at(ell.name.ptr, "struct has no element with that name");
-          env_pushVal(allocator, b->env, Op_tv(((typed_value){t})), ip - code);
+
+          if (tu_is(c_ast, l.t)) {
+            ast *node = l.v.c_ast;
+            typed_value yield_val = {tu_of(r_void, {})};
+
+            if (node) {
+              if (fptr_eq(ell.name, "id") && tu_is(astId, *node)) yield_val = l;
+              else if (fptr_eq(ell.name, "number") && tu_is(astNumber, *node)) yield_val = l;
+              else if (fptr_eq(ell.name, "string") && tu_is(astString, *node)) yield_val = l;
+              else if (fptr_eq(ell.name, "decl") && tu_is(astDecl, *node)) yield_val = l;
+              else if (fptr_eq(ell.name, "op") && tu_is(astOp, *node)) yield_val = l;
+              else if (fptr_eq(ell.name, "pblock") && tu_is(astPBlock, *node)) yield_val = l;
+              else if (fptr_eq(ell.name, "bblock") && tu_is(astBBlock, *node)) yield_val = l;
+              else if (fptr_eq(ell.name, "ablock") && tu_is(astABlock, *node)) yield_val = l;
+
+              else iflet_tu (let op_node, astOp, *node) {
+
+                if (fptr_eq(ell.name, "left")) {
+                  if (op_node.left) yield_val = (typed_value){tu_of(c_ast, {}), {.c_ast = op_node.left}};
+                } else if (fptr_eq(ell.name, "right")) {
+                  if (op_node.right) yield_val = (typed_value){tu_of(c_ast, {}), {.c_ast = op_node.right}};
+                } else {
+                  u32 name_rep = 0;
+                  for (usize i = 0; i < sizeof(u32) && i < ell.name.len; i++)
+                    ((char *)&name_rep)[i] = ell.name.ptr[i];
+                  if (op_node.number_rep == name_rep) yield_val = l;
+                }
+              } else iflet_tu (let decl_node, astDecl, *node) {
+                let decl_node = tu_catch(astDecl, *node);
+
+                if (fptr_eq(ell.name, "name")) {
+                  if (decl_node.name) yield_val = (typed_value){tu_of(c_ast, {}), {.c_ast = decl_node.name}};
+                } else if (fptr_eq(ell.name, "type")) {
+                  if (decl_node.type) yield_val = (typed_value){tu_of(c_ast, {}), {.c_ast = decl_node.type}};
+                } else if (fptr_eq(ell.name, "value")) {
+                  if (decl_node.value) yield_val = (typed_value){tu_of(c_ast, {}), {.c_ast = decl_node.value}};
+                } else if (fptr_eq(ell.name, "is_const")) {
+                  yield_val = (typed_value){tu_of(c_int, {}), {.c_int = decl_node.is_const ? BInt.from.i64(allocator, 1) : nullptr}};
+                }
+              }
+            }
+
+            static ast base_empty = tu_of(astEmptyStatement, {});
+            iflet_tu (let v, r_void, yield_val.t)
+              yield_val = (typed_value){
+                  tu_of(c_ast, {}),
+                  &base_empty
+              };
+
+            env_pushVal(allocator, b->env, Op_tv(yield_val), ip - code);
+          } else {
+            Type t;
+            bool found = false;
+            typed_value const_val = {0};
+            bool is_const = false;
+            usize offset = 0;
+
+            Type actual_type = l.t;
+            if (tu_is(c_type, l.t)) actual_type = *l.v.c_type;
+
+            tu_match_void(
+                actual_type,
+                (r_bitfield, bf, {
+                  foreach (let v, mList_iter(bf))
+                    if (fptr_eq(v.name, ell.name)) {
+                      found = true;
+                      t = v.init.t;
+                      if (is_const) const_val = v.init;
+                      break;
+                    }
+                }),
+                (r_struct, st, {
+                  foreach (let v, mList_iter(st))
+                    if (fptr_eq(v.name, ell.name)) {
+                      found = true;
+                      t = v.init.t;
+                      is_const = v.isconst;
+                      offset = v.offset;
+                      if (is_const) const_val = v.init;
+                      break;
+                    }
+                }),
+                (default, assertMessage(false, "%s does not support loading element", snprint(stdAlloc, "{Type}", actual_type).ptr))
+            );
+
+            if (!found) error_at(ell.name.ptr, "struct has no element with that name");
+
+            if (is_const) {
+              env_pushVal(allocator, b->env, Op_tv(const_val), ip - code);
+            } else {
+              assertMessage(!tu_is(c_type, l.t), "cannot access non-const instance member statically");
+              value_store vs = {0};
+              if (!Type_is_comptime(t) && l.v.value) {
+                vs.value = ((u8 *)l.v.value) + offset;
+              }
+              env_pushVal(allocator, b->env, Op_tv(((typed_value){t, vs})), ip - code);
+            }
+          }
         }),
         (oscop, sco, {
           let old_env = b->env;

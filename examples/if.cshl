@@ -12,3 +12,36 @@ a:= 1;
   a,
   a = a - 1
 );
+
+ast :: @ast();
+if :: fn((a: ast), ast) {
+  call :ast: a."()";
+  cond :ast: call.l;
+  rest :ast: call.r;
+
+  @if(rest."()", {
+    then_block :ast: rest.l;
+    
+    // Probing the right side safely. If it's not an Op '()', it evaluates to void (falsy)
+    else_call :ast: rest.r."()";
+
+    @if(else_call, {
+      // We safely identified a 3-part chain: then_block (else else_block)
+      // else_call.l is `Id 'else'`
+      // else_call.r is the else body
+      return @qot(
+        @if(@uqot(cond), @uqot(then_block), @uqot(else_call.r))
+      );
+    });
+  });
+
+  // Fallback: If `rest` was just a single node (like `2`), OR if the inner @if
+  // failed because `rest` was a normal function call like `f(x)` instead of an `else` chain.
+  return @qot(
+    @if(@uqot(cond), @uqot(rest))
+  );
+};
+
+i :: @uqot  
+  if 1 (2) 
+    else (3);
