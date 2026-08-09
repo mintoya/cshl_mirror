@@ -1,10 +1,9 @@
 type :: @type();
-
-a:=1;
-b:="l";
+a:@sint(8);
+b:="h";
 
 two::fn((t:type,b:t),type)
-  @if(1,return @arr(2 , t));
+  return @arr(2 , t);
 
 at :two(@typeof(a),a);
 bt :two(@typeof(b),b);

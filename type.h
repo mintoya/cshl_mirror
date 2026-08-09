@@ -42,7 +42,7 @@ tu_def( // type
     (Type, u8),
     (builtin /*      */, builtin_id),
     // runtime
-    (r_void /*       */, nothing_t),
+    (r_void /*       */, struct {}),
     (r_uint /*       */, u16),
     (r_sint /*       */, u16),
     (r_tag /*        */, struct { fptr name;Type *type; }),
@@ -54,7 +54,7 @@ tu_def( // type
     // compile time
     // they could all be nothing_t's, i'd rather show here what they a re but also
     // not have them take up any storage space
-    (c_any /*        */, nothing_t),
+    (c_any /*        */, struct {}),
     (c_int /*        */, typeof(bigint[0])),
     (c_type /*       */, typeof(Type *[0])),
     (c_ast /*        */, typeof(ast *[0])),
@@ -416,7 +416,7 @@ void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_co
         PUTS(")");
       }),
       (r_uint, bits, PUTS("u"); USETYPEPRINTER(usize, bits);),
-      (r_sint, bits, PUTS("i"); USETYPEPRINTER(usize, bits);),
+      (r_sint, bits, PUTS("s"); USETYPEPRINTER(usize, bits);),
       // complex, require other types
 
       // only one type, no push

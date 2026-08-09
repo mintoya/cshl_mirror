@@ -41,10 +41,14 @@ i8 r_func_cmp(const void *a, const void *b) {
 
 tu_def((op_tv, u8), (tv, typed_value), (gfn, gfn));
 
-#define Op_tv(x) match_type(         \
-    x,                               \
-    (tv, _t, (op_tv)tu_of(tv, _t)),  \
-    (gfn, _t, (op_tv)tu_of(gfn, _t)) \
+#define Op_tv(x) match_type(                                   \
+    x,                                                         \
+    (tv, _t, (op_tv)tu_of(tv, _t)),                            \
+    (gfn, _t, (op_tv)tu_of(gfn, _t)),                          \
+    (r_void, _, (op_tv)tu_of(tv, {tu_of(r_void, {})})),        \
+    (c_any, _, (op_tv)tu_of(tv, {tu_of(c_any, {})})),          \
+    (ast *, a, (op_tv)tu_of(tv, {tu_of(c_ast, {}), {a}})),     \
+    (Type *, _t, (op_tv)tu_of(tv, {tu_of(c_type, {}), {_t}})), \
 )
 #define Op_tv_is(first, second, value) (tu_is(first, value) && tu_is(second, tu_catch(first, value).t))
 
@@ -96,7 +100,6 @@ tu_def(
     // store element named name in l into d
     (oselem, struct {u32 l , d ; fptr name; }),
 );
-_Static_assert(sizeof(opcode));
 #define ocode_of (opcode) tu_of
 
 typedef struct scope scope;
@@ -149,7 +152,7 @@ typePrinter(op_tv) {
   );
 }
 
-typedef struct {
+typedef struct IrBuilder {
   allocfn alloc;
   scope *env;
   moxmap(Type, Type *) types;
@@ -190,9 +193,9 @@ IrBuilder IrBuilder_init(allocfn allocator) {
       {"@any", builtin_any},
       {"@int", builtin_int},
       {"@sint", builtin_sint},
+      {"@uint", builtin_uint},
       {"@arr", builtin_arrof},
       {"@ptr", builtin_ptrof},
-      {"@uint", builtin_uint},
       {"@type", builtin_type},
       {"@typeof", builtin_typeof},
       {"@break", builtin_break},
@@ -533,13 +536,13 @@ struct env_findOwner_result env_findOwner(scope *sp, u32 idx) {
   return env_findOwner(sp, idx);
 }
 
-void ir_av1(IrBuilder *b);
+void lower_i(IrBuilder *b);
 op_tv hv_handle_evaltype(IrBuilder *b, ast *target_ast, scope *target, u32 cidx) {
   let old_env = b->env;
   defer { b->env = old_env; };
   b->env = env_replace(b, target, cidx);
   u32 reg = emit_ir(b, target_ast, 0);
-  ir_av1(b);
+  lower_i(b);
 
   return env_getVal(b->env, reg)->value;
 }
@@ -606,7 +609,7 @@ ast *full_unquote(IrBuilder *b, ast *x) {
         if (op.number_rep == opNumbers.call && op.left && tu_is(astId, *op.left) && fptr_eq(tu_catch(astId, *op.left), "@uqot")) {
           env_push(b);
           u32 val_reg = emit_ir(b, op.right, 0);
-          ir_av1(b);
+          lower_i(b);
           let yield_val = tu_catch(tv, env_getVal(b->env, val_reg)->value);
           env_pop(b);
           
@@ -666,7 +669,7 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
       }
 
       u32 ret_type_reg = emit_ir(b, it.type.r, 0);
-      ir_av1(b);
+      lower_i(b);
 
       mList(Type) sig_types = mList_init(b->alloc, Type, call.len + 1);
       defer { mList_deinit(sig_types); };
@@ -685,7 +688,7 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
       if (Type_is_comptime(expected_ret)) {
         env_push(b);
         emit_ir(b, it.body, 0);
-        ir_av1(b);
+        lower_i(b);
         let sig = ir_interpret_scope(b);
         assertMessage(sig.returned, "compile time function didnt return ");
         op_tv yield_val = sig.value;
@@ -715,7 +718,7 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
           {
             moxmap_set(it.spec, sig_types, b->env);
             emit_ir(b, it.body, 0);
-            ir_av1(b);
+            lower_i(b);
           }
           env_pop(b);
 
@@ -771,9 +774,9 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
                 b->env->code[jmp_idx] = ocode_of(ojmp, msList_len(b->env->code));
               } else b->env->code[jif_idx] = ocode_of(ojif, {.l = cond_reg, .d = msList_len(b->env->code)});
 
-              ir_av1(b);
+              lower_i(b);
 
-              env_getVal(osc, call.d)->value = Op_tv(((typed_value){tu_of(r_void, {})}));
+              env_getVal(osc, call.d)->value = Op_tv((r_void){});
               osc->code[insloc] = ocode_of(onone, {});
             } break;
             case builtin_while: {
@@ -806,13 +809,13 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
 
               b->env->code[jif_exit_idx] = ocode_of(ojif, {.l = cond_reg, .d = msList_len(b->env->code)});
 
-              ir_av1(b);
-              env_getVal(osc, call.d)->value = Op_tv(((typed_value){tu_of(r_void, {})}));
+              lower_i(b);
+              env_getVal(osc, call.d)->value = Op_tv((r_void){});
 
               osc->code[insloc] = ocode_of(onone, {});
             } break;
             case builtin_break: {
-              env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(r_void, {})}));
+              env_getVal(b->env, call.d)->value = Op_tv((r_void){});
 
               b->env->code[insloc] = ocode_of(obreak, {});
             } break;
@@ -832,8 +835,8 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
               u32 expr_reg = emit_ir(b, ret_ast, 0);
               env_addOp(b, ocode_of(oret, expr_reg));
 
-              ir_av1(b);
-              env_getVal(osc, call.d)->value = Op_tv(((typed_value){tu_of(r_void, {})}));
+              lower_i(b);
+              env_getVal(osc, call.d)->value = Op_tv((r_void){});
 
               osc->code[insloc] = ocode_of(onone, {});
             } break;
@@ -855,8 +858,8 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
               u32 bits = bint[0];
               assertMessage(bigint_cmp(bint, nullptr), "bit width must be positive");
 
-              Type created_type = bin == builtin_int ? (Type)tu_of(r_sint, bits) : (Type)tu_of(r_uint, bits);
-              env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(c_type, {}), {.c_type = IrBuilder_getType(b, created_type)}}));
+              Type created_type = bin == builtin_sint ? (Type)tu_of(r_sint, bits) : (Type)tu_of(r_uint, bits);
+              env_getVal(b->env, call.d)->value = Op_tv(IrBuilder_getType(b, created_type));
               b->env->code[insloc] = ocode_of(onone, {});
             } break;
             case builtin_arrof: {
@@ -886,7 +889,7 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
               assertMessage(!Type_is_comptime(elem_type), "array of comptime is meaningless");
               Type arr_type = (Type)tu_of(r_arr, {IrBuilder_getType(b, elem_type), array_size});
 
-              env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(c_type, {}), {.c_type = IrBuilder_getType(b, arr_type)}}));
+              env_getVal(b->env, call.d)->value = Op_tv(IrBuilder_getType(b, arr_type));
               b->env->code[insloc] = ocode_of(onone, {});
             } break;
 
@@ -904,7 +907,7 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
               assertMessage(!Type_is_comptime(elem_type), "array of comptime has no meaning");
               Type ptr_type = (Type)tu_of(r_ptr, IrBuilder_getType(b, elem_type));
 
-              env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(c_type, {}), {.c_type = IrBuilder_getType(b, ptr_type)}}));
+              env_getVal(b->env, call.d)->value = Op_tv(IrBuilder_getType(b, ptr_type));
               b->env->code[insloc] = ocode_of(onone, {});
             } break;
             case builtin_typeof: {
@@ -917,27 +920,27 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
                 *arg_op = Op_tv(arg);
               }
 
-              env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(c_type, {}), {.c_type = IrBuilder_getType(b, typeof_Value(arg))}}));
+              env_getVal(b->env, call.d)->value = Op_tv(IrBuilder_getType(b, typeof_Value(arg)));
               b->env->code[insloc] = ocode_of(onone, {});
             } break;
             case builtin_type: {
               assertMessage(call.len == 0);
-              env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(c_type, {}), {.c_type = IrBuilder_getType(b, (Type)tu_of(c_type, {}))}}));
+              env_getVal(b->env, call.d)->value = Op_tv(IrBuilder_getType(b, (Type)tu_of(c_type, {})));
               b->env->code[insloc] = ocode_of(onone, {});
             } break;
             case builtin_any: {
               assertMessage(call.len == 0);
-              env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(c_type, {}), {.c_type = IrBuilder_getType(b, (Type)tu_of(c_any, {}))}}));
+              env_getVal(b->env, call.d)->value = Op_tv(IrBuilder_getType(b, (Type)tu_of(c_any, {})));
               b->env->code[insloc] = ocode_of(onone, {});
             } break;
             case builtin_int: {
               assertMessage(call.len == 0);
-              env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(c_type, {}), {.c_type = IrBuilder_getType(b, (Type)tu_of(c_int, {}))}}));
+              env_getVal(b->env, call.d)->value = Op_tv(IrBuilder_getType(b, (Type)tu_of(c_int, {})));
               b->env->code[insloc] = ocode_of(onone, {});
             } break;
             case builtin_ast: {
               assertMessage(call.len == 0);
-              env_getVal(b->env, call.d)->value = Op_tv(((typed_value){tu_of(c_type, {}), {.c_type = IrBuilder_getType(b, (Type)tu_of(c_ast, {}))}}));
+              env_getVal(b->env, call.d)->value = Op_tv(IrBuilder_getType(b, (Type)tu_of(c_ast, {})));
               b->env->code[insloc] = ocode_of(onone, {});
             } break;
             case builtin_qot: {
@@ -966,8 +969,8 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
 
               emit_ir(b, arg.v.c_ast, 0);
 
-              ir_av1(b);
-              op_tv yield_val = Op_tv(((typed_value){tu_of(r_void, {})}));
+              lower_i(b);
+              op_tv yield_val = Op_tv((r_void){});
               if_decl (let len, msList_len(b->env->values))
                 yield_val = b->env->values[len - 1]->value;
               env_getVal(osc, call.d)->value = yield_val;
@@ -1146,7 +1149,7 @@ exec_signal ir_interpret_scope(IrBuilder *b) {
             sig.broke = sub.broke;
             sig.value = sub.value;
           } else {
-            op_tv yield_val = Op_tv(((typed_value){tu_of(r_void, {})}));
+            op_tv yield_val = Op_tv((r_void){});
             if_decl (let len, msList_len(sco->values))
               yield_val = sco->values[len - 1]->value;
             env_pushVal(allocator, b->env, yield_val, ipidx);
@@ -1179,16 +1182,15 @@ exec_signal ir_interpret_scope(IrBuilder *b) {
   return sig;
 }
 #undef assert_type
-void ir_av1(IrBuilder *b) {
+void lower_i(IrBuilder *b) {
   let allocator = IrBuilder_allocator(b);
-  for (let ipdix = 0; ipdix < msList_len(b->env->code); ipdix++) {
-  try_again:
+  foreach (let const ipdix, range(0, msList_len(b->env->code))) {
     tu_match_void(
         (b->env->code)[ipdix],
         (oint, str, env_pushVal(allocator, b->env, Op_tv(convertInt(b, str)), ipdix)),
         (ostr, str, env_pushVal(allocator, b->env, Op_tv(convertString(b, str)), ipdix)),
         (obin, bin, env_pushVal(allocator, b->env, Op_tv(((typed_value){tu_of(builtin, bin)})), ipdix)),
-        (oast, ats, env_pushVal(allocator, b->env, Op_tv(((typed_value){tu_of(c_ast, {}), ats})), ipdix)),
+        (oast, ats, env_pushVal(allocator, b->env, Op_tv(ats), ipdix)),
         (oarg, oag, {
           assertMessage(b->fnctx, "");
           let fnc = *b->fnctx;
@@ -1216,7 +1218,7 @@ void ir_av1(IrBuilder *b) {
             }
             env_pushVal(allocator, b->env, Op_tv(((typed_value){t, vs})), ipdix);
           } else {
-            env_pushVal(allocator, b->env, Op_tv(((typed_value){tu_of(c_any, {}), {0}})), ipdix);
+            env_pushVal(allocator, b->env, Op_tv((c_any){}), ipdix);
           }
         }),
         (omov, mov, {
@@ -1241,11 +1243,8 @@ void ir_av1(IrBuilder *b) {
                   "type mismatch %s",
                   snprint(stdAlloc, "{Type} != {Type}", r_tv.t, l_tv.t).ptr
               );
-              assertMessage(!r_tv.v.value, "cannot mutate initialized value");
-            } else if (!Type_is_comptime(l_tv.t) && r_tv.v.value && l_tv.v.value) {
+            } else if (!Type_is_comptime(l_tv.t) && r_tv.v.value && l_tv.v.value)
               memcpy(r_tv.v.value, l_tv.v.value, Type_rsize(l_tv.t));
-              continue; // retain the destination memory pointer
-            }
           }
 
           *r_op = l;
@@ -1355,10 +1354,10 @@ void ir_av1(IrBuilder *b) {
         (oscop, sco, {
           let old_env = b->env;
           b->env = sco;
-          ir_av1(b);
+          lower_i(b);
           b->env = old_env;
 
-          op_tv yield_val = Op_tv(((typed_value){tu_of(r_void, {})}));
+          op_tv yield_val = Op_tv((r_void){});
           if_decl (let len, msList_len(sco->values)) {
             op_tv last_val = sco->values[len - 1]->value;
             if_tu_is (let tval, tv, last_val) {
@@ -1512,25 +1511,24 @@ void ir_av1(IrBuilder *b) {
           *d_op = Op_tv(d);
         }),
         (oconst, con, {
-          for (scope *s = b->env; s; s = scope_parent(s)) {
-            bool found = false;
-            foreach (let kv, moxmap_iter(s->locals, fptr, moxmap_vt(s->locals))) {
-              if (kv.val->idx == con) {
-                kv.val->isconst = true;
-                found = true;
-                break;
-              }
+          let o = env_findOwner(b->env, con);
+          assertMessage(o.scope == b->env, "constant set in inferior scope");
+          bool found = false;
+          foreach (let kv, moxmap_iter(o.scope->locals, fptr, moxmap_vt(o.scope->locals)))
+            if ((found = kv.val->idx == con)) {
+              kv.val->isconst = true;
+              break;
             }
-            if (found) break;
-          }
+          assertMessage(found);
         }),
-        (obreak, _, ),
         (onone, _, ),
-        (oret, _, ),
-        (ojif, _, ),
-        (ojmp, _, ),
+        // not present before lowering
+        (obreak, _, unreachable()),
+        (oret, _, unreachable()),
+        (ojif, _, unreachable()),
+        (ojmp, _, unreachable()),
     );
-  }
+  } //}
 }
 //{ printer
 

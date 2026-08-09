@@ -20,22 +20,22 @@ if :: fn((a: ast), ast) {
   rest :ast: call.right;
 
   @if(rest."()", {
-    then_block :ast: rest.left;
-    else_call :ast: rest.right."()";
+    then :ast: rest.left;
+    else :ast: rest.right."()";
 
-    @if(else_call, {
-      return @qot(
-        @if(
-          @uqot(cond),
-          @uqot(then_block),
-          @uqot(else_call.right)
-        )
-      );
-    });
+    @if( else, return @qot @if(
+            @uqot(cond),
+            @uqot(then),
+            @uqot(else.right)
+         )
+    );
   });
 
   return @qot(
-    @if(@uqot(cond), @uqot(rest))
+    @if(
+      @uqot(cond),
+      @uqot(rest)
+    )
   );
 };
 

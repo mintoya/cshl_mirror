@@ -103,7 +103,7 @@ cmd_main(
     emit_ir(&builder, ast, 0);
     println("(log) after first ir : {dbga_stats}", debugAllocator_stats(allocator));
     print_wfO(depth_output, &dstate, "{IrBuilder}\n", builder);
-    ir_av1(&builder);
+    lower_i(&builder);
     println("(log) after second ir : {dbga_stats}", debugAllocator_stats(allocator));
     print_wfO(depth_output, &dstate, "{IrBuilder}\n", builder);
   }
