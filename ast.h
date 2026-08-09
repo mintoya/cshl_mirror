@@ -387,8 +387,6 @@ static struct { // opNumbers
 ast ast_clone(allocfn allocator, ast a);
 ast *ast_cloneP(allocfn allocator, ast *a) { return a ? avalue(allocator, ast_clone(allocator, a[0])) : nullptr; }
 ast ast_clone(allocfn allocator, ast a) {
-  sliceDef(int);
-  let f = slice_clone(allocator, tu_catch(astId, a));
   return tu_match_exp(
       a,
       (astEmptyStatement, e, (ast)tu_of(astEmptyStatement, {})),

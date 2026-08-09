@@ -492,7 +492,13 @@ typePrinter(typed_value) {
   tu_match_void(
       in.t,
       (c_int, _, USENAMEDPRINTER("bigint", in.v.c_int);),
-      (c_ast, _, USENAMEDPRINTER("ast", in.v.c_ast);),
+      (c_ast, _,
+#if defined TV_EXPAND_VALUE && TV_EXPAND_VALUE == 1
+       USENAMEDPRINTER("ast", in.v.c_ast)
+#else
+       USENAMEDPRINTER("astTag", (in.v.c_ast->tag))
+#endif
+      ),
       (c_type, _, in.v.c_type ? USETYPEPRINTER(Type, *in.v.c_type) : PUTS("??");),
       (default, {
         if (in.v.value)
