@@ -1,7 +1,6 @@
 #pragma once
-#include "wheels/macros.h"
-
 #include "ast.h"
+#include "wheels/macros.h"
 #include "wheels/oxmap.h"
 #include "wheels/print/print_pre.h"
 #include <wheels/bigint.h>
@@ -13,22 +12,24 @@
 #include <wheels/sList.h>
 
 typedef enum : u8 {
-  builtin_if,     // @if(cnd , then ,)
-                  //
-  builtin_while,  // @while(cnd , then) //
-  builtin_fn,     // fn((decl|type...) ,decl|type) c_func of this type,
-                  // then when called with expression, yields an r_func
-  builtin_ast,    // @ast() type of ast
-  builtin_any,    // @any() type of any
-  builtin_int,    // @int() compile time bigint
-  builtin_sint,   // @sint(N) integer with N bits
-  builtin_uint,   // @uint(N) unsigned integer with N bits
-  builtin_type,   // @type() the type of a type
-  builtin_typeof, // @typeof(V) type of argument
-  builtin_arrof,  // @arrof(N,t) array of N t's
-  builtin_ptrof,  // @ptrof(t) pionter to t
-  builtin_struct, // @struct{} struct of declarations
-  builtin__this,  // @this() inside of struct, this is the result type
+  builtin_if,       // @if(cnd , then ,)
+                    //
+  builtin_while,    // @while(cnd , then) //
+  builtin_fn,       // fn((decl|type...) ,decl|type) c_func of this type,
+                    // then when called with expression, yields an r_func
+  builtin_ast,      // @ast() type of ast
+  builtin_any,      // @any() type of any
+  builtin_int,      // @int() compile time bigint
+  builtin_type,     // @type() the type of a type
+  builtin_const,    // @const(T) constant
+  builtin_volatile, // @volatile(T) volatile
+  builtin_sint,     // @sint(N) integer with N bits
+  builtin_uint,     // @uint(N) unsigned integer with N bits
+  builtin_typeof,   // @typeof(V) type of argument
+  builtin_arrof,    // @arrof(N,t) array of N t's
+  builtin_ptrof,    // @ptrof(t) pionter to t
+  builtin_struct,   // @struct{} struct of declarations
+  builtin__this,    // @this() inside of struct, this is the result type
 
   builtin_return, // return x return
   builtin_break,  // @break()
@@ -53,6 +54,8 @@ tu_def( // type
     (r_struct /*     */, mList(r_struct_item)),
     (r_bitfield /*   */, mList(r_bitf_item)),
     (r_func /*       */, mList(Type)),
+    (r_ctime /*      */, Type *),
+    (r_decor /*      */, struct {Type* t ; bool constant :1;bool valatile :1; }),
     // compile time
     // they could all be nothing_t's, i'd rather show here what they a re but also
     // not have them take up any storage space
@@ -76,7 +79,6 @@ typedef struct r_struct_item {
   fptr name;
   typed_value init; // type in here
   usize alignment, offset;
-  bool isconst;
 } r_struct_item;
 typedef struct r_bitf_item {
   typed_value init; // type in here
@@ -101,7 +103,7 @@ static inline usize Type_ralig(Type t) {
       (r_struct, s, ({
          usize a = 1;
          foreach (let i, mList_iter(s))
-           a = MAX$(i.isconst ? 1 : i.alignment, a);
+           a = MAX$(i.alignment, a);
          a;
        })),
       (r_func, _, (usize)1),
@@ -127,7 +129,7 @@ static inline usize Type_rsize(Type t) {
       (r_struct, s, ({
          usize sz = 0;
          foreach (let i, mList_iter(s))
-           sz = MAX$(i.isconst ? 0 : i.offset + Type_rsize(i.init.t), sz);
+           sz = MAX$(i.offset + Type_rsize(i.init.t), sz);
          lineup(sz, Type_ralig(t));
        })),
       (r_func, _, (usize)0),
@@ -158,20 +160,34 @@ i8 Type_cmp_ex(Type a, Type b, mList(type_cmp_pair) followed) {
       (c_any, _, return 0;),
       (c_ast, _, return 0;),
       (c_type, _, return 0;),
+      (r_ctime, _, return 0;),
 
       (r_tag, ai, return fptr_cmp(ai.name, tu_catch(r_tag, b).name);),
       (r_uint, ai, return icmp(ai, tu_catch(r_uint, b));),
       (r_sint, ai, return icmp(ai, tu_catch(r_sint, b));),
 
+      (r_decor, ai, {
+        let bi = tu_catch(r_decor, b);
+        if_decl (let dif, ai.constant - bi.constant)
+          return dif;
+        if_decl (let dif, ai.valatile - bi.valatile)
+          return dif;
+        if (ai.t == bi.t) return 0;
+        if (!ai.t || !bi.t) return ai.t ? 1 : -1;
+
+        foreach (let p, mList_iter(followed))
+          if (p.a == ai.t && p.b == bi.t) return 0;
+
+        mList_push(followed, ((type_cmp_pair){.a = ai.t, .b = bi.t}));
+        i8 r = Type_cmp_ex(*ai.t, *bi.t, followed);
+        mList_rem(followed, mList_len(followed) - 1);
+        return r;
+      }),
       (r_ptr, ai, {
         let bi = tu_catch(r_ptr, b);
         if (ai == bi) return 0;
-        if (!ai || !bi) return ai ? 1 : -1; // one null, one not: deterministic order, never equal
+        if (!ai || !bi) return ai ? 1 : -1;
 
-        // Only short-circuit when we've already started comparing THIS
-        // exact pair -- i.e. both sides have returned to a point they've
-        // been before, together. Tracking `ai` alone (as before) let one
-        // side's cycle mask real differences on the other side.
         foreach (let p, mList_iter(followed))
           if (p.a == ai && p.b == bi) return 0;
 
@@ -227,8 +243,6 @@ i8 Type_cmp_ex(Type a, Type b, mList(type_cmp_pair) followed) {
             return cmp;
           if_decl (let cmp, fptr_cmp(a.name, b.name))
             return cmp;
-          if_decl (let cmp, icmp(a.isconst, b.isconst))
-            return cmp;
           if_decl (let cmp, icmp(a.alignment, b.alignment))
             return cmp;
           if_decl (let cmp, icmp(a.offset, b.offset))
@@ -246,26 +260,27 @@ i8 Type_cmp(Type a, Type b) {
 
 i8 Type_cmp_hash(const void *a, const void *b) { return Type_cmp(*(Type *)a, *(Type *)b); }
 
-static u64 Type_hash_ex(Type a, bool follow_ptr) {
+static u64 Type_hash_ex(Type a, bool follow) {
   tu_match_void(
       a,
-      (builtin, b, return b + 6;),
-      (r_void, _, return 0;),
-      (c_int, _, return 1;),
-      (c_type, _, return 2;),
-      (c_ast, _, return 3;),
-      (c_any, _, return 5;),
-      (r_uint, v, return (u64)v ^ 0x1000;),
-      (r_sint, v, return (u64)v ^ 0x2000;),
-      (r_ptr, p, return follow_ptr ? Type_hash_ex(*p, false) * 31 ^ 0x3000 : 0x3000;),
-      (r_tag, v, return fptr_hash(v.name) ^ 0x4000;),
-      (r_arr, arr, return (Type_hash_ex(*arr.type, follow_ptr) * 31) ^ arr.count ^ 0x5000;),
+      (builtin, b, return b + 6),
+      (r_void, _, return 0),
+      (c_int, _, return 1),
+      (c_type, _, return 2),
+      (c_ast, _, return 3),
+      (r_ctime, _, return 4),
+      (c_any, _, return 5),
+      (r_uint, v, return (u64)v ^ 0x1000),
+      (r_sint, v, return (u64)v ^ 0x2000),
+      (r_ptr, p, return follow ? Type_hash_ex(*p, false) * 31 ^ 0x3000 : 0x3000),
+      (r_decor, p, return follow ? Type_hash_ex(*p.t, false) * 31 ^ 0x3000 : 0x3000),
+      (r_tag, v, return fptr_hash(v.name) ^ 0x4000),
+      (r_arr, arr, return (Type_hash_ex(*arr.type, follow) * 31) ^ arr.count ^ 0x5000),
       (r_struct, l, {
         u64 h = 0x5000;
         foreach (let item, mList_iter(l)) {
-          h = (h * 31) ^ Type_hash_ex(item.init.t, follow_ptr);
+          h = (h * 31) ^ Type_hash_ex(item.init.t, follow);
           h = (h * 31) ^ fptr_hash(item.name);
-          h = (h * 31) ^ item.isconst;
           h = (h * 31) ^ item.alignment;
           h = (h * 31) ^ item.offset;
         }
@@ -274,7 +289,7 @@ static u64 Type_hash_ex(Type a, bool follow_ptr) {
       (r_bitfield, l, {
         u64 h = 0x6000;
         foreach (let item, mList_iter(l)) {
-          h = (h * 31) ^ Type_hash_ex(item.init.t, follow_ptr);
+          h = (h * 31) ^ Type_hash_ex(item.init.t, follow);
           h = (h * 31) ^ fptr_hash(item.name);
           h = (h * 31) ^ item.width;
         }
@@ -283,7 +298,7 @@ static u64 Type_hash_ex(Type a, bool follow_ptr) {
       (r_func, l, {
         u64 h = 0x7000;
         foreach (let t, mList_iter(l))
-          h = (h * 31) ^ Type_hash_ex(t, follow_ptr);
+          h = (h * 31) ^ Type_hash_ex(t, follow);
         return h;
       })
   );
@@ -301,7 +316,9 @@ bool Type_is_comptime(Type t) {
       (c_any, _, true),
       (c_int, _, true),
       (c_type, _, true),
+      (r_ctime, _, true),
 
+      (r_decor, _, false),
       (r_func, _, false),
       (r_struct, _, false),
       (r_bitfield, _, false),
@@ -312,27 +329,6 @@ bool Type_is_comptime(Type t) {
       (r_arr, _, false),
   );
 }
-//}
-//{value
-typedef struct value {
-  typed_value *lvalue;
-  typed_value rvalue;
-} value;
-//{value macros
-#define value_access(value) (*({             \
-  let _value_ptr = &(value);                 \
-  _value_ptr->lvalue ?: &_value_ptr->rvalue; \
-}))
-#define value_value(value) ({ \
-  let _value = (value);       \
-  _value.rvalue =             \
-      _value.lvalue           \
-          ? *_value.lvalue    \
-          : _value.rvalue;    \
-  _value.lvalue = nullptr;    \
-  _value;                     \
-})
-//}
 //}
 
 typePrinter(builtin_id) {
@@ -347,6 +343,8 @@ typePrinter(builtin_id) {
     case(builtin_int):PUTS("int");break;
     case(builtin_sint):PUTS("sint");break;
     case(builtin_uint):PUTS("uint");break;
+    case(builtin_const):PUTS("const");break;
+    case(builtin_volatile):PUTS("volatile");break;
     case(builtin_type):PUTS("type");break;
     case(builtin_struct):PUTS("struct");break;
     case(builtin__this):PUTS("this");break;
@@ -413,11 +411,11 @@ void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_co
         USETYPEPRINTER(builtin_id, builtin);
         PUTS(")");
       }),
-      (c_int, i, PUTS("int");),
-      (c_type, t, PUTS("type");),
-      (c_ast, t, PUTS("ast");),
-      (c_any, t, PUTS("any");),
-      (r_void, _, PUTS("void");),
+      (c_int, i, PUTS("int")),
+      (c_type, t, PUTS("type")),
+      (c_ast, t, PUTS("ast")),
+      (c_any, t, PUTS("any")),
+      (r_void, _, PUTS("void")),
       (r_tag, t, {
         PUTS("(id ");
         USETYPEPRINTER(id_str, (id_str){t.name});
@@ -434,6 +432,18 @@ void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_co
         defer { PUTS(")"); };
         if (type) typePrinterWorker_recurse(*type, visitedmap, _ctx);
         else PUTS("!");
+      }),
+      (r_ctime, type, {
+        PUTS("(comp ");
+        defer { PUTS(")"); };
+        if (type) typePrinterWorker_recurse(*type, visitedmap, _ctx);
+      }),
+      (r_decor, decor, {
+        PUTS("(");
+        if (decor.constant) PUTS("const");
+        if (decor.valatile) PUTS("-volatile ");
+        defer { PUTS(")"); };
+        if (decor.t) typePrinterWorker_recurse(*decor.t, visitedmap, _ctx);
       }),
       (r_arr, arr, {
         // typePrinterWorker_add(in, visited, visitedmap);
@@ -528,7 +538,6 @@ test_fn(type_ptr_equality) {
       tu_catch(r_struct, v),
       {
           .alignment = 8,
-          .isconst = false,
           .name = fp("self"),
           .offset = 0,
           .init = (typed_value){tu_of(r_ptr, &v)},
@@ -569,7 +578,6 @@ test_fn(type_struct_hash_consistency) {
       tu_catch(r_struct, a),
       {
           .alignment = 4,
-          .isconst = false,
           .name = fp("x"),
           .offset = 0,
           .init = u32t,
@@ -579,7 +587,6 @@ test_fn(type_struct_hash_consistency) {
       tu_catch(r_struct, b),
       {
           .alignment = 4,
-          .isconst = false,
           .name = fp("x"),
           .offset = 0,
           .init = u32t,
@@ -597,10 +604,10 @@ test_fn(type_struct_field_order_matters) {
   };
   let u32t = (typed_value){tu_of(r_uint, (u16)32)};
   let u8t = (typed_value){tu_of(r_uint, (u16)8)};
-  mList_push(tu_catch(r_struct, a), {.alignment = 4, .isconst = false, .name = fp("x"), .offset = 0, .init = u32t});
-  mList_push(tu_catch(r_struct, a), {.alignment = 1, .isconst = false, .name = fp("y"), .offset = 4, .init = u8t});
-  mList_push(tu_catch(r_struct, b), {.alignment = 1, .isconst = false, .name = fp("y"), .offset = 4, .init = u8t});
-  mList_push(tu_catch(r_struct, b), {.alignment = 4, .isconst = false, .name = fp("x"), .offset = 0, .init = u32t});
+  mList_push(tu_catch(r_struct, a), {.alignment = 4, .name = fp("x"), .offset = 0, .init = u32t});
+  mList_push(tu_catch(r_struct, a), {.alignment = 1, .name = fp("y"), .offset = 4, .init = u8t});
+  mList_push(tu_catch(r_struct, b), {.alignment = 1, .name = fp("y"), .offset = 4, .init = u8t});
+  mList_push(tu_catch(r_struct, b), {.alignment = 4, .name = fp("x"), .offset = 0, .init = u32t});
   test_assert(Type_cmp(a, b));
 }
 test_fn(type_func_equality) {
