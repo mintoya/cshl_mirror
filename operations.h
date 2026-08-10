@@ -1,6 +1,7 @@
-#define TV_EXPAND_VALUE 1
+// #define TV_EXPAND_VALUE 1
 #pragma once
 #include "ast.h"
+#include "operation/common.h"
 #include "type.h"
 #include "wheels/allocators/cballocator.h"
 #include "wheels/fptr.h"
@@ -15,153 +16,6 @@
       "expected " #tag " but got %s",      \
       snprint(stdAlloc, "{Type}", val).ptr \
   )
-typedef struct scope *scopeptr;
-
-sliceDef(Type);
-sliceDef(fptr);
-
-typedef struct {
-  struct {
-    astPBlock *p;
-    ast *r;
-  } type;
-  ast *body;
-  moxmap(r_func, scopeptr) spec;
-} gfn;
-i8 r_func_cmp(const void *a, const void *b) {
-  let af = *(r_func *)a;
-  let bf = *(r_func *)b;
-  return Type_cmp((Type)tu_of(r_func, af), (Type)tu_of(r_func, bf));
-}
-
-tu_def((op_tv, u8), (tv, typed_value), (gfn, gfn));
-
-#define Op_tv(x) match_type(                                   \
-    x,                                                         \
-    (tv, _t, (op_tv)tu_of(tv, _t)),                            \
-    (gfn, _t, (op_tv)tu_of(gfn, _t)),                          \
-    (r_void, _, (op_tv)tu_of(tv, {tu_of(r_void, {})})),        \
-    (c_any, _, (op_tv)tu_of(tv, {tu_of(c_any, {})})),          \
-    (ast *, a, (op_tv)tu_of(tv, {tu_of(c_ast, {}), {a}})),     \
-    (Type *, _t, (op_tv)tu_of(tv, {tu_of(c_type, {}), {_t}})), \
-)
-#define Op_tv_is(first, second, value) (tu_is(first, value) && tu_is(second, tu_catch(first, value).t))
-
-// 0 in any location is null
-tu_def(
-    (opcode, u8),
-    (onone, nothing_t),
-    // create an integer
-    // creates
-    (oint, fptr),
-    // create a builtin
-    // creates
-    (obin, builtin_id),
-    // create an []i8
-    // creates
-    (ostr, fptr),
-    // create value of ast
-    // creates
-    (oast, /*  */ ast *),
-    // creates
-    // evaluate whatever is inside scope then return that
-    (oscop, scopeptr),
-    // create value of tpye l
-    // l is nullable
-    // creates
-    (onew, /*  */ u32),
-    // load element named  name in l into new reg
-    // creates
-    (olelem, struct {u32 l ; fptr name; }),
-    // load n'th argument of some function into new reg
-    // creates
-    (oarg, u32),
-    // set item in l to const
-    (oconst, /**/ u32),
-    // jump to d if l
-    (ojif, /*  */ struct { u32 l, d; }),
-    (ojmp, /*  */ u32),
-    (obreak, nothing_t),
-    // call l with args starting at offset off and len len and store in d
-    (ocall, /* */ struct { u32 l, off, len, d; }),
-    // apply o to l and r and store in d
-    (oop, /*   */ struct { u32 l, r, d, o; }),
-    // return thing stored in l
-    (oret, /*  */ u32),
-    // move thing in l to r
-    (omov, /*   */ struct { u32 l, r; }),
-    // copy thing pointed to by in l to thing pointed to by r
-    (ocpy, /*   */ struct { u32 l, r; }),
-    // store element named name in l into d
-    (oselem, struct {u32 l , d ; fptr name; }),
-);
-#define ocode_of (opcode) tu_of
-
-typedef struct scope scope;
-sliceDef(scopeptr);
-
-struct scope {
-  u32 start_reg;
-  u32 next_reg;
-  msList(opcode) code;
-  scope *parent;
-  msList(struct { op_tv value ; u32 cidx; } *) values;
-  moxmap(fptr, struct { u32 idx:31; bool isconst:1; }) locals;
-};
-typePrinter(op_tv) {
-  tu_match(
-      in,
-      (tv, x, USETYPEPRINTER(typed_value, x)),
-      (gfn, y, {
-        PUTS("gfn{\n" P_INDENT_IN);
-
-        PUTS("type: { p: ");
-        if (y.type.p)
-          USENAMEDPRINTER("ast", (&(ast)tu_of(astPBlock, *y.type.p)));
-        else PUTS("nil");
-        PUTS(", r: ");
-        if (y.type.r)
-          USENAMEDPRINTER("ast", y.type.r);
-        else PUTS("nil");
-        PUTS(" }\n");
-
-        PUTS("body: ");
-        // if (y.body)
-        //   USENAMEDPRINTER("ast", y.body);
-        // else PUTS("nil");
-        PUTS("\n");
-        PUTS("spec: {");
-        if (y.spec) {
-          PUTS("\n" P_INDENT_IN);
-          foreach (let kv, moxmap_iter(y.spec, r_func, scopeptr)) {
-            Type t = (Type)tu_of(r_func, kv.key);
-            USETYPEPRINTER(Type, t);
-            PUTS(" -> <scopeptr>\n");
-          }
-          PUTS(P_INDENT_OUT);
-        }
-        PUTS("}\n");
-
-        PUTS(P_INDENT_OUT "}");
-      }),
-  );
-}
-
-typedef struct IrBuilder {
-  allocfn alloc;
-  scope *env;
-  moxmap(Type, Type *) types;
-  moxmap(void *, usize) pointers;
-  r_func *fnctx;
-} IrBuilder;
-
-//
-//
-//
-
-u32 env_addOp(IrBuilder *b, opcode o);
-void env_bind(IrBuilder *b, fptr id, u32 reg);
-u32 env_push(IrBuilder *b);
 
 void irb_cbb(const callbackallocatorhandle *h, void *p) {
   let _map = (itypeof(IrBuilder, pointers))h->cbself->udata;
@@ -196,6 +50,7 @@ IrBuilder IrBuilder_init(allocfn allocator) {
       {"@break", builtin_break},
       {"@qot", builtin_qot},
       {"@uqot", builtin_uqot},
+      {"@struct", builtin_struct},
       {"return", builtin_return},
       {"fn", builtin_fn},
   };
@@ -211,11 +66,10 @@ void IrBuilder_deinit(IrBuilder *b) {
   moxmap_deinit(b->pointers);
   moxmap_deinit(b->types);
 }
-allocfn IrBuilder_allocator(IrBuilder *b) { return b->alloc; }
 
 Type *IrBuilder_getType(IrBuilder *b, Type t) {
   if_decl (let t, moxmap_get(b->types, t)) return *t;
-  let allocator = IrBuilder_allocator(b);
+  let allocator = (b->alloc);
   let pt = acreate(allocator, Type);
   moxmap_set(b->types, t, pt);
   *pt = tu_match_exp(
@@ -239,7 +93,6 @@ Type *IrBuilder_getType(IrBuilder *b, Type t) {
   );
   return *moxmap_set(b->types, *pt, pt);
 }
-scope *scope_parent(scope *s) { return s->parent; }
 
 void env_bind(IrBuilder *b, fptr id, u32 reg) {
   if (moxmap_get(b->env->locals, id))
@@ -247,8 +100,26 @@ void env_bind(IrBuilder *b, fptr id, u32 reg) {
   moxmap_set(b->env->locals, id, ((moxmap_vt(b->env->locals)){reg, false}));
 }
 
+struct env_findOwner_result env_findOwner(IrBuilder *b, u32 idx) {
+  let sp = b->env;
+  assertMessage(sp);
+  assertMessage(idx - 1 < sp->next_reg, "accessing value that doesn't exist yet");
+
+  while (sp) {
+    if (idx > sp->start_reg) {
+      let ridx = idx - sp->start_reg - 1;
+      assertMessage(ridx < msList_len(sp->values));
+      return (typeof(env_findOwner(b, idx))){
+          sp->values[ridx]->cidx,
+          sp,
+      };
+    }
+    sp = (sp->parent);
+  }
+  assertMessage(false, "could'nt find value in env");
+}
 u32 env_lookup(IrBuilder *b, fptr id) {
-  for (scope *s = b->env; s; s = scope_parent(s))
+  for (scope *s = b->env; s; s = (s->parent))
     if_decl (let reg_ptr, moxmap_get(s->locals, id))
       if (reg_ptr->idx >= s->start_reg) return reg_ptr->idx;
   error_at(id.ptr, snprint(stdAlloc, "unknown variable {slice(c8)}", id));
@@ -274,28 +145,13 @@ u32 env_push(IrBuilder *b) {
   return new_scope->next_reg;
 }
 
-void env_pop(IrBuilder *b) { b->env = scope_parent(b->env); }
+void env_pop(IrBuilder *b) { b->env = (b->env->parent); }
 void env_destroy(IrBuilder *b, scope *s) {
   let allocator = b->alloc;
   moxmap_deinit(s->locals);
   msList_deInit(b->alloc, s->values);
   msList_deInit(b->alloc, s->code);
   adestroy(allocator, s);
-}
-bool op_creates(opcode o) {
-  return tu_match_exp(
-      o,
-      (oscop, _, true),
-      (obin, _, true),
-      (ostr, _, true),
-      (oint, _, true),
-      (onew, _, true),
-      (oarg, _, true),
-      (oast, _, true),
-      (olelem, _, true),
-      (default, false),
-
-  );
 }
 u32 env_addOp(IrBuilder *b, opcode o) {
   msList_push(((hxmap *)b->env->locals)->allocator, b->env->code, o);
@@ -462,10 +318,10 @@ u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
          irc;
        })),
       (astPBlock, pb, ({
-         env_push(b);
-         defer { env_pop(b); };
          if (sentList_len(pb.stmts) != 1)
            error_ast(node[0], snprint(stdAlloc, "no tuples"));
+         env_push(b);
+         defer { env_pop(b); };
          emit_ir(b, pb.stmts[0], ctx);
        })),
       (astBBlock, bb, ({
@@ -487,55 +343,37 @@ ptrstype(itypeof(scope, values)) env_getVal(scope *sp, u32 idx) {
     assertMessage(ridx < msList_len(sp->values));
     return sp->values[ridx];
   } else {
-    let parent = scope_parent(sp);
+    let parent = (sp->parent);
     assertMessage(parent);
     return env_getVal(parent, idx);
   }
 }
-scope *env_replace(IrBuilder *b, scope *target, u32 cidx) {
-  assertMessage(target);
-  assertMessage(op_creates(target->code[cidx]));
+scope *env_replace(IrBuilder *b, struct env_findOwner_result r) {
+  assertMessage(r.scope);
+  assertMessage(op_creates(r.scope->code[r.idx]));
   scope *new_scope = avalue(
       b->alloc,
       ((scope){
-          .parent = target,
+          .parent = r.scope,
           .locals = moxmap_init(b->alloc, fptr, moxmap_vt((itypeof(scope, locals))0), cmpfptr),
           .values = msList_init(b->alloc, ptrstype(new_scope->values)),
           .code = msList_init(b->alloc, opcode),
       })
   );
-  u32 start = target->start_reg;
-  foreach (let i, span(target->code, cidx))
+  u32 start = r.scope->start_reg;
+  foreach (let i, span(r.scope->code, r.idx))
     start += !!(op_creates(*i));
   new_scope->start_reg = start;
   new_scope->next_reg = start;
-  target->code[cidx] = ocode_of(oscop, new_scope);
+  r.scope->code[r.idx] = ocode_of(oscop, new_scope);
   return new_scope;
-}
-struct env_findOwner_result {
-  u32 idx;
-  scope *scope;
-};
-struct env_findOwner_result env_findOwner(scope *sp, u32 idx) {
-  assertMessage(idx - 1 < sp->next_reg, "accessing value that doesn't exist yet");
-  if (idx > sp->start_reg) {
-    let ridx = idx - sp->start_reg - 1;
-    assertMessage(ridx < msList_len(sp->values));
-    return (typeof(env_findOwner(sp, idx))){
-        sp->values[ridx]->cidx,
-        sp,
-    };
-  }
-  sp = scope_parent(sp);
-  assertMessage(sp);
-  return env_findOwner(sp, idx);
 }
 
 void lower_i(IrBuilder *b);
-op_tv hv_handle_evaltype(IrBuilder *b, ast *target_ast, scope *target, u32 cidx) {
+op_tv hv_handle_evaltype(IrBuilder *b, ast *target_ast, struct env_findOwner_result r) {
   let old_env = b->env;
   defer { b->env = old_env; };
-  b->env = env_replace(b, target, cidx);
+  b->env = env_replace(b, r);
   u32 reg = emit_ir(b, target_ast, 0);
   lower_i(b);
 
@@ -551,6 +389,19 @@ typedef struct {
 } exec_signal;
 
 exec_signal ir_interpret_scope(IrBuilder *b);
+op_tv get_value_temp(IrBuilder *b, ast *ast) {
+  env_push(b);
+  defer {
+    env_pop(b);
+    env_destroy(b, tu_catch(oscop, msList_last(b->env->code)));
+    msList_len(b->env->code)--;
+    b->env->next_reg--;
+  };
+  u32 val_reg = emit_ir(b, ast, 0);
+  lower_i(b);
+  ir_interpret_scope(b);
+  return env_getVal(b->env, val_reg)->value;
+}
 ast *full_unquote(IrBuilder *b, ast *x) {
   if (!x) return nullptr;
   return tu_match_exp(
@@ -601,25 +452,16 @@ ast *full_unquote(IrBuilder *b, ast *x) {
         })),
       (astOp , op , ({
         ast *res;
-        if (op.number_rep == opNumbers.call && op.left && tu_is(astId, *op.left) && fptr_eq(tu_catch(astId, *op.left), "@uqot")) {
-          env_push(b);
-          u32 val_reg = emit_ir(b, op.right, 0);
-          lower_i(b);
-          let yield_val = tu_catch(tv, env_getVal(b->env, val_reg)->value);
-          env_pop(b);
-          
-          msList_len(b->env->code)--;
-          b->env->next_reg--;
-          
+        if (op.number_rep == opNumbers.call && op.left && fptr_eq(tu_catch(astId, *op.left), "@uqot")) {
+          let yield_val = tu_catchr(tv,get_value_temp(b , op.right));
           assert_type(c_ast, yield_val.t);
           res = yield_val.v.c_ast;
-        } else {
-          res = avalue(b->alloc , (ast)tu_of(astOp , {
+        } else res = avalue(b->alloc , (ast)tu_of(astOp , {
             .left = full_unquote(b , op.left),
             .right = full_unquote(b , op.right),
             .number_rep = op.number_rep
           }));
-        }
+        
         res;
         }))
       // clang-format on
@@ -639,7 +481,7 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
       assert_type(c_ast, body_val.t);
 
       it.body = body_val.v.c_ast;
-      it.spec = moxmap_init(b->alloc, r_func, scopeptr, r_func_cmp);
+      it.spec = moxmap_init(b->alloc, r_func, struct scope *, r_func_cmp);
 
       env_getVal(b->env, call.d)->value = Op_tv(it);
       b->env->code[insloc] = ocode_of(onone, {});
@@ -648,10 +490,7 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
       assertMessage(call.len == countof(*params), "argument count mismatch");
 
       let osc = b->env;
-      b->env = P$(
-          env_findOwner(b->env, call.d),
-          env_replace(b, $.scope, $.idx);
-      );
+      b->env = env_replace(b, env_findOwner(b, call.d));
       defer { b->env = osc; };
 
       //-parameter & return types
@@ -747,10 +586,7 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
                       : nullptr;
 
               let osc = b->env;
-              b->env = P$(
-                  env_findOwner(b->env, call.d),
-                  env_replace(b, $.scope, $.idx);
-              );
+              b->env = env_replace(b, env_findOwner(b, call.d));
               defer { b->env = osc; }
 
               u32 cond_reg = emit_ir(b, cond_ast, 0);
@@ -786,10 +622,7 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
               ast *body_ast = body_val.v.c_ast;
 
               let osc = b->env;
-              b->env = P$(
-                  env_findOwner(b->env, call.d),
-                  env_replace(b, $.scope, $.idx);
-              );
+              b->env = env_replace(b, env_findOwner(b, call.d));
               defer { b->env = osc; }
 
               u32 loop_start_idx = msList_len(b->env->code);
@@ -821,10 +654,7 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
               ast *ret_ast = ret_val.v.c_ast;
 
               let osc = b->env;
-              b->env = P$(
-                  env_findOwner(b->env, call.d),
-                  env_replace(b, $.scope, $.idx);
-              );
+              b->env = env_replace(b, env_findOwner(b, call.d));
               defer { b->env = osc; };
 
               u32 expr_reg = emit_ir(b, ret_ast, 0);
@@ -842,7 +672,7 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
               let arg = tu_catch(tv, *arg_op);
 
               if (tu_is(c_ast, arg.t)) {
-                arg = tu_catchr(tv, P$(env_findOwner(b->env, call.off), hv_handle_evaltype(b, arg.v.c_ast, $.scope, $.idx);));
+                arg = tu_catchr(tv, hv_handle_evaltype(b, arg.v.c_ast, env_findOwner(b, call.off)));
                 *arg_op = Op_tv(arg);
               }
 
@@ -864,14 +694,15 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
 
               let size_arg = tu_catch(tv, *size_op);
               if (tu_is(c_ast, size_arg.t)) {
-                size_arg = tu_catchr(tv, P$(env_findOwner(b->env, call.off), hv_handle_evaltype(b, size_arg.v.c_ast, $.scope, $.idx)));
+
+                size_arg = tu_catchr(tv, hv_handle_evaltype(b, size_arg.v.c_ast, env_findOwner(b, call.off)));
                 *size_op = Op_tv(size_arg);
               }
               assertMessage(tu_is(c_int, size_arg.t), "array size must evaluate to an integer");
 
               let type_arg = tu_catch(tv, *type_op);
               if (tu_is(c_ast, type_arg.t)) {
-                type_arg = tu_catchr(tv, P$(env_findOwner(b->env, call.off + 1), hv_handle_evaltype(b, type_arg.v.c_ast, $.scope, $.idx)));
+                type_arg = tu_catchr(tv, hv_handle_evaltype(b, type_arg.v.c_ast, env_findOwner(b, call.off + 1)));
                 *type_op = Op_tv(type_arg);
               }
 
@@ -894,7 +725,7 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
               let type_arg = tu_catch(tv, *type_op);
 
               if (tu_is(c_ast, type_arg.t)) {
-                type_arg = tu_catchr(tv, P$(env_findOwner(b->env, call.off), hv_handle_evaltype(b, type_arg.v.c_ast, $.scope, $.idx)));
+                type_arg = tu_catchr(tv, hv_handle_evaltype(b, type_arg.v.c_ast, env_findOwner(b, call.off)));
                 *type_op = Op_tv(type_arg);
               }
 
@@ -911,7 +742,7 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
               let arg = tu_catch(tv, *arg_op);
 
               if (tu_is(c_ast, arg.t)) {
-                arg = tu_catchr(tv, P$(env_findOwner(b->env, call.off), hv_handle_evaltype(b, arg.v.c_ast, $.scope, $.idx)));
+                arg = tu_catchr(tv, hv_handle_evaltype(b, arg.v.c_ast, env_findOwner(b, call.off)));
                 *arg_op = Op_tv(arg);
               }
 
@@ -956,10 +787,7 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
               assert_type(c_ast, arg.t);
 
               let osc = b->env;
-              b->env = P$(
-                  env_findOwner(b->env, call.d),
-                  env_replace(b, $.scope, $.idx);
-              );
+              b->env = env_replace(b, env_findOwner(b, call.d));
               defer { b->env = osc; };
 
               emit_ir(b, arg.v.c_ast, 0);
@@ -999,7 +827,7 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
             Type param_type = mList_arr(rf)[i];
 
             if (tu_is(c_ast, arg.t) && !tu_is(c_ast, param_type)) {
-              arg = tu_catchr(tv, P$(env_findOwner(b->env, call.off + i), hv_handle_evaltype(b, arg.v.c_ast, $.scope, $.idx)));
+              arg = tu_catchr(tv, hv_handle_evaltype(b, arg.v.c_ast, env_findOwner(b, call.off + i)));
               *arg_op = Op_tv(arg);
             }
             assertMessage(!Type_cmp(arg.t, param_type), "argument %u type mismatch , %s", i, snprint(stdAlloc, "{Type} != {Type}", arg.t, param_type).ptr);
@@ -1045,7 +873,7 @@ bool tv_truthy(typed_value v) {
 bigint mk_bool(allocfn a, bool v) { return v ? BInt.from.i64(a, 1) : nullptr; }
 exec_signal ir_interpret_scope(IrBuilder *b) {
   let code = b->env->code;
-  let allocator = IrBuilder_allocator(b);
+  let allocator = (b->alloc);
   exec_signal sig = {0};
 
   for (u32 ipidx = 0; ipidx < msList_len(code);) {
@@ -1191,7 +1019,7 @@ exec_signal ir_interpret_scope(IrBuilder *b) {
 }
 #undef assert_type
 void lower_i(IrBuilder *b) {
-  let allocator = IrBuilder_allocator(b);
+  let allocator = (b->alloc);
   foreach (let const ipdix, range(0, msList_len(b->env->code))) {
     tu_match_void(
         (b->env->code)[ipdix],
@@ -1234,7 +1062,7 @@ void lower_i(IrBuilder *b) {
           let r = *r_op;
 
           if (tu_is(c_ast, tu_or(tv, l, {}).t) && !tu_is(c_ast, tu_or(tv, r, {}).t)) {
-            l = P$(env_findOwner(b->env, mov.l), hv_handle_evaltype(b, tu_catch(tv, l).v.c_ast, $.scope, $.idx));
+            l = hv_handle_evaltype(b, tu_catch(tv, l).v.c_ast, env_findOwner(b, mov.l));
             *l_op = l;
           }
 
@@ -1516,7 +1344,7 @@ void lower_i(IrBuilder *b) {
           *d_op = Op_tv(d);
         }),
         (oconst, con, {
-          let o = env_findOwner(b->env, con);
+          let o = env_findOwner(b, con);
           assertMessage(o.scope == b->env, "constant set in inferior scope");
           bool found = false;
           foreach (let kv, moxmap_iter(o.scope->locals, fptr, moxmap_vt(o.scope->locals)))
@@ -1534,170 +1362,4 @@ void lower_i(IrBuilder *b) {
         (ojmp, _, unreachable()),
     );
   } //}
-}
-//{ printer
-
-typePrinter(scope) {
-  PUTS("scope [start_reg: ");
-  USETYPEPRINTER(u32, in.start_reg);
-  PUTS(", next_reg: ");
-  USETYPEPRINTER(u32, in.next_reg);
-  PUTS("]\n" P_INDENT_IN);
-
-  u32 current_reg = in.start_reg;
-
-  foreach (let o, vlap(msList_vla(in.code))) {
-    if (op_creates(o)) {
-      current_reg++;
-      USETYPEPRINTER(u32, current_reg);
-      PUTS(" = ");
-    }
-
-    tu_match_void(
-        o,
-        (onone, _, ),
-        (obreak, bre, PUTS("obreak\n")),
-        (oarg, idx, {
-          PUTS("oarg ");
-          USETYPEPRINTER(u32, idx);
-          PUTS("\n");
-        }),
-        (oint, str, {
-          PUTS("oint '");
-          USENAMEDPRINTER("slice(c8)", str);
-          PUTS("'\n");
-        }),
-        (obin, bin, {
-          PUTS("obin ");
-          USETYPEPRINTER(builtin_id, bin);
-          PUTS("\n");
-        }),
-        (ostr, str, {
-          PUTS("ostr \"");
-          USENAMEDPRINTER("slice(c8)", str);
-          PUTS("\"\n");
-        }),
-        (oast, astp, {
-          PUTS("oast\n" P_INDENT_IN);
-#if defined TV_EXPAND_VALUE && TV_EXPAND_VALUE == 1
-          USENAMEDPRINTER("ast", astp);
-#else
-       USENAMEDPRINTER("astTag", (astp->tag));
-#endif
-          PUTS(P_INDENT_OUT);
-        }),
-        (oscop, scop, {
-          PUTS("oscop\n" P_INDENT_IN);
-          USENAMEDPRINTER("scope", *scop);
-          PUTS(P_INDENT_OUT);
-        }),
-        (onew, val, {
-          PUTS("onew l:");
-          USETYPEPRINTER(u32, val);
-          PUTS("\n");
-        }),
-        (olelem, val, {
-          PUTS("olelem l:");
-          USETYPEPRINTER(u32, val.l);
-          PUTS(" name:'");
-          USENAMEDPRINTER("slice(c8)", val.name);
-          PUTS("'\n");
-        }),
-        (oconst, val, {
-          PUTS("oconst l:");
-          USETYPEPRINTER(u32, val);
-          PUTS("\n");
-        }),
-        (ojmp, val, {
-          PUTS("ojmp ");
-          USETYPEPRINTER(u32, val);
-          PUTS("\n");
-        }),
-        (ojif, val, {
-          PUTS("ojif l:");
-          USETYPEPRINTER(u32, val.l);
-          PUTS(" d:");
-          USETYPEPRINTER(u32, val.d);
-          PUTS("\n");
-        }),
-        (ocall, val, {
-          PUTS("ocall l:");
-          USETYPEPRINTER(u32, val.l);
-          PUTS(" off:");
-          USETYPEPRINTER(u32, val.off);
-          PUTS(" len:");
-          USETYPEPRINTER(u32, val.len);
-          PUTS(" d:");
-          USETYPEPRINTER(u32, val.d);
-          PUTS("\n");
-        }),
-        (oop, val, {
-          PUTS("oop l:");
-          USETYPEPRINTER(u32, val.l);
-          PUTS(" r:");
-          USETYPEPRINTER(u32, val.r);
-          PUTS(" d:");
-          USETYPEPRINTER(u32, val.d);
-          PUTS(" o:");
-          USETYPEPRINTER(u32, val.o);
-          PUTS("\n");
-        }),
-        (oret, val, {
-          PUTS("oret l:");
-          USETYPEPRINTER(u32, val);
-          PUTS("\n");
-        }),
-        (omov, val, {
-          PUTS("omov l:");
-          USETYPEPRINTER(u32, val.l);
-          PUTS(" r:");
-          USETYPEPRINTER(u32, val.r);
-          PUTS("\n");
-        }),
-        (ocpy, val, {
-          PUTS("ocpy l:");
-          USETYPEPRINTER(u32, val.l);
-          PUTS(" r:");
-          USETYPEPRINTER(u32, val.r);
-          PUTS("\n");
-        }),
-        (oselem, val, {
-          PUTS("oselem l:");
-          USETYPEPRINTER(u32, val.l);
-          PUTS(" d:");
-          USETYPEPRINTER(u32, val.d);
-          PUTS(" name:'");
-          USENAMEDPRINTER("slice(c8)", val.name);
-          PUTS("'\n");
-        })
-    );
-  }
-  PUTS("values{\n" P_INDENT_IN);
-  foreach (let v, span(in.values, msList_len(in.values)))
-    USETYPEPRINTER(op_tv, (*v)->value), PUTS("\n");
-  PUTS("named{\n" P_INDENT_IN);
-  foreach (let kv, moxmap_iter(in.locals, fptr, moxmap_vt(in.locals))) {
-    USENAMEDPRINTER("slice(c8)", kv.key);
-    PUTS(":");
-
-    if (kv.val->idx > in.start_reg) {
-      u32 ridx = kv.val->idx - in.start_reg - 1;
-      if (ridx < msList_len(in.values))
-        USETYPEPRINTER(u32, kv.val->idx), PUTS(":"), USETYPEPRINTER(op_tv, in.values[ridx]->value);
-      else PUTS("<unevaluated?>");
-
-    } else
-      PUTS("<parent_reg:"), USETYPEPRINTER(u32, kv.val->idx), PUTS(">");
-
-    PUTS("\n");
-  }
-  PUTS(P_INDENT_OUT "}\n");
-  PUTS(P_INDENT_OUT "}\n");
-
-  PUTS(P_INDENT_OUT);
-}
-typePrinter(IrBuilder) {
-  PUTS("IrBuilder {\n" P_INDENT_IN);
-  USETYPEPRINTER(scope, *in.env);
-  PUTS(P_INDENT_OUT "}\n");
 }
