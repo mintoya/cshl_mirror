@@ -154,6 +154,7 @@ struct IrBuilder {
   moxmap(Type, Type *) types;
   moxmap(void *, usize) pointers;
   r_func *fnctx;
+  Type *typectx;
 };
 
 void IrBuilder_deinit(IrBuilder *);

@@ -4,11 +4,8 @@
 #include "operation/common.h"
 #include "type.h"
 #include "wheels/allocators/cballocator.h"
-#include "wheels/fptr.h"
-#include "wheels/mytypes.h"
-#include <assert.h>
-#include <stdcountof.h>
 #include <wheels/bigint.h>
+#include <wheels/sList.h>
 #include <wheels/smap.h>
 #define assert_type(tag, val)              \
   assertMessage(                           \
@@ -51,6 +48,7 @@ IrBuilder IrBuilder_init(allocfn allocator) {
       {"@qot", builtin_qot},
       {"@uqot", builtin_uqot},
       {"@struct", builtin_struct},
+      {"@this", builtin__this},
       {"return", builtin_return},
       {"fn", builtin_fn},
   };
@@ -467,16 +465,65 @@ ast *full_unquote(IrBuilder *b, ast *x) {
       // clang-format on
   );
 }
+struct call_target {
+  op_tv op;
+  bool is_method;
+};
+struct call_target {
+  op_tv op;
+  bool is_method;
+};
+
+struct call_target resolve_call_target(op_tv l_op) {
+  bool is_method = false;
+
+  if_tu_is (let tv_val, tv, l_op) {
+    if (!tu_is(builtin, tv_val.t) && !tu_is(r_func, tv_val.t)) {
+      Type actual_type = tv_val.t;
+      if (tu_is(c_type, tv_val.t)) actual_type = *tv_val.v.c_type;
+      else if (tu_is(r_ptr, tv_val.t)) actual_type = *tu_catch(r_ptr, tv_val.t);
+
+      bool found = false;
+      op_tv resolved_op = {0};
+
+      tu_match_void(
+          actual_type,
+          (r_struct, st, {
+            foreach (let v, mList_iter(st))
+              if (fptr_eq(v.name, fp("__call"))) {
+                found = true;
+                if (v.isconst) {
+                  if (tu_is(c_any, v.init.t) && v.init.v.value) {
+                    resolved_op = *(op_tv *)v.init.v.value;
+                  } else {
+                    resolved_op = Op_tv(v.init);
+                  }
+                }
+                break;
+              }
+          }),
+          (r_tag, tg, assertMessage(false, "tag __call not implemented")),
+          (default, )
+      );
+
+      if (found) {
+        l_op = resolved_op;
+        is_method = true;
+      }
+    }
+  }
+
+  return (struct call_target){.op = l_op, .is_method = is_method};
+}
 void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
-  let l_op = env_getVal(b->env, call.l)->value;
-  // print("call {op_tv} (", l_op);
-  // foreach (let i, span(call.off, call.len))
-  //   print("{op_tv},", env_getVal(b->env, i)->value); // removed &
-  // println(")");
+  let target = resolve_call_target(env_getVal(b->env, call.l)->value);
+  let l_op = target.op;
+  bool is_method = target.is_method;
 
   iflet_tu (let it, gfn, l_op) {
     if (!it.body) {
       assertMessage(call.len == 1, "expected 1 argument (body) to complete function definition");
+      assertMessage(!is_method, "cannot define method body via direct call");
       let body_val = tu_catch(tv, env_getVal(b->env, call.off)->value);
       assert_type(c_ast, body_val.t);
 
@@ -487,28 +534,32 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
       b->env->code[insloc] = ocode_of(onone, {});
     } else {
       let params = sentList_vla(it.type.p->stmts);
-      assertMessage(call.len == countof(*params), "argument count mismatch");
+      u32 expected_args = countof(*params);
+      u32 provided_args = call.len + (is_method ? 1 : 0);
+      assertMessage(provided_args == expected_args, "argument count mismatch");
 
       let osc = b->env;
       b->env = env_replace(b, env_findOwner(b, call.d));
       defer { b->env = osc; };
 
       //-parameter & return types
-      typeof(u32[call.len]) param_regs = {};
-      foreach (let reg, span(param_regs, countof(param_regs))) {
+      typeof(u32[expected_args]) param_regs = {};
+      foreach (let reg, span(param_regs, expected_args)) {
         let i = reg - param_regs;
         let param_ast = (*params)[i];
         *reg = emit_ir(b, param_ast, 0);
-        env_addOp(b, ocode_of(omov, {.l = call.off + i, .r = *reg}));
+
+        u32 arg_reg = (is_method && i == 0) ? call.l : (is_method ? call.off + i - 1 : call.off + i);
+        env_addOp(b, ocode_of(omov, {.l = arg_reg, .r = *reg}));
       }
 
       u32 ret_type_reg = emit_ir(b, it.type.r, 0);
       lower_i(b);
 
-      mList(Type) sig_types = mList_init(b->alloc, Type, call.len + 1);
+      mList(Type) sig_types = mList_init(b->alloc, Type, expected_args + 1);
       defer { mList_deinit(sig_types); };
 
-      for (u32 i = 0; i < call.len; i++) {
+      for (u32 i = 0; i < expected_args; i++) {
         u32 param_reg = param_regs[i];
         mList_push(sig_types, tu_catch(tv, env_getVal(b->env, param_reg)->value).t);
       }
@@ -566,6 +617,8 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
         it.t,
         (builtin, bin, {
           switch (bin) {
+            default:
+              assertMessage(false, "forgot to handle builtin '%s'", snprint(stdAlloc, "{builtin_id}", bin).ptr);
             case builtin_if: {
               assertMessage(call.len >= 2);
               let cond_val = tu_catch(tv, env_getVal(b->env, call.off)->value);
@@ -719,6 +772,75 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
               b->env->code[insloc] = ocode_of(onone, {});
             } break;
 
+            case builtin_struct: {
+              assertMessage(call.len == 1, "@struct expects 1 argument (the block)");
+              let arg = tu_catch(tv, env_getVal(b->env, call.off)->value);
+              assert_type(c_ast, arg.t);
+              ast *block = arg.v.c_ast;
+
+              Type *st = avalue(b->alloc, (Type)tu_of(r_struct, mList_init(b->alloc, r_struct_item)));
+
+              Type *old_structctx = b->typectx;
+              b->typectx = st;
+
+              let osc = b->env;
+              b->env = env_replace(b, env_findOwner(b, call.d));
+              defer {
+                b->env = osc;
+                b->typectx = old_structctx;
+              };
+
+              env_push(b);
+              emit_ir(b, block, 0);
+              lower_i(b);
+              ir_interpret_scope(b);
+
+              assertMessage(msList_len(b->env->code) > 0 && tu_is(oscop, b->env->code[0]), "expected block to create a scope");
+              scope *inner_scope = tu_catch(oscop, b->env->code[0]);
+
+              usize offset = 0;
+              let stmts = sentList_vla(tu_catch(astBBlock, *block, assert_type(astBBlock, *block)).stmts);
+
+              foreach (let stmt, vlap(stmts)) {
+                iflet_tu (let decl, astDecl, *stmt) {
+                  if (decl.name && tu_is(astId, *decl.name)) {
+                    fptr name = tu_catch(astId, *decl.name);
+                    if_decl (let reg_ptr, moxmap_get(inner_scope->locals, name)) {
+                      let val_op = env_getVal(inner_scope, reg_ptr->idx)->value;
+                      typed_value val;
+
+                      // Safely box generic functions into c_any so they fit in r_struct_item
+                      iflet_tu (let tval, tv, val_op) {
+                        val = tval;
+                      } else {
+                        op_tv *heap_op = avalue(b->alloc, val_op);
+                        val = (typed_value){tu_of(c_any, {}), {.value = heap_op}};
+                      }
+
+                      usize align = Type_ralig(val.t) ?: 1;
+
+                      if (!reg_ptr->isconst)
+                        offset = lineup(offset, align);
+
+                      mList_push(tu_catch(r_struct, *st), ((r_struct_item){.name = name, .init = val, .alignment = align, .offset = reg_ptr->isconst ? 0 : offset, .isconst = reg_ptr->isconst}));
+
+                      if (!reg_ptr->isconst) offset += Type_rsize(val.t);
+                    }
+                  }
+                } else assertMessage(tu_is(astEmptyStatement, *stmt), "struct block may only contain declarations");
+              }
+              env_pop(b);
+
+              env_getVal(osc, call.d)->value = Op_tv(IrBuilder_getType(b, *st));
+              osc->code[insloc] = ocode_of(onone, {});
+            } break;
+            case builtin__this: {
+              assertMessage(call.len == 0);
+              assertMessage(b->typectx, "@this used outside of a struct definition");
+
+              env_getVal(b->env, call.d)->value = Op_tv(b->typectx);
+              b->env->code[insloc] = ocode_of(onone, {});
+            } break;
             case builtin_ptrof: {
               assertMessage(call.len == 1, "@ptr expects 1 argument: type");
               let type_op = &env_getVal(b->env, call.off)->value;
@@ -800,6 +922,7 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
 
               osc->code[insloc] = ocode_of(onone, {});
             } break;
+
             case builtin_fn: {
               assertMessage(call.len == 2, "fn expects 2 arguments");
               let params_val = tu_catch(tv, env_getVal(b->env, call.off)->value);
@@ -819,15 +942,17 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
         }),
         (r_func, rf, {
           u32 nparams = mList_len(rf) - 1;
-          assertMessage(call.len == nparams, "call expected %u args, got %u", nparams, call.len);
+          u32 provided_args = call.len + (is_method ? 1 : 0);
+          assertMessage(provided_args == nparams, "call expected %u args, got %u", nparams, provided_args);
 
           for (u32 i = 0; i < nparams; i++) {
-            let arg_op = &env_getVal(b->env, call.off + i)->value;
+            u32 arg_reg = (is_method && i == 0) ? call.l : (is_method ? call.off + i - 1 : call.off + i);
+            let arg_op = &env_getVal(b->env, arg_reg)->value;
             let arg = tu_catch(tv, *arg_op);
             Type param_type = mList_arr(rf)[i];
 
             if (tu_is(c_ast, arg.t) && !tu_is(c_ast, param_type)) {
-              arg = tu_catchr(tv, hv_handle_evaltype(b, arg.v.c_ast, env_findOwner(b, call.off + i)));
+              arg = tu_catchr(tv, hv_handle_evaltype(b, arg.v.c_ast, env_findOwner(b, arg_reg)));
               *arg_op = Op_tv(arg);
             }
             assertMessage(!Type_cmp(arg.t, param_type), "argument %u type mismatch , %s", i, snprint(stdAlloc, "{Type} != {Type}", arg.t, param_type).ptr);
@@ -835,20 +960,12 @@ void ir_handle_call(IrBuilder *b, ocall call, u32 insloc) {
           env_getVal(b->env, call.d)->value = Op_tv(((typed_value){mList_arr(rf)[nparams]}));
           // no replace
         }),
-        (r_tag, _, TODO()),
-        (r_arr, _, TODO()),
-        (r_ptr, _, TODO()),
-        (r_bitfield, _, TODO()),
-        (r_struct, _, TODO()),
-        // clang-format off
-        (default, 
-          assertMessage(
-            false ,
-            "%s does not support call" ,
-            snprint(stdAlloc , "{Type}" , it.t).ptr
-          );
-        ),
-        // clang-format on
+        (r_arr, _, assertMessage(false, "array type does not support call and has no __call method")),
+        (r_tag, _, assertMessage(false, "tag type does not support call and has no __call method")),
+        (r_ptr, _, assertMessage(false, "pointer type does not support call and has no __call method")),
+        (r_struct, _, assertMessage(false, "struct type does not support call and has no __call method")),
+        (c_type, _, assertMessage(false, "type type does not support call and has no __call method")),
+        (default, assertMessage(false, "%s does not support call", snprint(stdAlloc, "{Type}", it.t).ptr);)
     );
   } else unreachable();
 }

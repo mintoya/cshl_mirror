@@ -21,7 +21,7 @@ point :type: @struct{
   };
 };
 
-a :: point(1 , 2);
-b :: point(2 , 4);
+a :point;
+b :point;
 
 c :point: a.__add b;

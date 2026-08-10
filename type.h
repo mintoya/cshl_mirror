@@ -28,6 +28,7 @@ typedef enum : u8 {
   builtin_arrof,  // @arrof(N,t) array of N t's
   builtin_ptrof,  // @ptrof(t) pionter to t
   builtin_struct, // @struct{} struct of declarations
+  builtin__this,  // @this() inside of struct, this is the result type
 
   builtin_return, // return x return
   builtin_break,  // @break()
@@ -85,11 +86,12 @@ typedef struct r_bitf_item {
 static inline usize Type_ralig(Type t) {
   return tu_match_exp(
       t,
+      (r_tag, tag, Type_ralig(*tag.type)),
       (r_void, _, (usize)1),
       (r_uint, u, lineup(u, 8) / 8), // TODO
       (r_sint, u, lineup(u, 8) / 8), // TODO
       (r_ptr, p, Type_ralig((Type)tu_of(r_uint, 64))),
-      (r_arr, a, assertMessage(a.type); Type_ralig(a.type[0]) * a.count),
+      (r_arr, a, (assertMessage(a.type), Type_ralig(a.type[0]))),
       (r_bitfield, b, ({
          usize s = 0;
          foreach (let b, mList_iter(b))
@@ -102,17 +104,20 @@ static inline usize Type_ralig(Type t) {
            a = MAX$(i.isconst ? 1 : i.alignment, a);
          a;
        })),
+      (r_func, _, (usize)1),
       (default, (usize)0)
   );
 }
+
 static inline usize Type_rsize(Type t) {
   return tu_match_exp(
       t,
+      (r_tag, tag, Type_rsize(*tag.type)),
       (r_void, _, (usize)0),
       (r_uint, u, lineup(u, 8) / 8),
       (r_sint, u, lineup(u, 8) / 8),
       (r_ptr, p, Type_rsize((Type)tu_of(r_uint, 64))),
-      (r_arr, a, assertMessage(a.type); Type_rsize(a.type[0]) * a.count),
+      (r_arr, a, (assertMessage(a.type), Type_rsize(a.type[0]) * a.count)),
       (r_bitfield, b, ({
          usize s = 0;
          foreach (let b, mList_iter(b))
@@ -125,10 +130,10 @@ static inline usize Type_rsize(Type t) {
            sz = MAX$(i.isconst ? 0 : i.offset + Type_rsize(i.init.t), sz);
          lineup(sz, Type_ralig(t));
        })),
+      (r_func, _, (usize)0),
       (default, (usize)0)
   );
 }
-
 typedef struct {
   Type *a;
   Type *b;
@@ -344,6 +349,7 @@ typePrinter(builtin_id) {
     case(builtin_uint):PUTS("uint");break;
     case(builtin_type):PUTS("type");break;
     case(builtin_struct):PUTS("struct");break;
+    case(builtin__this):PUTS("this");break;
     case(builtin_while):PUTS("while");break;
     case(builtin_return):PUTS("return");break;
     case(builtin_typeof):PUTS("typeof");break;
