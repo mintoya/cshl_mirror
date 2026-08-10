@@ -1,20 +1,27 @@
 type :: @type();
+i32 :type: @sint(32);
 
 point :type: @struct{
   scale :: 1;
   Self:type:@this();
 
-  x : @sint(32);
-  y : @sint(32);
+  x : i32;
+  y : i32;
 
-  __add::fn((self:Self,other:Self),Self)
+  __add::fn((self:Self,other:Self), Self)
     return Self[
       .x = self.x + other.x ,
       .y = self.y + other.y
     ];
+  __call::fn((type,x:i32,y:i32), Self){
+    r : Self;
+    r.x = x;
+    r.y = y;
+    return r;
+  };
 };
 
-a :: point[1 , 2];
-b :: point[2 , 4];
+a :: point(1 , 2);
+b :: point(2 , 4);
 
-c :point: a.__add(b);
+c :point: a.__add b;
