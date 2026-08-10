@@ -5,14 +5,9 @@
 #include "wheels/allocators/cballocator.h"
 #include "wheels/fptr.h"
 #include "wheels/mytypes.h"
-#include "wheels/print/print_pre.h"
 #include <assert.h>
 #include <stdcountof.h>
-#include <wheels/allocators/fbaAllocator.h>
 #include <wheels/bigint.h>
-#include <wheels/macros.h>
-#include <wheels/mylist.h>
-#include <wheels/sList.h>
 #include <wheels/smap.h>
 #define assert_type(tag, val)              \
   assertMessage(                           \
@@ -1073,15 +1068,26 @@ exec_signal ir_interpret_scope(IrBuilder *b) {
               r.t = l.t;
             }
             d = l;
-          } else if (opp.o == opNumbers.eq || opp.o == opNumbers.neq || opp.o == opNumbers.les || opp.o == opNumbers.mor || opp.o == opNumbers.leq || opp.o == opNumbers.moq) {
+          } else if (
+              EQUAL_ANY(
+                  opp.o,
+                  opNumbers.eq,
+                  opNumbers.neq,
+                  opNumbers.les,
+                  opNumbers.mor,
+                  opNumbers.moq,
+                  opNumbers.leq
+              )
+          ) {
             assertMessage(!Type_cmp(l.t, r.t), "type mismatch in comparison (op %u)", opp.o);
-            assertMessage(tu_is(c_any, l.t), "type mismatch in omov assignment"); // <-- see note
             i8 c = bigint_cmp(l.v.c_int, r.v.c_int);
-            bool res = opp.o == opNumbers.eq ? c == 0 : opp.o == opNumbers.neq ? c != 0
-                                                    : opp.o == opNumbers.les   ? c < 0
-                                                    : opp.o == opNumbers.mor   ? c > 0
-                                                    : opp.o == opNumbers.leq   ? c <= 0
-                                                                               : c >= 0;
+            bool res =
+                opp.o == opNumbers.eq    ? c == 0
+                : opp.o == opNumbers.neq ? c != 0
+                : opp.o == opNumbers.les ? c < 0
+                : opp.o == opNumbers.mor ? c > 0
+                : opp.o == opNumbers.leq ? c <= 0
+                                         : c >= 0;
             d.t = (Type)tu_of(r_uint, 1);
             d.v.c_int = mk_bool(allocator, res);
           } else if (opp.o == opNumbers.mul || opp.o == opNumbers.div || opp.o == opNumbers.mod || opp.o == opNumbers.plus || opp.o == opNumbers.minus || opp.o == opNumbers.oand || opp.o == opNumbers.oor || opp.o == opNumbers.oband || opp.o == opNumbers.obor || opp.o == opNumbers.shr || opp.o == opNumbers.shl) {
@@ -1131,13 +1137,20 @@ exec_signal ir_interpret_scope(IrBuilder *b) {
 
           *d_op = Op_tv(d);
         }),
+        (omov, m, ),
 
         (oret, l, {
           sig.value = env_getVal(b->env, l)->value;
           println("returning {op_tv}", sig.value);
           sig.returned = true;
         }),
-        (obreak, _, { sig.broke = true; }),
+        (obreak, _, sig.broke = true),
+        (ojif, jmp, {
+          if (!tv_truthy(tu_catch(tv, env_getVal(b->env, jmp.l)->value)))
+            next = jmp.d;
+        }),
+        (ojmp, tgt, next = tgt;),
+
         (oscop, sco, {
           let old_env = b->env;
           b->env = sco;
@@ -1155,12 +1168,10 @@ exec_signal ir_interpret_scope(IrBuilder *b) {
             env_pushVal(allocator, b->env, yield_val, ipidx);
           }
         }),
-        (ojif, jmp, {
-          if (!tv_truthy(tu_catch(tv, env_getVal(b->env, jmp.l)->value)))
-            next = jmp.d;
-        }),
-        (ojmp, tgt, next = tgt;),
+        (oselem, _, TODO()),
+        (ocall, _, TODO()),
 
+        // handled by lower_i
         (onew, _, ),
         (oint, _, ),
         (ostr, _, ),
@@ -1169,9 +1180,6 @@ exec_signal ir_interpret_scope(IrBuilder *b) {
         (obin, _, ),
         (oarg, _, ),
 
-        (omov, _, ),
-        (ocall, _, ),
-        (oselem, _, ),
         (oconst, _, ),
         (onone, _, ),
     );
@@ -1217,9 +1225,7 @@ void lower_i(IrBuilder *b) {
               }
             }
             env_pushVal(allocator, b->env, Op_tv(((typed_value){t, vs})), ipdix);
-          } else {
-            env_pushVal(allocator, b->env, Op_tv((c_any){}), ipdix);
-          }
+          } else env_pushVal(allocator, b->env, Op_tv((c_any){}), ipdix);
         }),
         (omov, mov, {
           let l_op = &env_getVal(b->env, mov.l)->value;
@@ -1228,7 +1234,6 @@ void lower_i(IrBuilder *b) {
           let r = *r_op;
 
           if (tu_is(c_ast, tu_or(tv, l, {}).t) && !tu_is(c_ast, tu_or(tv, r, {}).t)) {
-            // if (tu_is(c_ast, tu_or(tv, l, {}).t)) {
             l = P$(env_findOwner(b->env, mov.l), hv_handle_evaltype(b, tu_catch(tv, l).v.c_ast, $.scope, $.idx));
             *l_op = l;
           }

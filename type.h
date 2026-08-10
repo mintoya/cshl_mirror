@@ -27,6 +27,7 @@ typedef enum : u8 {
   builtin_typeof, // @typeof(V) type of argument
   builtin_arrof,  // @arrof(N,t) array of N t's
   builtin_ptrof,  // @ptrof(t) pionter to t
+  builtin_struct, // @struct{} struct of declarations
 
   builtin_return, // return x return
   builtin_break,  // @break()
@@ -342,6 +343,7 @@ typePrinter(builtin_id) {
     case(builtin_sint):PUTS("sint");break;
     case(builtin_uint):PUTS("uint");break;
     case(builtin_type):PUTS("type");break;
+    case(builtin_struct):PUTS("struct");break;
     case(builtin_while):PUTS("while");break;
     case(builtin_return):PUTS("return");break;
     case(builtin_typeof):PUTS("typeof");break;

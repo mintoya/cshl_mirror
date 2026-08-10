@@ -106,6 +106,7 @@ cmd_main(
     lower_i(&builder);
     println("(log) after second ir : {dbga_stats}", debugAllocator_stats(allocator));
     print_wfO(depth_output, &dstate, "{IrBuilder}\n", builder);
+    // ir_interpret_scope(&builder);
   }
 
   return 0;
