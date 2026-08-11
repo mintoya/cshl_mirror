@@ -31,7 +31,7 @@ int main(int argc, char **argv) {
   if (
       clone("https://github.com/tsoding/nob.h deps/nob.h") ||
       clone("https://codeberg.org/mintoya/wheels deps/wheels") ||
-      clone("https://github.com/tree-sitter/tree-sitter.git")
+      clone("https://github.com/tree-sitter/tree-sitter deps/tree-sitter")
   ) {
     puts("Failed to clone dependencies.\n");
     return 1;

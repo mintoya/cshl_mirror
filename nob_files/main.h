@@ -153,7 +153,7 @@ int build_main(int nargs, char **args) {
       CC,
       COMMON_CFLAGS,
       "-o",
-      "build/compiler",
+      "build/compiler" EXTENSION,
 
       "build/main.o",
       "build/tree_sitter.o",
