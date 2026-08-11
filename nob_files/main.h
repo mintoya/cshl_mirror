@@ -22,7 +22,7 @@
   #define INPUT_FLAGS ""
 #endif
 
-#define COMMON_CFLAGS INPUT_FLAGS, "-std=c23", "-fdefer-ts", "-I", "deps", "-fno-sanitize=vla-bound"
+#define COMMON_CFLAGS INPUT_FLAGS, "-std=gnu23", "-fdefer-ts", "-Ideps", "-fno-sanitize=vla-bound", "-g"
 
 //{timespec
 #include <time.h>
@@ -76,19 +76,93 @@ bool update_deps() {
     cmd_append(&wheels, "git", "-C", "deps/wheels", "pull", "--autostash");
     nob_da_append(&p, cmd_run_async(wheels));
 
-    Cmd nob = {};
-    cmd_append(&nob, "git", "-C", "deps/nob.h", "pull", "--autostash");
-    nob_da_append(&p, cmd_run_async(nob));
+    // Cmd nob = {};
+    // cmd_append(&nob, "git", "-C", "deps/nob.h", "pull", "--autostash");
+    // nob_da_append(&p, cmd_run_async(nob));
 
     return nob_procs_wait(p);
   } else return (nob_log(INFO, "skipping sync..."), true);
 }
 int build_main(int nargs, char **args) {
-  Cmd cmd = {};
-  if (!mkdir_if_not_exists("build"))
-    return false;
-  cmd_append(&cmd, CC, COMMON_CFLAGS, "-o", "build/compiler" EXTENSION, "main.c", "-g", "-rdynamic");
-  if (!cmd_run_sync(cmd)) return false;
+
+  if (!mkdir_if_not_exists("build")) return false;
+
+  Procs p = {};
+
+  Cmd mainc = {};
+  cmd_append(
+      &mainc,
+      CC,
+      COMMON_CFLAGS,
+      "-c",
+      "main.c",
+      "-o",
+      "build/main.o"
+  );
+  nob_da_append(&p, cmd_run_async(mainc));
+
+  Cmd tree_sitter = {};
+  cmd_append(
+      &tree_sitter,
+      CC,
+      COMMON_CFLAGS,
+      "-D_GNU_SOURCE",
+      "-I",
+      "deps/tree-sitter/lib/include",
+      "-c",
+      "deps/tree-sitter/lib/src/lib.c",
+      "-o",
+      "build/tree_sitter.o"
+  );
+  nob_da_append(&p, cmd_run_async(tree_sitter));
+
+  Cmd parser = {};
+  cmd_append(
+      &parser,
+      CC,
+      COMMON_CFLAGS,
+      "-I",
+      "tsversion/src",
+      "-c",
+      "tsversion/src/parser.c",
+      "-o",
+      "build/parser.o"
+  );
+  nob_da_append(&p, cmd_run_async(parser));
+
+  Cmd adapt = {};
+  cmd_append(
+      &adapt,
+      CC,
+      COMMON_CFLAGS,
+      "-I",
+      "deps/tree-sitter/lib/include",
+      "-c",
+      "ts_adapt.c",
+      "-o",
+      "build/ts_adapt.o"
+  );
+  nob_da_append(&p, cmd_run_async(adapt));
+
+  if (!nob_procs_wait(p)) return false;
+
+  // 5. Link everything together
+  Cmd merge = {};
+  cmd_append(
+      &merge,
+      CC,
+      COMMON_CFLAGS,
+      "-o",
+      "build/compiler",
+
+      "build/main.o",
+      "build/tree_sitter.o",
+      "build/parser.o",
+      "build/ts_adapt.o"
+  );
+
+  if (!nob_cmd_run_sync(merge)) return false;
+
   Cmd runcmd = {};
   cmd_append(&runcmd, "./build/compiler" EXTENSION);
   for (int i = 0; i < nargs; i++)

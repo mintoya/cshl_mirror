@@ -30,7 +30,8 @@ int main(int argc, char **argv) {
   puts("Missing dependencies. Cloning...\n");
   if (
       clone("https://github.com/tsoding/nob.h deps/nob.h") ||
-      clone("https://codeberg.org/mintoya/wheels deps/wheels")
+      clone("https://codeberg.org/mintoya/wheels deps/wheels") ||
+      clone("https://github.com/tree-sitter/tree-sitter.git")
   ) {
     puts("Failed to clone dependencies.\n");
     return 1;

@@ -12,10 +12,11 @@
 #include <wheels/sList.h>
 
 typedef enum : u8 {
-  builtin_if,       // @if(cnd , then ,)
-                    //
-  builtin_while,    // @while(cnd , then) //
   builtin_fn,       // fn((decl|type...) ,decl|type) c_func of this type,
+  builtin_if,       // @if(cnd , then ,)
+  builtin_while,    // @while(cnd , then) //
+  builtin_return,   // return x return
+  builtin_break,    // @break()
                     // then when called with expression, yields an r_func
   builtin_ast,      // @ast() type of ast
   builtin_any,      // @any() type of any
@@ -29,12 +30,11 @@ typedef enum : u8 {
   builtin_arrof,    // @arrof(N,t) array of N t's
   builtin_ptrof,    // @ptrof(t) pionter to t
   builtin_struct,   // @struct{} struct of declarations
+                    //
   builtin__this,    // @this() inside of struct, this is the result type
-
-  builtin_return, // return x return
-  builtin_break,  // @break()
-  builtin_qot,    // @qot(arg) ast of arg
-  builtin_uqot,   // @unqot(arg) evaluate arg
+  builtin_qot,      // @qot(arg) ast of arg
+  builtin_uqot,     // @unqot(arg) evaluate arg
+  builtin_at,       // @at(arg) address of arg
 } builtin_id;
 //{type
 typedef struct Type Type;
@@ -339,6 +339,7 @@ typePrinter(builtin_id) {
     case(builtin_ast):PUTS("ast");break;
     case(builtin_arrof):PUTS("arrof");break;
     case(builtin_ptrof):PUTS("ptrof");break;
+    case(builtin_at):PUTS("at");break;
     case(builtin_any):PUTS("any");break;
     case(builtin_int):PUTS("int");break;
     case(builtin_sint):PUTS("sint");break;
