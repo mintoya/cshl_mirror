@@ -1,10 +1,10 @@
 a ~= 1;
-@if( a, 2,);
-@if( a, {2;}, {3;});
+@if(a,2,);
+@if(a,{2;}, {3;});
 
 @while( a, a = a - 1);
-
 ast ~~ @ast();
+
 if ~~ fn((a~ ast), ast) {
   call ~ast~ a."()";
   cond ~ast~ call.left;
@@ -22,16 +22,12 @@ if ~~ fn((a~ ast), ast) {
     );
   });
 
-  return @qot(
-    @if(
+  return @qot @if(
       @uqot(cond),
       @uqot(rest)
-    )
   );
 };
 
 
 i ~~ if 1 (2)
   else (3);
-  // should be void
-a b.c d;

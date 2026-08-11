@@ -21,9 +21,11 @@ point~type~ @struct{
   };
 };
 
+
 a~~point(1,2);
 b~~point(3,4);
 
 c~point~ a.__add(a,b);
 d~point~ a:__add(b);
 e~point~ a + b;
+
