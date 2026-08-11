@@ -1,43 +1,9 @@
 #include "ast.h"
-#include "wheels/allocators/arenaAllocator.h"
 #include "wheels/macros.h"
-#include "wheels/print/print_pre.h"
 #include <string.h>
 #include <tree-sitter/lib/include/tree_sitter/api.h>
 
 extern const TSLanguage *tree_sitter_cshl(void);
-
-static _Thread_local allocfn ts_current_allocator;
-
-#define TS_PAD lineup(sizeof(usize), alignof(myAlign))
-
-static void ts_arena_free(void *ptr);
-static void *ts_arena_malloc(size_t size) {
-  let res = *acreate(ts_current_allocator, u8[size + TS_PAD]);
-  *(usize *)res = size;
-  return res + TS_PAD;
-}
-static void *ts_arena_calloc(size_t count, size_t size) { return ts_arena_malloc(count * size); }
-static void *ts_arena_realloc(void *ptr, size_t size) {
-  if (!ptr) return ts_arena_malloc(size);
-  if (!size) return ts_arena_free(ptr), nullptr;
-
-  let base = (u8 *)ptr - TS_PAD;
-  let new_base = *aresize(
-      ts_current_allocator,
-      (u8(*)[*(usize *)base + TS_PAD]) base,
-      u8[size + TS_PAD]
-  );
-
-  *(usize *)new_base = size;
-  return new_base + TS_PAD;
-}
-static void ts_arena_free(void *ptr) {
-  if (ptr) {
-    let base = (u8 *)ptr - TS_PAD;
-    adestroy(ts_current_allocator, (u8(*)[*(usize *)base + TS_PAD]) base);
-  }
-}
 
 static ast *ts_to_ast(allocfn allocator, const u8 *source, TSNode ts_node) {
   if (ts_node_is_null(ts_node)) return nullptr;
@@ -110,17 +76,12 @@ static ast *ts_to_ast(allocfn allocator, const u8 *source, TSNode ts_node) {
     return rp[0];
   } else assertMessage(false, "unknown node");
 }
-
 ast *parse_source(allocfn out_allocator, fptr input) {
-  let scratch_alloc = arena_new_ext(out_allocator, 1024 * 16);
-  defer { arena_cleanup(scratch_alloc); };
-  ts_current_allocator = scratch_alloc;
-
-  ts_set_allocator(ts_arena_malloc, ts_arena_calloc, ts_arena_realloc, ts_arena_free);
-
   TSParser *parser = ts_parser_new();
+  defer { ts_parser_delete(parser); };
   ts_parser_set_language(parser, tree_sitter_cshl());
   TSTree *tree = ts_parser_parse_string(parser, NULL, (const char *)input.ptr, input.len);
+  defer { ts_tree_delete(tree); };
   TSNode root_node = ts_tree_root_node(tree);
 
   return ts_to_ast(out_allocator, input.ptr, root_node);

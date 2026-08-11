@@ -215,7 +215,7 @@
     "fields": {
       "left": {
         "multiple": false,
-        "required": false,
+        "required": true,
         "types": [
           {
             "type": "ablock",
@@ -320,19 +320,11 @@
             "named": false
           },
           {
-            "type": "bnot",
-            "named": false
-          },
-          {
             "type": "bor",
             "named": false
           },
           {
             "type": "bxor",
-            "named": false
-          },
-          {
-            "type": "not",
             "named": false
           },
           {
@@ -573,10 +565,6 @@
     "named": false
   },
   {
-    "type": "bnot",
-    "named": false
-  },
-  {
     "type": "bor",
     "named": false
   },
@@ -587,10 +575,6 @@
   {
     "type": "id",
     "named": true
-  },
-  {
-    "type": "not",
-    "named": false
   },
   {
     "type": "or",

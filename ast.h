@@ -69,6 +69,7 @@ tu_def(
     // always comma-separated
     (astABlock, struct {u8* loc ; sentList_t(ast *) items; }),
 );
+_Static_assert(sizeof(ast));
 typePrinter("astTag", itypeof(ast, tag)) {
   tu_match_void(
       ((ast){.tag = in}),
