@@ -1,15 +1,15 @@
-type::
+type~~
   @type();
-typeof :: fn((a:@any()),type)
+typeof ~~ fn((a~@any()),type)
   @if(1 , return @typeof(a));
 
-a::1;
-b:typeof(a) 
+a~~1;
+b~typeof(a) 
   = 5;
-c:typeof(a + b) 
+c~typeof(a + b) 
   = a + b;
-arrof :: fn((a:type , b: @int()) ,type)
+arrof ~~ fn((a~type , b~ @int()) ,type)
   return @arr(b,a);
 
-int8Array :: arrof(@sint(8) , 5) ;
-arrayvalue : int8Array ;
+int8Array ~~ arrof(@sint(8) , 5) ;
+arrayvalue ~ int8Array ;
