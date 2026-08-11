@@ -30,5 +30,8 @@ if ~~ fn((a~ ast), ast) {
   );
 };
 
+
 i ~~ if 1 (2)
   else (3);
+  // should be void
+a b.c d;

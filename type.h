@@ -17,6 +17,7 @@ typedef enum : u8 {
   builtin_while,    // @while(cnd , then) //
   builtin_return,   // return x return
   builtin_break,    // @break()
+  builtin_continue, // @continue()
                     // then when called with expression, yields an r_func
   builtin_ast,      // @ast() type of ast
   builtin_any,      // @any() type of any

@@ -1,5 +1,6 @@
 ; Primitives
 (string) @string
+(comment) @comment
 (number) @number
 
 ; Catch your intrinsic/macro calls (anything starting with @)
@@ -27,7 +28,7 @@
 [
   "~" "=" "+" "-" "*" "/" "%" "|>"
   "<" ">" "<=" ">=" "==" "!="
-  "and" "or" "not" "band" "bor" "bnot" "bxor" "shr" "shl"
+  "and" "or" "band" "bor" "bxor" "shr" "shl"
 ] @operator
 
 ; Delimiters & Brackets

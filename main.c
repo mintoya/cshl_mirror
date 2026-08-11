@@ -22,10 +22,8 @@
   opNumbers.plus = /* */ ((opS){"+"}).n;
   opNumbers.minus = /**/ ((opS){"-"}).n;
   opNumbers.oand = /* */ ((opS){"and"}).n;
-  opNumbers.onot = /* */ ((opS){"not"}).n;
   opNumbers.oor = /*  */ ((opS){"or"}).n;
   opNumbers.oband = /**/ ((opS){"band"}).n;
-  opNumbers.obnot = /**/ ((opS){"bnot"}).n;
   opNumbers.obor = /* */ ((opS){"bor"}).n;
   opNumbers.shr = /*  */ ((opS){"shr"}).n;
   opNumbers.shl = /*  */ ((opS){"shl"}).n;

@@ -69,12 +69,20 @@ static ast *ts_to_ast(allocfn allocator, const u8 *source, TSNode ts_node) {
       rp[0] = avalue(allocator, (ast)tu_of(astABlock, ((astABlock){loc, rp + 1})));
     else rp[0] = avalue(allocator, (ast)tu_of(astBBlock, ((astBBlock){loc, rp + 1})));
 
-    for (u32 i = 0; i < count; i++)
-      rp[i + 1] = ts_to_ast(allocator, source, ts_node_named_child(ts_node, i));
-    rp[count + 1] = 0;
+    u32 actual_count = 0;
+    for (u32 i = 0; i < count; i++) {
+      TSNode child = ts_node_named_child(ts_node, i);
+      if (!strcmp(ts_node_type(child), "comment")) continue;
+      rp[actual_count + 1] = ts_to_ast(allocator, source, child);
+      actual_count++;
+    }
+
+    // Tightly terminate the array at the true end
+    rp[actual_count + 1] = 0;
 
     return rp[0];
-  } else assertMessage(false, "unknown node");
+  } else if (!strcmp(type, "comment")) return nullptr;
+  else assertMessage(false, "unknown node %s", type);
 }
 ast *parse_source(allocfn out_allocator, fptr input) {
   TSParser *parser = ts_parser_new();

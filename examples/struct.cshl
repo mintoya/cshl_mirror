@@ -1,8 +1,7 @@
-type ~
-  ~ @type();
-i32 ~type~@sint(32);
+type~~ @type();
+i32~~ @sint(32);
 
-point ~type~ @struct{
+point~type~ @struct{
   scale ~~ 1;
   Self~type~@this();
 

@@ -2,6 +2,7 @@ module.exports = grammar({
   name: 'cshl',
   extras: $ => [
     /\s+/,
+    $.comment,
   ],
   conflicts: $ => [
     [$._expression, $.decl],
@@ -37,7 +38,7 @@ module.exports = grammar({
     ),
     op: $ => choice(
       prec.left('block-call', seq(field('left', $._expression), field('right', $._block_immediate))),
-      prec.left('call', seq(field('left', $._expression), field('right', $._expression))),
+      prec.right('call', seq(field('left', $._expression), field('right', $._expression))), // <-- Changed to prec.right
       prec.left('access', seq(field('left', $._expression), field('operator', '.'), field('right', $._expression))),
       prec.left('access', seq(field('left', $._expression), field('operator', ':'), field('right', $._expression))),
       prec.left('mul', seq(field('left', $._expression), field('operator', choice('*', '/', '%')), field('right', $._expression))),
@@ -96,6 +97,16 @@ module.exports = grammar({
       /[0-9]+/,
       /0x[0-9a-fA-F]+/,
       /0b[01]+/
-    )
+    ),
+    
+    // Comments
+    comment: $ => token(choice(
+      seq('//', /.*/),
+      seq(
+        '/*',
+        /[^*]*\*+([^/*][^*]*\*+)*/,
+        '/'
+      )
+    ))
   }
 });
