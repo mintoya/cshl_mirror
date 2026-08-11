@@ -2,19 +2,19 @@ type~~ @type();
 i32~~ @sint(32);
 
 point~type~ @struct{
-  scale ~~ 1;
-  Self~type~@this();
+  scale~~ 1;
+  Self~type~ @this();
 
-  x ~ i32;
-  y ~ i32;
+  x~ i32;
+  y~ i32;
 
-  __add~~fn((self~Self,other~Self), Self)
+  __add~~ fn((self~Self,other~Self), Self)
     return Self[
-      x ~~ self.x * scale + other.x,
-      y ~~ self.y + other.y
+      x~~ self.x * scale + other.x,
+      y~~ self.y + other.y
     ];
-  __call~~fn((type,x~i32,y~i32), Self){
-    r ~ Self;
+  __call~~ fn((type,x~i32,y~i32), Self){
+    r~Self ;
     r.x = x;
     r.y = y;
     return r;
@@ -22,8 +22,8 @@ point~type~ @struct{
 };
 
 
-a~~point(1,2);
-b~~point(3,4);
+a~~ point(1,2);
+b~~ point(3,4);
 
 c~point~ a.__add(a,b);
 d~point~ a:__add(b);
