@@ -94,6 +94,7 @@ module.exports = grammar({
     id: $ => /@?[a-zA-Z_][a-zA-Z0-9_]*/,
     string: $ => /"([^"\\]|\\.)*"/,
     number: $ => choice(
+      /-[0-9]+/,
       /[0-9]+/,
       /0x[0-9a-fA-F]+/,
       /0b[01]+/
