@@ -15,8 +15,8 @@
 typedef ast *astptr;
 sliceDef(astptr);
 sliceDef(u32);
-typedef struct scope scope;
 typedef struct ir ir;
+typedef struct scope scope;
 typedef struct function function;
 typedef struct superscope superscope;
 
@@ -189,7 +189,7 @@ u32 ss_compileString(superscope *b, scope *s, fptr in) {
   scope_add_value(
       b,
       s,
-      (typed_value){
+      (typed_full){
           *ss_getType(
               b,
               (Type)tu_of(
@@ -207,3 +207,5 @@ u32 ss_compileString(superscope *b, scope *s, fptr in) {
 
 u32 lower(superscope *, scope *, astptr);
 typed_value interpret(superscope *, scope *);
+void interpret_op(superscope *, scope *, ir_op);
+void interpret_call(superscope *, scope *, ir_call);

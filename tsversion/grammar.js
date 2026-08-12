@@ -10,12 +10,12 @@ module.exports = grammar({
   precedences: $ => [
     [
       'access',
-      'block-call',  // Tight binding: f(x)+y  -> (f(x)) + y
+      'block-call',  // tight call
       'mul',
       'add',
       'bit',
       'cmp',
-      'call',        // Loose binding: f (x)+y -> f( (x) + y )
+      'call',        // loose call
       'pipe',
       'decl',
       'assign'

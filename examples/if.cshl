@@ -14,7 +14,7 @@ if ~~ fn((a~ ast), ast) {
     then ~ast~ rest.left;
     else ~ast~ rest.right."()";
 
-    @if( else, return @qot @if(
+    @if(else and (rest.left == "else"), return @qot @if(
             @uqot(cond),
             @uqot(then),
             @uqot(else.right)
