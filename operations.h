@@ -19,43 +19,6 @@ void irb_cbb(const callbackallocatorhandle *h, void *p) {
   moxmap_rem(_map, h->inptr);
   if (p) moxmap_set(_map, p, h->outsize);
 }
-IrBuilder IrBuilder_init(allocfn allocator) {
-  IrBuilder res;
-  res = (IrBuilder){
-      .env = nullptr,
-      .types = moxmap_init(allocator, Type, Type *, Type_cmp_hash),
-      .pointers = moxmap_init(allocator, void *, usize),
-  };
-  res.alloc = cba_init(allocator, nullptr, irb_cbb, res.pointers);
-  env_push(&res);
-
-  struct {
-    char *name;
-    builtin_id id;
-  } builtins[] = {
-      {"@if", builtin_if},
-      {"@while", builtin_while},
-      {"@ast", builtin_ast},
-      {"@any", builtin_any},
-      {"@int", builtin_int},
-      {"@sint", builtin_sint},
-      {"@uint", builtin_uint},
-      {"@arr", builtin_arrof},
-      {"@ptr", builtin_ptrof},
-      {"@type", builtin_type},
-      {"@typeof", builtin_typeof},
-      {"@break", builtin_break},
-      {"@qot", builtin_qot},
-      {"@uqot", builtin_uqot},
-      {"@struct", builtin_struct},
-      {"@this", builtin__this},
-      {"return", builtin_return},
-      {"fn", builtin_fn},
-  };
-  foreach (let it, vla(builtins))
-    env_bind(&res, fp(it.name), env_addOp(&res, ocode_of(obin, it.id)));
-  return res;
-}
 void IrBuilder_deinit(IrBuilder *b) {
   let realAllocator = cba_backing(b->alloc);
   foreach (let i, moxmap_iter(b->pointers, void *, usize))
@@ -173,63 +136,6 @@ Type value_asType(typed_value t) {
   return t.v.c_type[0];
 }
 Type typeof_Value(typed_value t) { return t.t; }
-typed_value convertInt(IrBuilder *b, fptr in) {
-  let front = slice_split(in, (0, 2))[0];
-  bigint result = nullptr;
-  if (fptr_eq(front, "0x") || fptr_eq(front, "0b"))
-    result = BInt.from.fptr(b->alloc, fptr_eq(front, "0x") ? 16 : 2, slice_split(in, (2, -1))[0]);
-  else result = BInt.from.fptr(b->alloc, 10, in);
-  return (typed_value){tu_of(c_int, {}), {.c_int = result}};
-}
-typed_value convertString(IrBuilder *b, fptr in) {
-  assertMessage(in.len > 1 && in.ptr[0] == '"' && in.ptr[in.len - 1] == '"');
-  let result = mList_init(b->alloc, char, in.len - 2);
-  defer { mList_deinit(result); };
-
-  usize i = 1;
-  usize end = in.len - 1;
-  while (i < end) {
-    char c = in.ptr[i];
-    if (c == '\\' && i + 1 < end) {
-      char out;
-      switch (in.ptr[i + 1]) {
-          // clang-format off
-        case 'n': out = '\n'; break;
-        case 't': out = '\t'; break;
-        case 'r': out = '\r'; break;
-        case 'a': out = '\a'; break;
-        case 'b': out = '\b'; break;
-        case 'f': out = '\f'; break;
-        case 'v': out = '\v'; break;
-        case '0': out = '\0'; break;
-        case '\\': out = '\\'; break;
-        case '\'': out = '\''; break;
-        case '"': out = '"'; break;
-        default: assertMessage(false , "unknown escape %c%c",in.ptr[i] , in.ptr[i+1]);
-          // clang-format on
-      }
-      mList_push(result, out);
-      i += 2;
-    } else {
-      mList_push(result, c);
-      i += 1;
-    }
-  }
-
-  return (typed_value){
-      *IrBuilder_getType(
-          b,
-          (Type)tu_of(
-              r_arr,
-              {
-                  IrBuilder_getType(b, (Type)tu_of(r_sint, 8)),
-                  mList_len(result),
-              }
-          )
-      ),
-      mList_toOwned(b->alloc, result)
-  };
-}
 
 u32 emit_ir(IrBuilder *b, ast *node, u32 ctx) {
   assertMessage(node);

@@ -49,7 +49,7 @@ tu_def( // type
     (r_void /*       */, struct {}),
     (r_uint /*       */, u16),
     (r_sint /*       */, u16),
-    (r_tag /*        */, struct { fptr name;Type *type; }),
+    (r_tag /*        */, struct { Type *type; fptr name; }),
     (r_ptr /*        */, Type *),
     (r_arr /*        */, struct { Type *type; usize count; }),
     (r_struct /*     */, mList(r_struct_item)),

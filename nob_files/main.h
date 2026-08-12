@@ -22,7 +22,11 @@
   #define INPUT_FLAGS ""
 #endif
 
-#define COMMON_CFLAGS INPUT_FLAGS, "-std=gnu23", "-fdefer-ts", "-Ideps", "-fno-sanitize=vla-bound", "-g"
+#define COMMON_CFLAGS                          \
+  INPUT_FLAGS,                                 \
+      "-std=gnu23", "-fdefer-ts",              \
+      "-I", "deps", "-fno-sanitize=vla-bound", \
+      "-g"
 
 //{timespec
 #include <time.h>
@@ -50,6 +54,7 @@ static inline ts_int now() {
 //}
 
 #define let __auto_type
+#define cmd_imm(...) ({Cmd _r = {};cmd_append(&_r , __VA_ARGS__);_r; })
 bool check_last_update() {
   let f = fopen("nob_files/last_run.txt", "rb+");
   if (!f) f = fopen("nob_files/last_run.txt", "wb+");
@@ -61,7 +66,7 @@ bool check_last_update() {
 
   let diff = now() - saved[0];
   *saved = now();
-  if (diff > ts_int_min * 5)
+  if (diff > ts_int_min * 30)
     return (fwrite(saved, sizeof(char), sizeof(saved), f), fclose(f), false);
   return (fclose(f), true);
 }
@@ -72,13 +77,7 @@ bool update_deps() {
 
     Procs p = {};
 
-    Cmd wheels = {};
-    cmd_append(&wheels, "git", "-C", "deps/wheels", "pull", "--autostash");
-    nob_da_append(&p, cmd_run_async(wheels));
-
-    // Cmd nob = {};
-    // cmd_append(&nob, "git", "-C", "deps/nob.h", "pull", "--autostash");
-    // nob_da_append(&p, cmd_run_async(nob));
+    nob_da_append(&p, cmd_run_async(cmd_imm("git", "-C", "deps/wheels", "pull", "--autostash")));
 
     return nob_procs_wait(p);
   } else return (nob_log(INFO, "skipping sync..."), true);
@@ -89,67 +88,35 @@ int build_main(int nargs, char **args) {
 
   Procs p = {};
 
-  Cmd mainc = {};
-  cmd_append(
-      &mainc,
-      CC,
-      COMMON_CFLAGS,
-      "-c",
-      "main.c",
-      "-o",
-      "build/main.o"
-  );
-  nob_da_append(&p, cmd_run_async(mainc));
-
-  Cmd tree_sitter = {};
-  cmd_append(
-      &tree_sitter,
-      CC,
-      COMMON_CFLAGS,
-      "-D_GNU_SOURCE",
-      "-I",
-      "deps/tree-sitter/lib/include",
-      "-c",
-      "deps/tree-sitter/lib/src/lib.c",
-      "-o",
-      "build/tree_sitter.o"
-  );
-  nob_da_append(&p, cmd_run_async(tree_sitter));
-
-  Cmd parser = {};
-  cmd_append(
-      &parser,
-      CC,
-      COMMON_CFLAGS,
-      "-I",
-      "tsversion/src",
-      "-c",
-      "tsversion/src/parser.c",
-      "-o",
-      "build/parser.o"
-  );
-  nob_da_append(&p, cmd_run_async(parser));
-
-  Cmd adapt = {};
-  cmd_append(
-      &adapt,
-      CC,
-      COMMON_CFLAGS,
-      "-I",
-      "deps/tree-sitter/lib/include",
-      "-c",
-      "ts_adapt.c",
-      "-o",
-      "build/ts_adapt.o"
-  );
-  nob_da_append(&p, cmd_run_async(adapt));
+  // clang-format off
+  nob_da_append(&p, cmd_run_async(cmd_imm(
+    CC, COMMON_CFLAGS,
+    "-c", "main.c",
+    "-o", "build/main.o"
+  )));
+  nob_da_append(&p, cmd_run_async(cmd_imm(
+    CC, COMMON_CFLAGS,
+    "-D_GNU_SOURCE",
+    "-I", "deps/tree-sitter/lib/include",
+    "-c", "deps/tree-sitter/lib/src/lib.c",
+    "-o", "build/tree_sitter.o"
+  )));
+  nob_da_append(&p, cmd_run_async(cmd_imm(
+    CC, COMMON_CFLAGS,
+    "-I", "tsversion/src",
+    "-c", "tsversion/src/parser.c",
+    "-o", "build/parser.o"
+  )));
+  nob_da_append(&p, cmd_run_async(cmd_imm(
+    CC, COMMON_CFLAGS,
+    "-I", "deps/tree-sitter/lib/include",
+    "-c", "ts_adapt.c",
+    "-o", "build/ts_adapt.o"
+  )));
+  // clang-format on
 
   if (!nob_procs_wait(p)) return false;
-
-  // 5. Link everything together
-  Cmd merge = {};
-  cmd_append(
-      &merge,
+  let merge = cmd_imm(
       CC,
       COMMON_CFLAGS,
       "-o",
@@ -160,7 +127,6 @@ int build_main(int nargs, char **args) {
       "build/parser.o",
       "build/ts_adapt.o"
   );
-
   if (!nob_cmd_run_sync(merge)) return false;
 
   Cmd runcmd = {};

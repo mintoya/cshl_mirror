@@ -54,7 +54,12 @@ tu_def(
     // normal math operations, but also function calls and the dot operator
     // nullable cause in  structtype[.f] left is nullable
     // literal operators like bor bxor bnor ...
-    (astOp, struct { ast* _Nullable left ;ast*right;union{c8 symLiteral[sizeof(u32)]; u32 number_rep;}; }),
+    (astOp, struct { 
+      typeof(ast*) left,right;
+      union{
+        c8 symLiteral[sizeof(u32)]; 
+        u32 number_rep;
+      };}),
 
     // PBlocks
     // whatever is inside ()
