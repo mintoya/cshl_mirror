@@ -58,7 +58,7 @@ struct scope {
 };
 struct superscope {
   allocfn alloc;
-  moxmap(Type, msList(struct { u32 fn ; fptr name; })) tfunc;
+  moxmap(r_tag, msList(struct { u32 fn ; fptr name; })) tfunc;
   mxmap(Type, Type *) types;
   msList(function) all_functions;
   scope *outermost;
@@ -83,15 +83,42 @@ static inline astptr *function_body(function in) {
 }
 //}
 
-scope *scope_inferior(superscope *b, scope *s);
-void scope_destroy(superscope *b, scope *s);
+typed_full *scope_find(superscope *env, scope *s, u32 idx) {
+  while (s) {
+    if (idx > s->start && idx <= s->start + msList_len(s->values)) {
+      return &s->values[idx - s->start - 1];
+    }
+    s = s->parent;
+  }
+  assertMessage(false, "value %u not found in scope", idx);
+  return nullptr;
+}
+scope *scope_inferior(superscope *b, scope *s) {
+  return avalue(
+      b->alloc,
+      ((scope){
+          .parent = s,
+          .instructions = msList_init(b->alloc, ir),
+          .values = msList_init(b->alloc, typed_full),
+          .named = moxmap_init(b->alloc, fptr, u32),
+          .start = s ? s->start + msList_len(s->values) : 0,
+
+      })
+  );
+}
+void scope_destroy(superscope *b, scope *s) {
+  msList_deInit(b->alloc, s->values);
+  msList_deInit(b->alloc, s->instructions);
+  moxmap_deinit(s->named);
+  adestroy(b->alloc, s);
+}
+
 u32 scope_add_value(superscope *env, scope *s, typed_full v) {
   let res = msList_len(s->values) + s->start + 1;
   msList_push(env->alloc, s->values, v);
   return res;
 }
 void scope_bind(superscope *env, scope *s, u32, fptr);
-typed_value *scope_find(superscope *env, scope *s, u32);
 
 u32 ss_get_named(superscope *env, scope *s, fptr n) {
   u32 limit = s->start + msList_len(s->values);
@@ -103,9 +130,6 @@ u32 ss_get_named(superscope *env, scope *s, fptr n) {
   }
   assertMessage(false, "ir could'nt find %s", snprint(stdAlloc, "{slice(c8)}", n));
 }
-typed_value *scope_find(superscope *env, scope *s, u32 idx);
-//  does not read d in op
-Type ir_op_type(superscope *env, scope *s, ir_op op);
 Type *ss_getType(superscope *b, Type t) {
   if_decl (let t, mxmap_get(b->types, t)) return *t;
   let allocator = (b->alloc);
@@ -135,6 +159,56 @@ Type *ss_getType(superscope *b, Type t) {
       (c_type, _, (Type)tu_of(c_type, {})),
   );
   return *mxmap_set(b->types, *pt, pt);
+}
+bool Type_isint(Type t) {
+  return tu_match_exp(
+      t,
+      (c_int, _, true),
+      (r_uint, _, true),
+      (r_sint, _, true),
+      (r_tag, tg, Type_isint(*tg.type)),
+      (r_decor, dec, Type_isint(*dec.t)),
+      (default, false),
+
+  );
+}
+usize Type_int_size(Type t) {
+  return tu_match_exp(
+      t,
+      (c_int, _, (usize)SIZE_MAX),
+      (r_uint, u, (usize)u),
+      (r_sint, s, (usize)s),
+      (r_tag, tg, Type_int_size(*tg.type)),
+      (r_decor, dec, Type_int_size(*dec.t)),
+      (default, (usize)0),
+
+  );
+}
+//  does not read d in op
+Type ir_op_type(superscope *env, scope *s, ir_op op) {
+  Type l = scope_find(env, s, op.l)->t;
+  Type r = scope_find(env, s, op.r)->t;
+  assertMessage(Type_isint(l));
+  assertMessage(Type_isint(r));
+  assertMessage(!EQUAL_ANY(
+      op.op, opNumbers.dot, opNumbers.colon, opNumbers.call, opNumbers.pipe
+  ));
+  if (op.op == opNumbers.set) return l;
+  if (EQUAL_ANY(op.op,
+                // clang-format off
+      opNumbers.mul, opNumbers.div, opNumbers.mod,
+      opNumbers.plus, opNumbers.minus,
+      opNumbers.oand, opNumbers.oor,
+      opNumbers.oband, opNumbers.obor,
+      opNumbers.shr, opNumbers.shl,
+      opNumbers.mor, opNumbers.les, opNumbers.moq,
+      opNumbers.leq, opNumbers.eq, opNumbers.neq,
+                // clang-format on
+      )) {
+    if (tu_is(c_int, r) || tu_is(c_int, l)) return l;
+    return Type_int_size(r) > Type_int_size(l) ? r : l;
+  }
+  assertMessage(false, "unhandled op %zu", (usize)op.op);
 }
 Type value_asType(typed_value t) {
   assert_type(c_type, t.t);
@@ -186,7 +260,7 @@ u32 ss_compileString(superscope *b, scope *s, fptr in) {
     }
   }
 
-  scope_add_value(
+  return scope_add_value(
       b,
       s,
       (typed_full){
@@ -204,8 +278,20 @@ u32 ss_compileString(superscope *b, scope *s, fptr in) {
       }
   );
 }
+static inline u32 ss_find_tag_method(superscope *env, r_tag tag, fptr name) {
+  if_decl (let methods, moxmap_get(env->tfunc, tag)) {
+    for (usize i = 0; i < msList_len(*methods); i++) {
+      if (fptr_eq((*methods)[i].name, name)) {
+        return (*methods)[i].fn;
+      }
+    }
+  }
+  return 0;
+}
 
 u32 lower(superscope *, scope *, astptr);
 typed_value interpret(superscope *, scope *);
 void interpret_op(superscope *, scope *, ir_op);
 void interpret_call(superscope *, scope *, ir_call);
+
+astptr ast_dot(astptr node, astptr name);

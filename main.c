@@ -16,6 +16,7 @@
   } opS;
   opNumbers.call = /* */ ((opS){"()"}).n;
   opNumbers.dot = /*  */ ((opS){"."}).n;
+  opNumbers.colon = /* */ ((opS){":"}).n;
   opNumbers.mul = /*  */ ((opS){"*"}).n;
   opNumbers.div = /*  */ ((opS){"/"}).n;
   opNumbers.mod = /*  */ ((opS){"%"}).n;
@@ -149,7 +150,6 @@ cmd_main(
   if (echo_file)
     println("file : \n{slice(c8)}\n", buffer);
   println("(log) after fread : {dbga_stats}", debugAllocator_stats(allocator));
-
 
   let ast = parse_source(allocator, buffer);
   println("(log) after ast : {dbga_stats}", debugAllocator_stats(allocator));

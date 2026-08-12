@@ -251,6 +251,7 @@ static struct { // opNumbers
       eq,
       neq,
       pipe,
+      colon,
       set;
 } opNumbers = {};
 
