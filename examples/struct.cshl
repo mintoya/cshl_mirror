@@ -9,10 +9,11 @@ point~type~ @struct{
   y~ i32;
 
   __add~~ fn((self~Self,other~Self), Self)
-    return Self[
+    return @construct(Self,[
       x~~ self.x * scale + other.x,
       y~~ self.y + other.y
-    ];
+    ]);
+  // first arg is a type, so this is basically a static menber of the type
   __call~~ fn((type,x~i32,y~i32), Self){
     r~Self ;
     r.x = x;
@@ -25,7 +26,9 @@ point~type~ @struct{
 a~~ point(1,2);
 b~~ point(3,4);
 
+//  analogous
 c~point~ a.__add(a,b);
+// for functions, pointer can only use colon for call 
 d~point~ a:__add(b);
 e~point~ a + b;
 

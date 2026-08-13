@@ -1,0 +1,15 @@
+type ~ // type is the type that is the type of types
+  ~ @type(); 
+ast ~type~ @ast(); // ast is the type of ast
+any ~type~ @any(); // any is the type of any
+int ~type~ @int(); // int is type of comptime integer
+u32 ~type~ @uint(32); // u32 is type of unsigned integer of width 32
+i32 ~type~ @sint(32);// i32 is type of signed integer of width 32
+
+a ~i32~ 3;
+b ~i32~ 1;
+c ~~ a + b;
+d ~~ c;
+
+
+op ~ast~ "hello";

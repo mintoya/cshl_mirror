@@ -533,15 +533,9 @@ u32 lower_op(superscope *env, scope *s, astOp op) {
       .r = r_val,
       .op = op.number_rep,
   };
-  iop.d = scope_add_value(env, s, (typed_full){ir_op_type(env, s, iop)});
+  iop.d = scope_add_value(env, s, (typed_full){tu_of(c_any, {})});
   scope_add_inst(env, s, (ir)tu_of(ir_op, iop));
-
-  if (
-      (tu_is(c_ast, l_type) || scope_find(env, s, iop.l)->v.value) &&
-      (tu_is(c_ast, scope_find(env, s, iop.r)->t) || scope_find(env, s, iop.r)->v.value)
-  ) {
-    interpret_op(env, s, iop);
-  }
+  interpret_op(env, s, iop);
 
   return iop.d;
 }
@@ -575,6 +569,13 @@ u32 lower(superscope *env, scope *s, astptr ast) {
            if (tu_is(c_ast, t)) scope_find(env, s, val)->v.c_ast = decl.value;
            else {
              u32 expr = lower(env, s, decl.value);
+
+             // ---> HACKLESS LATE INFERENCE <---
+             // If we didn't have an explicit type, steal it from the lowered expression
+             if (tu_is(c_any, t)) {
+               scope_find(env, s, val)->t = scope_find(env, s, expr)->t;
+             }
+
              scope_add_inst(env, s, (ir)tu_of(ir_op, {.l = val, .r = expr, .d = val, .op = opNumbers.set}));
              interpret_op(env, s, (ir_op){.l = val, .r = expr, .d = val, .op = opNumbers.set});
            }
@@ -598,7 +599,7 @@ u32 lower(superscope *env, scope *s, astptr ast) {
                }),
            );
          }
-         if (decl.is_const) TODO();
+         // if (decl.is_const) TODO();
          val;
        })),
       (astBBlock, ast_block, ({

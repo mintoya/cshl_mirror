@@ -170,8 +170,8 @@ void interpret_op(superscope *env, scope *s, ir_op op) {
 
   if (op.op == opNumbers.set) {
     if (Type_isint(l->t)) {
-      if (l->v.c_int) msList_deInit(env->alloc, l->v.c_int);
-      if (d->v.c_int) msList_deInit(env->alloc, d->v.c_int);
+      // if (l->v.c_int) msList_deInit(env->alloc, l->v.c_int); TODO
+      // if (d->v.c_int) msList_deInit(env->alloc, d->v.c_int); TODO
       usize bits = Type_int_size(r->t) == SIZE_MAX ? 64 : Type_int_size(r->t);
       bool sigmask = tu_is(r_sint, r->t) || tu_is(c_int, r->t);
       l->v.c_int = bigint_fromBits(env->alloc, r->v.c_int, bits, sigmask);
@@ -197,12 +197,21 @@ void interpret_op(superscope *env, scope *s, ir_op op) {
 
   // Free loop temporaries before overwriting them
   if (Type_isint(d->t) && d->v.c_int) {
-    msList_deInit(env->alloc, d->v.c_int);
-    d->v.c_int = nullptr;
+    // msList_deInit(env->alloc, d->v.c_int);
+    // d->v.c_int = nullptr;
   }
 
   // Math and Relational integer evaluations
   if (Type_isint(l->t) && Type_isint(r->t)) {
+
+    // 1. Abstract interpretation: let the operation define its output type
+    if (EQUAL_ANY(op.op, opNumbers.eq, opNumbers.neq, opNumbers.les, opNumbers.leq, opNumbers.mor, opNumbers.moq, opNumbers.oand, opNumbers.oor)) {
+      d->t = (Type)tu_of(r_uint, (u16)8);
+    } else {
+      d->t = l->t;
+    }
+
+    // 2. Execution bailout: Stop here if we don't have compile-time values
     if (!l->v.c_int || !r->v.c_int) return;
 
     usize l_bits = Type_int_size(l->t) == SIZE_MAX ? 64 : Type_int_size(l->t);
@@ -261,6 +270,7 @@ void interpret_op(superscope *env, scope *s, ir_op op) {
       d->v.c_int = bigint_fromBits(env->alloc, &res_u64, d_bits, d_sig);
     }
   }
+
   // Identity/Equality evaluations for AST
   else if (tu_is(c_ast, l->t) && tu_is(c_ast, r->t)) {
     u8 res = 0;
@@ -309,6 +319,6 @@ void interpret_call(superscope *env, scope *s, ir_call call) {
 
   typed_full *d = scope_find(env, s, call.d);
 
-  if (Type_isint(d->t) && d->v.c_int) msList_deInit(env->alloc, d->v.c_int);
+  // if (Type_isint(d->t) && d->v.c_int) msList_deInit(env->alloc, d->v.c_int);
   d->v = ret.v;
 }

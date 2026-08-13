@@ -4,11 +4,16 @@ a ~= 1;
 
 @while( a, a = a - 1);
 ast ~~ @ast();
+any ~~ @any();
 
 if ~~ fn((a~ ast), ast) {
+  // ascessing inactive field of an ast gives you an empty ast, which is falsy
+  // for string literal ascess, it returns the node itself if the node is an operation, 
+  // where that operation is the thing in quotes
+  // every call is an operation with ()
   call ~ast~ a."()";
   cond ~ast~ call.left;
-  rest ~ast~ call.right;
+  rest ~ast~ call.right; // not putting ast in the expected type causes an evaluation of the ast argument
 
   @if(rest."()", {
     then ~ast~ rest.left;
@@ -29,5 +34,7 @@ if ~~ fn((a~ ast), ast) {
 };
 
 
-i ~~ if 1 (2)
+// juxteposition is a call
+// automatic quoting an unquoting as you see here
+i ~void~ if 1 (2)
   else (3);

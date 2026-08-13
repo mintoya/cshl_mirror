@@ -1,12 +1,19 @@
 #include <stdlib.h>
 #include <wheels/cmdline_parser.h>
 #include <wheels/macros.h>
+#include <wheels/smap.h>
 
 #include "ast.h"
+#include "operation/common2.h"
+#include "operation/int.h"
+#include "operation/lower.h"
+#include "type.h"
 #include "wheels/fptr.h"
+#include "wheels/print/print_pre.h"
 #include <wheels/allocators/arenaAllocator.h>
 #include <wheels/allocators/debugallocator.h>
 #include <wheels/mytypes.h>
+
 
 // { util
 [[gnu::constructor]] void initOpNumbers() {
@@ -166,7 +173,9 @@ cmd_main(
     print_wfO(depth_output, &dstate, "{ast}\n", ast);
 
   if (execute) {
-    TODO("write execute");
+    let env = ss_init(allocator);
+    lower(env, env->outermost, ast);
+    interpret(env, env->outermost);
   }
 
   return 0;

@@ -4,6 +4,7 @@
 #include "wheels/mytypes.h"
 #include "wheels/print/print_pre.h"
 #include "wheels/sList.h"
+#include "wheels/smap.h"
 #include <assert.h>
 
 #define assert_type(tag, val)              \
@@ -58,6 +59,7 @@ struct scope {
 };
 struct superscope {
   allocfn alloc;
+  moxmap(void *, usize) pointers;
   moxmap(r_tag, msList(struct { u32 fn ; fptr name; })) tfunc;
   mxmap(Type, Type *) types;
   msList(function) all_functions;
@@ -100,7 +102,7 @@ scope *scope_inferior(superscope *b, scope *s) {
           .parent = s,
           .instructions = msList_init(b->alloc, ir),
           .values = msList_init(b->alloc, typed_full),
-          .named = moxmap_init(b->alloc, fptr, u32),
+          .named = moxmap_init(b->alloc, fptr, u32, cmpfptr),
           .start = s ? s->start + msList_len(s->values) : 0,
 
       })
@@ -118,17 +120,83 @@ u32 scope_add_value(superscope *env, scope *s, typed_full v) {
   msList_push(env->alloc, s->values, v);
   return res;
 }
-void scope_bind(superscope *env, scope *s, u32, fptr);
 
+void scope_bind(superscope *env, scope *s, u32 idx, fptr name) {
+  let variable = scope_find(env, s, idx);
+  println("binding {typed_value} to {slice(c8)}", *variable, name);
+  moxmap_set(s->named, name, idx);
+}
+
+#include "wheels/allocators/cballocator.h"
+void irb_cbb(const callbackallocatorhandle *h, void *p) {
+  let _map = (itypeof(superscope, pointers))h->cbself->udata;
+  moxmap_rem(_map, h->inptr);
+  if (p) moxmap_set(_map, p, h->outsize);
+}
+superscope *ss_init(allocfn allocator) {
+  // clang-format off
+  superscope* res = avalue(allocator, ((superscope){
+    .all_functions = msList_init(allocator, function),
+    .pointers = moxmap_init(allocator, void*, usize),
+    .tfunc = moxmap_init(allocator, r_tag, moxmap_vt(res->tfunc)),
+    .types = mxmap_init(allocator, Type, Type *,3,Type_hash_hash,Type_cmp_hash),
+  }));
+  // clang-format on
+  res->alloc = cba_init(allocator, nullptr, irb_cbb, res->pointers);
+  res->outermost = scope_inferior(res, nullptr);
+  struct {
+    char *name;
+    builtin_id id;
+  } builtins[] = {
+      {"fn", builtin_fn},
+      {"@this", builtin__this},
+      {"struct", builtin_struct},
+      {"@at", builtin_at},
+      {"@uqot", builtin_uqot},
+      {"@qot", builtin_qot},
+      {"@type", builtin_type},
+      {"@ast", builtin_ast},
+      {"@any", builtin_any},
+      {"@int", builtin_int},
+      {"@sint", builtin_sint},
+      {"@uint", builtin_uint},
+      {"@ptrof", builtin_ptrof},
+      {"@volatile", builtin_volatile},
+      {"@const", builtin_const},
+      {"@typeof", builtin_typeof},
+      {"@arrof", builtin_arrof},
+      {"break", builtin_break},
+      {"continue", builtin_continue},
+      {"return", builtin_return},
+      {"@if", builtin_if},
+      {"@while", builtin_while},
+  };
+  foreach (let i, vla(builtins))
+    scope_bind(
+        res,
+        res->outermost,
+        scope_add_value(res, res->outermost, (typed_full){tu_of(builtin, i.id)}),
+        fp(i.name)
+    );
+  return res;
+}
+void ss_deInit(superscope *ss) {
+  let allocator = ((struct cballocator *)ss->alloc)->allocator;
+  msList_deInit(allocator, ss->all_functions);
+  foreach (let it, moxmap_iter(ss->pointers, void *, usize))
+    adestroy(allocator, (u8(*)[*it.val])it.key);
+  moxmap_deinit(ss->pointers);
+  moxmap_deinit(ss->tfunc);
+  mxmap_deinit(ss->types);
+  adestroy(allocator, ss);
+}
 u32 ss_get_named(superscope *env, scope *s, fptr n) {
-  u32 limit = s->start + msList_len(s->values);
   while (s) {
     if_decl (let val, moxmap_get(s->named, n))
-      if (*val < limit) return *val;
-    limit = s->start;
+      return *val;
     s = s->parent;
   }
-  assertMessage(false, "ir could'nt find %s", snprint(stdAlloc, "{slice(c8)}", n));
+  assertMessage(false, "ir could'nt find %s", snprint(stdAlloc, "{slice(c8)}", n).ptr);
 }
 Type *ss_getType(superscope *b, Type t) {
   if_decl (let t, mxmap_get(b->types, t)) return *t;
@@ -183,32 +251,6 @@ usize Type_int_size(Type t) {
       (default, (usize)0),
 
   );
-}
-//  does not read d in op
-Type ir_op_type(superscope *env, scope *s, ir_op op) {
-  Type l = scope_find(env, s, op.l)->t;
-  Type r = scope_find(env, s, op.r)->t;
-  assertMessage(Type_isint(l));
-  assertMessage(Type_isint(r));
-  assertMessage(!EQUAL_ANY(
-      op.op, opNumbers.dot, opNumbers.colon, opNumbers.call, opNumbers.pipe
-  ));
-  if (op.op == opNumbers.set) return l;
-  if (EQUAL_ANY(op.op,
-                // clang-format off
-      opNumbers.mul, opNumbers.div, opNumbers.mod,
-      opNumbers.plus, opNumbers.minus,
-      opNumbers.oand, opNumbers.oor,
-      opNumbers.oband, opNumbers.obor,
-      opNumbers.shr, opNumbers.shl,
-      opNumbers.mor, opNumbers.les, opNumbers.moq,
-      opNumbers.leq, opNumbers.eq, opNumbers.neq,
-                // clang-format on
-      )) {
-    if (tu_is(c_int, r) || tu_is(c_int, l)) return l;
-    return Type_int_size(r) > Type_int_size(l) ? r : l;
-  }
-  assertMessage(false, "unhandled op %zu", (usize)op.op);
 }
 Type value_asType(typed_value t) {
   assert_type(c_type, t.t);
