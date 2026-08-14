@@ -6,6 +6,8 @@ module.exports = grammar({
   ],
   conflicts: $ => [
     [$._expression, $.decl],
+    [$.op, $._expression_list ],
+    [$.op],
   ],
   precedences: $ => [
     [
@@ -15,6 +17,7 @@ module.exports = grammar({
       'add',
       'bit',
       'cmp',
+      'comma',       
       'call',        // loose call
       'pipe',
       'decl',
@@ -25,9 +28,9 @@ module.exports = grammar({
     program: $ => repeat($._statement),
     _statement: $ => choice(
       seq($._expression, ';'),
-      $.empty_statement
+      // $.empty_statement
     ),
-    empty_statement: $ => ';',
+    // empty_statement: $ => ';',
     _expression: $ => choice(
       $.id,
       $.string,
@@ -38,7 +41,7 @@ module.exports = grammar({
     ),
     op: $ => choice(
       prec.left('block-call', seq(field('left', $._expression), field('right', $._block_immediate))),
-      prec.right('call', seq(field('left', $._expression), field('right', $._expression))), // <-- Changed to prec.right
+      prec.left('call', seq(field('left', $._expression), field('right', $._expression))), 
       prec.left('access', seq(field('left', $._expression), field('operator', '.'), field('right', $._expression))),
       prec.left('access', seq(field('left', $._expression), field('operator', ':'), field('right', $._expression))),
       prec.left('mul', seq(field('left', $._expression), field('operator', choice('*', '/', '%')), field('right', $._expression))),
@@ -47,6 +50,7 @@ module.exports = grammar({
       prec.left('cmp', seq(field('left', $._expression), field('operator', choice('<', '>', '<=', '>=', '==', '!=')), field('right', $._expression))),
       prec.left('pipe', seq(field('left', $._expression), field('operator', '|>'), field('right', $._expression))),
       prec.right('assign', seq(field('left', $._expression), field('operator', '='), field('right', $._expression))),
+      prec.right('comma', seq(field('left', $._expression), field('operator', ','), field('right', $._expression))),
     ),
     decl: $ => prec.right('decl', choice(
       prec.dynamic(3, seq(

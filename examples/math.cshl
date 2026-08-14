@@ -1,5 +1,5 @@
 typeof ~~ @typeof;
-a~=1;
+nspea~=1;
 b ~typeof a= 1;
 c~=a+b;
 d~=c*a+b;
@@ -9,5 +9,8 @@ f~= -1;
 f(1+2);
 f (1+2);
 f 1+2;
-f 1,2,3 5;
-1 , 2;
+
+f 1,2() 3+5;
+a b c d;
+a(b(c(d)));
+

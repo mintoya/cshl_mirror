@@ -24,16 +24,8 @@
               "value": ";"
             }
           ]
-        },
-        {
-          "type": "SYMBOL",
-          "name": "empty_statement"
         }
       ]
-    },
-    "empty_statement": {
-      "type": "STRING",
-      "value": ";"
     },
     "_expression": {
       "type": "CHOICE",
@@ -444,6 +436,39 @@
                 "content": {
                   "type": "STRING",
                   "value": "="
+                }
+              },
+              {
+                "type": "FIELD",
+                "name": "right",
+                "content": {
+                  "type": "SYMBOL",
+                  "name": "_expression"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "PREC_RIGHT",
+          "value": "comma",
+          "content": {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "FIELD",
+                "name": "left",
+                "content": {
+                  "type": "SYMBOL",
+                  "name": "_expression"
+                }
+              },
+              {
+                "type": "FIELD",
+                "name": "operator",
+                "content": {
+                  "type": "STRING",
+                  "value": ","
                 }
               },
               {
@@ -953,6 +978,13 @@
     [
       "_expression",
       "decl"
+    ],
+    [
+      "op",
+      "_expression_list"
+    ],
+    [
+      "op"
     ]
   ],
   "precedences": [
@@ -980,6 +1012,10 @@
       {
         "type": "STRING",
         "value": "cmp"
+      },
+      {
+        "type": "STRING",
+        "value": "comma"
       },
       {
         "type": "STRING",

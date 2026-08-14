@@ -63,10 +63,6 @@
           "named": true
         },
         {
-          "type": "empty_statement",
-          "named": true
-        },
-        {
           "type": "id",
           "named": true
         },
@@ -200,11 +196,6 @@
     }
   },
   {
-    "type": "empty_statement",
-    "named": true,
-    "fields": {}
-  },
-  {
     "type": "number",
     "named": true,
     "fields": {}
@@ -269,6 +260,10 @@
           },
           {
             "type": "+",
+            "named": false
+          },
+          {
+            "type": ",",
             "named": false
           },
           {
@@ -447,10 +442,6 @@
         },
         {
           "type": "decl",
-          "named": true
-        },
-        {
-          "type": "empty_statement",
           "named": true
         },
         {
