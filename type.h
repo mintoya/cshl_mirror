@@ -427,7 +427,8 @@ void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_co
       (r_decor, decor, {
         PUTS("(");
         if (decor.constant) PUTS("const");
-        if (decor.valatile) PUTS("-volatile ");
+        if (decor.valatile) PUTS("-volatile");
+        PUTS(",");
         defer { PUTS(")"); };
         if (decor.t) typePrinterWorker_recurse(*decor.t, visitedmap, _ctx);
       }),

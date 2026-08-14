@@ -7,6 +7,7 @@
 #include "wheels/sList.h"
 #include "wheels/smap.h"
 #include <assert.h>
+#include <string.h>
 
 typedef enum enum_op {
   enop_call,
@@ -32,6 +33,35 @@ typedef enum enum_op {
   enop_pipe,
   enop_set,
 } enum_op;
+typePrinter(enum_op) {
+  switch (in) {
+      // clang-format off
+    case  enop_call:PUTS("call");break;
+    case  enop_dot:PUTS("dot");break;
+    case  enop_colon:PUTS("colon");break;
+    case  enop_mul:PUTS("mul");break;
+    case  enop_div:PUTS("div");break;
+    case  enop_mod:PUTS("mod");break;
+    case  enop_plus:PUTS("plus");break;
+    case  enop_minus:PUTS("minus");break;
+    case  enop_oand:PUTS("oand");break;
+    case  enop_oor:PUTS("oor");break;
+    case  enop_oband:PUTS("oband");break;
+    case  enop_obor:PUTS("obor");break;
+    case  enop_shr:PUTS("shr");break;
+    case  enop_shl:PUTS("shl");break;
+    case  enop_mor:PUTS("mor");break;
+    case  enop_les:PUTS("les");break;
+    case  enop_moq:PUTS("moq");break;
+    case  enop_leq:PUTS("leq");break;
+    case  enop_eq:PUTS("eq");break;
+    case  enop_neq:PUTS("neq");break;
+    case  enop_pipe:PUTS("pipe");break;
+    case  enop_set:PUTS("set");break;
+     default:PUTS("unknown!!!");break;
+      // clang-format on
+  }
+}
 typedef enum enum_boolean_op {
   bop_oand = enop_oand,
   bop_oor = enop_oor,
@@ -108,68 +138,78 @@ struct scope {
   u32 start;
 };
 typePrinter(scope) {
-  PUTS("scope{");
-  PUTS("instructions{");
+  PUTS("(scope,");
+  PUTS("(instructions,");
   foreach (let i, span(in.instructions, msList_len(in.instructions))) {
     tu_match_void(
         *i,
         (ir_call, call, {
-          PUTS("ir_call(");
+          PUTS("(ir_call ");
           USETYPEPRINTER(u32, call.l);
-          PUTS("[");
+          PUTS("(");
           foreach (let c, span(call.args.ptr, call.args.len))
-            USETYPEPRINTER(u32, *c), PUTS(" ");
-          PUTS("]");
+            USETYPEPRINTER(u32, *c), PUTS(",");
+          PUTS(")");
           USETYPEPRINTER(u32, call.d);
           PUTS(")");
         }),
         (ir_op, op, {
-          PUTS("ir_op(");
+          PUTS("(ir_op ");
           USETYPEPRINTER(u32, op.l);
-          PUTS(" ");
-          USETYPEPRINTER(u32, op.op);
-          PUTS(" ");
+          PUTS(",");
+          USETYPEPRINTER(enum_op, op.op);
+          PUTS(",");
           USETYPEPRINTER(u32, op.r);
           PUTS(")");
         }),
         (ir_if, ifv, {
-          PUTS("ir_if{");
+          PUTS("(ir_if ");
           USETYPEPRINTER(u32, ifv.cnd);
           PUTS(",");
           USETYPEPRINTER(scope, ifv.t);
           PUTS(",");
           USETYPEPRINTER(scope, ifv.f);
-          PUTS("}");
+          PUTS(")");
         }),
         (ir_while, ifv, {
-          PUTS("ir_while{");
+          PUTS("(ir_while ");
           USETYPEPRINTER(u32, ifv.cnd);
           PUTS(",");
           USETYPEPRINTER(scope, ifv.t);
-          PUTS("}");
+          PUTS(")");
         }),
         (ir_block, ifv, {
-          PUTS("ir_block(");
+          PUTS("(ir_block,");
           USETYPEPRINTER(scope, *ifv);
           PUTS(")");
         }),
-        (ir_ret, _, PUTS("ret")),
-        (ir_break, _, PUTS("break")),
-        (ir_continue, _, PUTS("continue")),
+        (ir_ret, _, PUTS("(ir_ret )")),
+        (ir_break, _, PUTS("(ir_break )")),
+        (ir_continue, _, PUTS("(ir_continue )")),
     );
     PUTS(",");
   }
-  PUTS("}");
-  PUTS("values{");
+  PUTS("),");
+  PUTS("(values,");
   foreach (let v, span(in.values, msList_len(in.values)))
     tu_match(
         *v,
-        (lvalue, l, PUTS("lvalue:"), USENAMEDPRINTER("ptr", l)),
-        (rvalue, r, PUTS("rvalue:"), USETYPEPRINTER(Type, r.t)),
+        (lvalue, l, PUTS("(l :"), USETYPEPRINTER(u32, in.start + v - in.values + 1), USENAMEDPRINTER("ptr", l), PUTS(")")),
+        (rvalue, r, PUTS("(r :"), USETYPEPRINTER(u32, in.start + v - in.values + 1), USETYPEPRINTER(Type, r.t), PUTS(")")),
     ),
         PUTS(",");
-  PUTS("}");
-  PUTS("}");
+  PUTS("),");
+  PUTS("(named,");
+  foreach (let v, moxmap_iter(in.named, fptr, u32)) {
+    PUTS("('");
+    USETYPEPRINTER(id_str, v.key);
+    PUTS("' ");
+    USETYPEPRINTER(u32, *v.val);
+    PUTS(")");
+    PUTS(",");
+  }
+  PUTS(")");
+  PUTS(")");
 }
 struct superscope {
   allocfn alloc;
@@ -243,7 +283,7 @@ u32 scope_add_rvalue(superscope *env, scope *s, typed_value v) {
 void scope_add_inst(superscope *env, scope *s, ir i) { msList_push(env->alloc, s->instructions, i); }
 void scope_bind(superscope *env, scope *s, u32 idx, fptr name) {
   let variable = scope_find(env, s, idx);
-  // println("binding {typed_value} to {slice(c8)}", *variable, name);
+  println("binding {u32} to {slice(c8)}", idx, name);
   assertMessage(!moxmap_get(s->named, name), "already bound %s", snprint(stdAlloc, "{slice(c8)}", name).ptr);
   assertMessage(idx <= msList_len(s->values) + s->start, "%zu <= %zu + %zu", idx, msList_len(s->values), s->start);
   moxmap_set(s->named, name, idx);
@@ -325,7 +365,23 @@ u32 ss_get_named(superscope *env, scope *s, fptr n) {
   }
   assertMessage(false, "ir could'nt find %s", snprint(stdAlloc, "{slice(c8)}", n).ptr);
 }
+Type decor_bubble(superscope *b, Type t, bool *iconst, bool *ivolatile) {
+  Type *ss_getType(superscope * b, Type t);
+  assertMessage(!iconst == !ivolatile);
+  iflet_tu (let dec, r_decor, t) {
+    bool icn = dec.constant;
+    bool ivl = dec.valatile;
+    if (!iconst) iconst = &icn, ivolatile = &ivl;
+    else {
+      *iconst |= icn, *ivolatile |= ivl;
+      return decor_bubble(b, *dec.t, iconst, ivolatile);
+    }
+    return (Type)tu_of(r_decor, {ss_getType(b, decor_bubble(b, *dec.t, iconst, ivolatile)), *iconst, *ivolatile});
+  }
+  return t;
+}
 Type *ss_getType(superscope *b, Type t) {
+  t = decor_bubble(b, t, nullptr, nullptr);
   if_decl (let t, mxmap_get(b->types, t)) return *t;
   let allocator = (b->alloc);
   let pt = acreate(allocator, Type);

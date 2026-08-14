@@ -232,7 +232,8 @@ static u32 lower_builtin_at(superscope *ss, scope *s, ast *args) {
 
 // ---- @ast() / @any() / @int() / @type() ----
 static u32 lower_builtin_bare_type(superscope *ss, scope *s, ast *args, Type t, const char *name) {
-  assertMessage(!args, "@%s() takes no arguments", name);
+  let list = builtin_arg_list(ss, args);
+  assertMessage(list.len == 0, "@%s() takes no arguments", name);
   return scope_add_rvalue(ss, s, Type_asValue(ss, t));
 }
 
@@ -497,6 +498,20 @@ u32 lower_boolean_op(superscope *ss, scope *s, u32 left, enum_boolean_op bop, as
 
   return dest;
 }
+u32 lower_math_op(superscope *ss, scope *s, u32 left, enum_op opn, ast *right) {
+  u32 right_val = lower(ss, s, right);
+
+  let left_tv = scope_find_origional(ss, s, left);
+  let right_tv = scope_find_origional(ss, s, right_val);
+
+  assertMessage(Type_isint(left_tv->t) && Type_isint(right_tv->t));
+
+  u32 dest = scope_add_rvalue(ss, s, (typed_value){left_tv->t}); // TODO: bigger value promotion?
+
+  scope_add_inst(ss, s, (ir)tu_of(ir_op, {.l = left, .r = right_val, .d = dest, .op = (u32)opn}));
+
+  return dest;
+}
 
 u32 lower_op(superscope *ss, scope *s, u32 left, enum_op opn, ast *right) {
   switch (opn) {
@@ -506,13 +521,24 @@ u32 lower_op(superscope *ss, scope *s, u32 left, enum_op opn, ast *right) {
     case enop_colon: assertMessage(false, "colon operator must be followed by a function call");
     case enop_call: return lower_call(ss, s, left, 0, right);
       // clang-format on
+
     case enop_pipe: {
       let pipscope = scope_inferior(ss, s);
       scope_bind(ss, pipscope, left, fp("_"));
       scope_add_inst(ss, s, (ir)tu_of(ir_block, pipscope));
-      return lower(ss, pipscope, right);
-    }
 
+      u32 inner_res = lower(ss, pipscope, right);
+
+      let inner_tv = scope_find_origional(ss, pipscope, inner_res);
+      u32 hoisted_res = scope_add_rvalue(ss, s, *inner_tv);
+
+      scope_add_inst(
+          ss,
+          s,
+          (ir)tu_of(ir_op, {.l = inner_res, .r = 0, .d = hoisted_res, .op = enop_set})
+      );
+      return hoisted_res;
+    }
     case enop_set:
     case enop_obor:
     case enop_oband:
@@ -548,7 +574,7 @@ u32 lower_op(superscope *ss, scope *s, u32 left, enum_op opn, ast *right) {
         case enop_div:
         case enop_mod:
         case enop_shr:
-        case enop_shl: assertMessage(false, "unhandled mathematical ops");
+        case enop_shl: return lower_math_op(ss, s, left, opn, right);
         default: return lower_boolean_op(ss, s, left, (enum_boolean_op)opn, right);
           // clang-format on
       }
@@ -580,7 +606,7 @@ u32 lower(superscope *env, scope *s, astptr ast) {
          if (decl.is_const) {
            let resolved_val = scope_find_origional(env, s, val);
            assertMessage(!tu_is(c_any, resolved_val->t), "cannot apply const to anytype");
-           resolved_val->t = (Type)tu_of(r_decor, {.t = ss_getType(env, resolved_val->t), .constant = true, .valatile = false});
+           resolved_val->t = (Type)tu_of(r_decor, {ss_getType(env, resolved_val->t), true, false});
          }
          if (decl.name) {
            tu_match_void(
@@ -595,6 +621,8 @@ u32 lower(superscope *env, scope *s, astptr ast) {
                }),
            );
          }
+         let resolved_val = scope_find_origional(env, s, val);
+         resolved_val->t = *ss_getType(env, resolved_val->t);
          val;
        })),
       (astBBlock, ast_block, ({
