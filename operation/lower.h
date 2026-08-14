@@ -1,544 +1,563 @@
 #include "common2.h"
-#include "wheels/fptr.h"
 #include "wheels/macros.h"
 #include "wheels/mytypes.h"
-#include "wheels/print/print_pre.h"
 #include "wheels/sList.h"
 #include <stdcountof.h>
-
-typed_value temporary_interpret(superscope *env, scope *s, ast *ats) {
-  let ns = scope_inferior(env, s);
-  defer { scope_destroy(env, ns); };
-
-  u32 val_id = lower(env, ns, ats);
-  interpret(env, ns); // run the instructions to evaluate the node
-
-  if (!val_id) return (typed_value){tu_of(c_type, {}), {0}};
-
-  typed_full *val = scope_find(env, ns, val_id);
-  return (typed_value){val->t, val->v};
+//{builtin helpers
+static slice(astptr) builtin_arg_list(superscope *ss, ast *args) {
+  if (!args) return (slice(astptr)){0, nullptr};
+  if (tu_is(astPBlock, *args)) {
+    let block = tu_catch(astPBlock, *args);
+    let stmts = sentList_vla(block.stmts);
+    return (slice(astptr)){countof(*stmts), *stmts};
+  }
+  let one = mList_init(ss->alloc, astptr, 1);
+  mList_push(one, args);
+  return (slice(astptr)){mList_len(one), mList_toOwned(ss->alloc, one)};
 }
 
-ast *full_unquote(superscope *env, scope *s, ast *x) {
-  if (!x) return nullptr;
-  return tu_match_exp(
-      *x,
-      (astEmptyStatement, _, x),
-      (astId, id, x),
-      (astNumber, n, x),
-      (astString, str, x),
-      // clang-format off
-      (astDecl, decl, avalue(env->alloc, (ast)tu_of(astDecl, {
-          .name  = full_unquote(env, s, decl.name),
-          .type  = full_unquote(env, s, decl.type),
-          .value = full_unquote(env, s, decl.value),
-          .is_const =  decl.is_const,
-      }))),
-      (astPBlock, pb, avalue(env->alloc, (ast)tu_of(astPBlock, {
-        .stmts = 
-            *({
-                let len = sentList_len(pb.stmts);
-                let rest = acreate(env->alloc, arrof(ptrof(ast), len + 1));
-                for(let i = 0; i < len; i++)
-                  (*rest)[i] = full_unquote(env, s, pb.stmts[i]);
-                rest;
-              })
-      }))),
-      (astBBlock, pb, avalue(env->alloc, (ast)tu_of(astBBlock, {
-        .stmts = 
-            *({
-                let len = sentList_len(pb.stmts);
-                let rest = acreate(env->alloc, arrof(ptrof(ast), len + 1));
-                for(let i = 0; i < len; i++)
-                  (*rest)[i] = full_unquote(env, s, pb.stmts[i]);
-                rest;
-              })
-      }))),
-      (astABlock, pb, avalue(env->alloc, (ast)tu_of(astABlock, {
-        .items = 
-            *({
-                let len = sentList_len(pb.items);
-                let rest = acreate(env->alloc, arrof(ptrof(ast), len + 1));
-                for(let i = 0; i < len; i++)
-                  (*rest)[i] = full_unquote(env, s, pb.items[i]);
-                rest;
-              })
-      }))),
-      (astOp, op, ({
-        ast *res;
-        if (op.number_rep == opNumbers.call && op.left && fptr_eq(tu_catch(astId, *op.left), "@uqot")) {
-          let yield_val = temporary_interpret(env, s, op.right);
-          assert_type(c_ast, yield_val.t);
-          res = yield_val.v.c_ast;
-        } else res = avalue(env->alloc, (ast)tu_of(astOp, {
-            .left = full_unquote(env, s, op.left),
-            .right = full_unquote(env, s, op.right),
-            .number_rep = op.number_rep
-          }));
-        
-        res;
-      }))
-      // clang-format on
-  );
+static u32 lower_builtin_this(superscope *ss, scope *s, ast *args) {
+  assertMessage(sentList_len(tu_catch(astPBlock, *args).stmts) == 0, "this takes no arguments");
+  assertMessage(msList_len(ss->thisstack), "@this() used outside of a struct definition");
+  return scope_add_rvalue(ss, s, Type_asValue(ss, *msList_last(ss->thisstack)));
 }
 
-void scope_add_inst(superscope *env, scope *s, ir i) { msList_push(env->alloc, s->instructions, i); }
+static u32 lower_builtin_struct(superscope *ss, scope *s, ast *args) {
+  assertMessage(args && tu_is(astBBlock, *args), "@struct{...} expects a brace-enclosed block of declarations");
+  let block = tu_catch(astBBlock, *args);
+  let stmts = sentList_vla(block.stmts);
 
-static u32 pack_opstr(fptr s) {
-  assertMessage(s.len <= 4, "op string must be 4 bytes or less");
-  u32 v = 0;
-  memcpy(&v, s.ptr, s.len);
-  return v;
-}
+  let items = mList_init(ss->alloc, r_struct_item, countof(*stmts));
 
-astptr ast_dot(astptr node, astptr name) {
-  static ast ast_empty_singleton = (ast)tu_of(astEmptyStatement, {});
-  let static const fallback = &ast_empty_singleton;
-  assertMessage(node, "dot on null ast");
+  Type *self = acreate(ss->alloc, Type);
+  defer { adestroy(ss->alloc, self); };
+  *self = (Type)tu_of(r_struct, items);
 
-  if (tu_is(astString, *name)) {
-    fptr raw = tu_catch(astString, *name);
-    assertMessage(raw.len >= 2 && raw.ptr[0] == '"' && raw.ptr[raw.len - 1] == '"');
-    u32 target = pack_opstr(slice_split(raw, (1, raw.len - 1))[0]);
-
-    if (tu_is(astOp, *node)) {
-      astOp op = tu_catch(astOp, *node);
-      if (op.number_rep == target) return node;
-    }
-    return fallback;
-  }
-
-  assertMessage(tu_is(astId, *name), "ast member must be an identifier or a string");
-  fptr member = tu_catch(astId, *name);
-
-  if (fptr_eq(member, "left")) {
-    if (tu_is(astOp, *node)) {
-      astOp op = tu_catch(astOp, *node);
-      if (op.left) return op.left;
-    }
-    return fallback;
-  } else if (fptr_eq(member, "right")) {
-    if (tu_is(astOp, *node)) {
-      astOp op = tu_catch(astOp, *node);
-      if (op.right) return op.right;
-    }
-    return fallback;
-  } else if (fptr_eq(member, "bblock")) {
-    return tu_is(astBBlock, *node) ? node : fallback;
-  } else {
-    assertMessage(false, "unknown ast member %s", snprint(stdAlloc, "{slice(c8)}", member));
-  }
-}
-
-u32 lower_builtin(superscope *env, scope *s, builtin_id id, ast *right) {
-#define noargs() assertMessage(sentList_len(tu_catch(astPBlock, *right).stmts) == 0)
-  switch (id) {
-    case builtin_fn: {
-      let args = sentList_vla(tu_catch(astPBlock, *right).stmts);
-      assertMessage(countof(*args) >= 2);
-      let const fnargs = sentList_vla(tu_catch(astPBlock, *(*args)[0]).stmts);
-      let const fnret = (*args)[1];
-      let rf = acreate(env->alloc, ast * [countof(*fnargs) + 2]);
-
-      let params = mList_init(env->alloc, Type, countof(*fnargs) + 1);
-      defer { mList_deinit(params); };
-
-      let ns = scope_inferior(env, s);
-      defer { scope_destroy(env, ns); };
-
-      foreach (let arg, span(*rf, countof(*rf) - 2)) {
-        *arg = (*fnargs)[arg - *rf];
-        u32 val_id = lower(env, ns, *arg);
-        mList_push(params, scope_find(env, ns, val_id)->t);
-      }
-      (*rf)[countof(*rf) - 2] = fnret;
-      (*rf)[countof(*rf) - 1] = nullptr; // Body injected later
-
-      mList_push(params, value_asType(temporary_interpret(env, ns, fnret)));
-      let fnt = avalue(env->alloc, (function){._ = slice_stat(*rf)});
-      return scope_add_value(env, s, (typed_full){.t = *ss_getType(env, (Type)tu_of(r_func, params)), .func = fnt});
-    } break;
-      // clang-format off
-    case builtin__this :TODO("");
-    case builtin_struct:TODO("");
-    case builtin_at    :TODO("");
-    case builtin_uqot: {
-      astptr inner = tu_match_exp(
-          *right,
-          (astPBlock, pb, assertMessage(sentList_len(pb.stmts) == 1), pb.stmts[0]),
-          (default, right),
-      );
-      assertMessage(tu_is(astId, *inner), "@uqot expects a variable");
-      u32 idx = ss_get_named(env, s, tu_catch(astId, *inner));
-      typed_full *v = scope_find(env, s, idx);
-      return scope_add_value(env, s, (typed_full){v->t, v->v});
-    } break;
-      // clang-format on
-      // type returning
-      // clang-format off
-    case builtin_type :noargs();return scope_add_value(env,s,(typed_full){tu_of(c_type,{}),ss_getType(env, (Type)tu_of(c_type,{}))});break;
-    case builtin_ast  :noargs();return scope_add_value(env,s,(typed_full){tu_of(c_type,{}),ss_getType(env, (Type)tu_of(c_ast, {}))});break;
-    case builtin_any  :noargs();return scope_add_value(env,s,(typed_full){tu_of(c_type,{}),ss_getType(env, (Type)tu_of(c_any, {}))});break;
-    case builtin_int  :noargs();return scope_add_value(env,s,(typed_full){tu_of(c_type,{}),ss_getType(env, (Type)tu_of(c_int, {}))});break;
-    case builtin_sint:
-    case builtin_uint: {
-      let arg = temporary_interpret(env, s,tu_match_exp(
-          *right,
-          (astPBlock, pb, assertMessage(sentList_len(pb.stmts) == 1), pb.stmts[0]),
-          (default, right),
-      ));
-      assert_type(c_int, arg.t); assertMessage(arg.v.c_int);
-      const u16 n = arg.v.c_int[0];
-      return scope_add_value(env, s, (typed_full){tu_of(c_type,{}),ss_getType(env,
-            id==builtin_sint
-              ?(Type)tu_of(r_sint,n)
-              :(Type)tu_of(r_uint,n))
-      });
-    } break;
-                             // type returning, arg is itself a type
-    case builtin_ptrof:
-    case builtin_volatile:
-    case builtin_const: {
-      let arg = temporary_interpret(env, s, tu_match_exp(*right, (astPBlock, pb, assertMessage(sentList_len(pb.stmts) == 1), pb.stmts[0]), (default, right), ));
-      Type t = value_asType(arg);
-      return scope_add_value(env, s, (typed_full){tu_of(c_type, {}), 
-          id == builtin_const    ? ss_getType(env, (Type)tu_of(r_decor, {ss_getType(env, t), 1, 0})) :
-          id == builtin_volatile ? ss_getType(env, (Type)tu_of(r_decor, {ss_getType(env, t), 0, 1})) :
-           ss_getType(env, (Type)tu_of(r_decor, {ss_getType(env, (Type)tu_of(r_ptr, ss_getType(env, t))), true, false})) 
-      });
-    } break;
-      // clang-format on
-    case builtin_typeof: {
-      let arg = temporary_interpret(env, s, tu_match_exp(*right, (astPBlock, pb, assertMessage(sentList_len(pb.stmts) == 1), pb.stmts[0]), (default, right), ));
-      return scope_add_value(env, s, (typed_full){tu_of(c_type, {}), ss_getType(env, arg.t)});
-    } break;
-    case builtin_arrof: {
-      let args = sentList_vla(tu_catch(astPBlock, *right).stmts);
-      assertMessage(countof(*args) == 2);
-      let narg = temporary_interpret(env, s, (*args)[0]);
-      assert_type(c_int, narg.t);
-      assertMessage(narg.v.c_int);
-      let targ = temporary_interpret(env, s, (*args)[1]);
-      Type t = value_asType(targ);
-      usize count = narg.v.c_int[0];
-      return scope_add_value(env, s, (typed_full){tu_of(c_type, {}), ss_getType(env, (Type)tu_of(r_arr, {ss_getType(env, t), count}))});
-    } break;
-      // clang-format on
-      // control
-      // clang-format off
-    case builtin_break    :noargs(), scope_add_inst(env, s, (ir)tu_of(ir_break, {})); break;
-    case builtin_continue :noargs(), scope_add_inst(env, s, (ir)tu_of(ir_continue, {})); break;
-    case builtin_return   :noargs(), scope_add_inst(env, s, (ir)tu_of(ir_ret, lower(env, s, right))); break;
-    // clang-format on
-    case builtin_if: {
-      let args = sentList_vla(tu_catch(astPBlock, *right).stmts);
-      assertMessage(countof(*args) >= 2 && countof(*args) <= 3);
-      // clang-format off
-      let ifv = (ir)tu_of(ir_if, {
-          .cnd = lower(env, s, (*args)[0]),
-          .t = scope_inferior(env, s),
-          .f = countof(*args) == 3 && (*args)[2] ? scope_inferior(env, s) : nullptr,
-      });
-      // clang-format on
-      assertMessage(tu_catch(ir_if, ifv).cnd);
-      lower(env, tu_catch(ir_if, ifv).t, (*args)[1]);
-      if (tu_catch(ir_if, ifv).f)
-        lower(env, tu_catch(ir_if, ifv).f, (*args)[2]);
-      scope_add_inst(env, s, ifv);
-    } break;
-    case builtin_while: {
-      let args = sentList_vla(tu_catch(astPBlock, *right).stmts);
-      assertMessage(countof(*args) == 2);
-      // clang-format off
-      let whilev = (ir)tu_of(ir_while, {
-          .cnd = lower(env, s, (*args)[0]),
-          .t = scope_inferior(env, s),
-      });
-      // clang-format on
-      assertMessage(tu_catch(ir_while, whilev).cnd);
-      lower(env, tu_catch(ir_while, whilev).t, (*args)[1]);
-      scope_add_inst(env, s, whilev);
-    } break;
-      // misc
-    case builtin_qot: {
-      // clang-format off
-      astptr inner = full_unquote(env, s, tu_match_exp(
-          *right,
-          (astPBlock, pb, assertMessage(sentList_len(pb.stmts) == 1), pb.stmts[0]),
-          (default, right),
-      ));
-      // clang-format on
-      return scope_add_value(env, s, (typed_full){tu_of(c_ast, {}), {.v.c_ast = inner}});
-    } break;
-  }
-  return 0;
-#undef noargs
-}
-
-u32 lower_call(superscope *env, scope *s, ast *left, ast *right) {
-  astptr *args_ast_ptr = nullptr;
-  usize arg_count = 0;
-
-  // Handles standard block arguments vs single AST chaining used in macros `if 1 (2)`
-  if (tu_is(astPBlock, *right)) {
-    args_ast_ptr = *sentList_vla(tu_catch(astPBlock, *right).stmts);
-    arg_count = sentList_len(tu_catch(astPBlock, *right).stmts);
-  } else {
-    args_ast_ptr = &right;
-    arg_count = 1;
-  }
-
-  u32 fn_val = 0;
-  u32 implicit_arg = 0;
-  bool inject_implicit = false;
-
-  if (left && tu_is(astOp, *left)) {
-    let op = tu_catch(astOp, *left);
-    if (op.number_rep == opNumbers.colon) {
-      assertMessage(tu_is(astId, *op.right), "RHS of method call must be an identifier");
-      fptr method_name = tu_catch(astId, *op.right);
-
-      u32 caller_idx = lower(env, s, op.left);
-      Type caller_t = scope_find(env, s, caller_idx)->t;
-
-      bool is_ptr = tu_is(r_ptr, caller_t);
-      bool is_tagged = false;
-      r_tag tag_data;
-
-      if (tu_is(r_tag, caller_t)) {
-        is_tagged = true;
-        tag_data = tu_catch(r_tag, caller_t);
-      } else if (is_ptr && tu_is(r_tag, *tu_catch(r_ptr, caller_t))) {
-        is_tagged = true;
-        tag_data = tu_catch(r_tag, *tu_catch(r_ptr, caller_t));
-      }
-
-      if (is_tagged) {
-        fn_val = ss_find_tag_method(env, tag_data, method_name);
-        assertMessage(fn_val, "Method not found for tagged type");
-
-        inject_implicit = true;
-        implicit_arg = caller_idx;
-      }
-    }
-  }
-
-  if (!fn_val)
-    fn_val = lower(env, s, left);
-
-  typed_full *fn_type_val = scope_find(env, s, fn_val);
-
-  // If the RHS is a BBlock, it might be injecting the body into a function prototype
-  // like `fn((a~ast), ast) { ... }`
-  if (tu_is(astBBlock, *right) && tu_is(r_func, fn_type_val->t)) {
-    if (fn_type_val->func && !(*function_body(*fn_type_val->func))) {
-      *function_body(*fn_type_val->func) = right;
-      return fn_val;
-    }
-  }
-
-  if (tu_is(builtin, fn_type_val->t)) {
-    return lower_builtin(env, s, tu_catch(builtin, fn_type_val->t), right);
-  }
-
-  assert_type(r_func, fn_type_val->t);
-  let fn_params = tu_catch(r_func, fn_type_val->t);
-  Type ret_type = mList_arr(fn_params)[mList_len(fn_params) - 1];
-
-  let total_args = arg_count + (inject_implicit ? 1 : 0);
-  let ir_args = mList_init(env->alloc, u32, total_args);
-  defer { mList_deinit(ir_args); };
-
-  if (inject_implicit)
-    mList_push(ir_args, implicit_arg);
-
-  // Magic: Pass c_ast parameters directly as unevaluated AST objects
-  for (usize i = 0; i < arg_count; i++) {
-    Type expected_t = mList_arr(fn_params)[i + (inject_implicit ? 1 : 0)];
-    astptr arg_ast = args_ast_ptr[i];
-
-    if (tu_is(c_ast, expected_t)) {
-      typed_full ast_val = {tu_of(c_ast, {})};
-      ast_val.v.c_ast = arg_ast;
-      mList_push(ir_args, scope_add_value(env, s, ast_val));
-    } else {
-      mList_push(ir_args, lower(env, s, arg_ast));
-    }
-  }
-
-  let d = scope_add_value(env, s, (typed_full){ret_type});
-
-  u32 *args_ptr = mList_toOwned(env->alloc, ir_args);
-  let call_inst = (ir_call){
-      .l = fn_val,
-      .d = d,
-      .args = (slice(u32)){.ptr = args_ptr, .len = total_args}
-  };
-
-  scope_add_inst(env, s, (ir)tu_of(ir_call, call_inst));
-
-  bool can_interpret = scope_find(env, s, call_inst.l)->v.value || scope_find(env, s, call_inst.l)->func;
-  foreach (let i, range(0, total_args)) {
-    if (tu_is(c_ast, scope_find(env, s, args_ptr[i])->t)) continue; // c_ast are values implicitly
-    if (!scope_find(env, s, args_ptr[i])->v.value) {
-      can_interpret = false;
-      break;
-    }
-  }
-
-  if (can_interpret)
-    interpret_call(env, s, call_inst);
-
-  return d;
-}
-
-u32 lower_dot(superscope *env, scope *s, u32 left, ast *name) {
-  typed_full *left_val = scope_find(env, s, left);
-  Type left_type = left_val->t;
-
-  bool is_ptr = tu_is(r_ptr, left_type);
-  Type base_type = is_ptr ? *tu_catch(r_ptr, left_type) : left_type;
-
-  // Staging problem: `c_ast` fields won't be resolved until the macro is actively executing
-  // So we bind the 'name' ast node into scope and defer evaluation to `interpret_op`
-  if (tu_is(c_ast, base_type)) {
-    typed_full name_val = {tu_of(c_ast, {})};
-    name_val.v.c_ast = name;
-    u32 r_val = scope_add_value(env, s, name_val);
-
-    u32 member_idx = scope_add_value(env, s, (typed_full){tu_of(c_ast, {})});
-    ir_op op_inst = {
-        .l = left,
-        .r = r_val,
-        .d = member_idx,
-        .op = opNumbers.dot,
-    };
-    scope_add_inst(env, s, (ir)tu_of(ir_op, op_inst));
-
-    if (left_val->v.c_ast)
-      interpret_op(env, s, op_inst);
-    return member_idx;
-  }
-
-  assertMessage(name && tu_is(astId, *name), "member name must be an identifier");
-  fptr member_name = tu_catch(astId, *name);
-
-  assertMessage(tu_is(r_struct, base_type), "left must be a struct (or pointer to struct)");
-  let members = tu_catch(r_struct, base_type);
+  msList_push(ss->alloc, ss->thisstack, self);
+  defer { msList_pop(ss->thisstack); };
 
   usize offset = 0;
-  Type member_type = (Type)tu_of(c_any, {});
-  bool found = false;
-  usize count = mList_len(members);
+  foreach (let field_ast, vlap(stmts)) {
+    assertMessage(tu_is(astDecl, *field_ast), "@struct{} members must be declarations");
+    let decl = tu_catch(astDecl, *field_ast);
+    assertMessage(decl.type, "@struct{} member must have an explicit type");
+    assertMessage(decl.name, "@struct{} member must be named");
 
-  for (usize i = 0; i < count; i++) {
-    let member = &mList_arr(members)[i];
-    if (fptr_eq(member->name, member_name)) {
-      member_type = member->init.t;
-      found = true;
-      break;
-    }
-    offset += Type_rsize(member->init.t); // assuming Type_rsize handles layout
+    fptr name;
+    tu_match_void(
+        *decl.name,
+        (astId, id, name = id;),
+        (default, {
+          let res = temporary_interpret_ast(ss, s, decl.name);
+          assert_type(c_ast, res.t);
+          assertMessage(res.v.c_ast && tu_is(astId, *res.v.c_ast));
+          name = tu_catch(astId, *res.v.c_ast);
+        }),
+    );
+
+    Type ftype = value_asType(temporary_interpret_ast(ss, s, decl.type));
+    typed_value init = decl.value
+                           ? temporary_interpret_ast(ss, s, decl.value)
+                           : (typed_value){ftype};
+
+    usize align = Type_ralig(ftype);
+    offset = lineup(offset, align);
+    mList_push(items, ((r_struct_item){.name = name, .init = init, .alignment = align, .offset = offset}));
+    offset += Type_rsize(ftype);
   }
-  assertMessage(found, "member not found in struct");
 
-  u32 offset_val = scope_add_value(
-      env, s, (typed_full){tu_of(c_int, {}), {.v.c_int = BInt.from.i64(env->alloc, offset)}}
+  *self = (Type)tu_of(r_struct, items); // items' backing ptr may have moved across pushes; refresh
+
+  return scope_add_rvalue(ss, s, Type_asValue(ss, *self));
+}
+
+// ---- fn(param decls..., return_type, body) ----
+static u32 lower_builtin_fn(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(ss, args);
+  assertMessage(list.len >= 2, "fn(params..., return_type, body) needs at least a return type and a body");
+  usize nparams = list.len - 2;
+
+  let fn_list = mList_init(ss->alloc, astptr, list.len);
+  foreach (let a, span(list.ptr, list.len))
+    mList_push(fn_list, a);
+  slice(astptr) fn_slice = {mList_len(fn_list), mList_toOwned(ss->alloc, fn_list)};
+
+  msList_push(ss->alloc, ss->all_functions, ((function){._ = fn_slice}));
+  usize fn_index = msList_len(ss->all_functions); // 1-based, like scope value indices
+
+  let param_types = mList_init(ss->alloc, Type, nparams + 1);
+  for (usize i = 0; i < nparams; i++) {
+    assertMessage(tu_is(astDecl, *fn_slice.ptr[i]), "fn parameter must be a declaration");
+    let pdecl = tu_catch(astDecl, *fn_slice.ptr[i]);
+    assertMessage(pdecl.type, "fn parameter must have an explicit type");
+    Type ptype = value_asType(temporary_interpret_ast(ss, s, pdecl.type));
+    mList_push(param_types, *ss_getType(ss, ptype));
+  }
+  Type ret_type = value_asType(temporary_interpret_ast(ss, s, *function_return(ss->all_functions[fn_index - 1])));
+  mList_push(param_types, *ss_getType(ss, ret_type));
+
+  Type fn_type = (Type)tu_of(r_func, param_types);
+
+  // Body is NOT lowered here - deferred until the function is actually
+  // called/instantiated (interpret_call, still TODO). .value stores an
+  // index (not a raw function*): ss->all_functions is an msList and can
+  // reallocate on later fn(...) pushes, so a pointer taken now could go
+  // stale; consumers should index ss->all_functions[idx-1] fresh each time.
+  return scope_add_rvalue(ss, s, (typed_value){fn_type, {.value = (void *)fn_index}});
+}
+
+// ---- @if(cnd, then, else?) ----
+static u32 lower_builtin_if(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(ss, args);
+  assertMessage(list.len == 2 || list.len == 3, "@if(cnd, then, else?) takes two or three arguments");
+
+  u32 cnd = lower(ss, s, list.ptr[0]);
+  assertMessage(Type_isint(scope_find_origional(ss, s, cnd)->t), "@if condition must be an integer/boolean value");
+
+  scope *then_scope = scope_inferior(ss, s);
+  lower(ss, then_scope, list.ptr[1]);
+
+  scope *else_scope = nullptr;
+  if (list.len == 3) {
+    else_scope = scope_inferior(ss, s);
+    lower(ss, else_scope, list.ptr[2]);
+  }
+
+  scope_add_inst(ss, s, (ir)tu_of(ir_if, {.cnd = cnd, .t = then_scope, .f = else_scope}));
+  return scope_add_rvalue(ss, s, (typed_value){tu_of(r_void, {})});
+}
+
+// ---- @while(cnd, then) ----
+static u32 lower_builtin_while(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(ss, args);
+  assertMessage(list.len == 2, "@while(cnd, then) takes exactly two arguments");
+
+  scope *loop_scope = scope_inferior(ss, s);
+  u32 cnd = lower(ss, loop_scope, list.ptr[0]);
+  assertMessage(Type_isint(scope_find_origional(ss, loop_scope, cnd)->t), "@while condition must be an integer/boolean value");
+  lower(ss, loop_scope, list.ptr[1]);
+
+  scope_add_inst(ss, s, (ir)tu_of(ir_while, {.cnd = cnd, .t = loop_scope}));
+  return scope_add_rvalue(ss, s, (typed_value){tu_of(r_void, {})});
+}
+
+// ---- return / break / continue ----
+static u32 lower_builtin_return(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(ss, args);
+  assertMessage(list.len <= 1, "return takes zero or one argument");
+  u32 val = list.len ? lower(ss, s, list.ptr[0]) : scope_add_rvalue(ss, s, (typed_value){tu_of(r_void, {})});
+  scope_add_inst(ss, s, (ir)tu_of(ir_ret, val));
+  return scope_add_rvalue(ss, s, (typed_value){tu_of(r_void, {})});
+}
+
+// ---- @toplevel(decl) ----
+static u32 lower_builtin_toplevel(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(ss, args);
+  assertMessage(list.len == 1, "@toplevel(decl) takes exactly one argument");
+  assertMessage(tu_is(astDecl, *list.ptr[0]), "@toplevel(decl) argument must be a declaration");
+
+  // This only implements half the spec: "creates symbol in the current
+  // file's scope." The other half - "when called with expression, yields
+  // an r_func" - is template/generic specialization: the callable's type
+  // here is c_ast, but lower_call_type has no arm for c_ast callables yet
+  // (it's the commented-out `// (c_ast , _ , ), // TODO` line). Wiring
+  // that up needs a decision on how "still generic" params are spelled
+  // (e.g. left as @any / untyped decls?) and what specialization caching
+  // looks like, so I left it unimplemented rather than guess.
+  ast *decl_ast = list.ptr[0];
+  u32 val = scope_add_rvalue(ss, ss->outermost, (typed_value){tu_of(c_ast, {}), decl_ast});
+
+  tu_match_void(
+      *tu_catch(astDecl, *decl_ast).name,
+      (astId, id, scope_bind(ss, ss->outermost, val, id)),
+      (default, assertMessage(false, "@toplevel(decl) requires a plain identifier name"))
+  );
+  return val;
+}
+
+// ---- @id(str) ----
+static u32 lower_builtin_id(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(ss, args);
+  assertMessage(list.len == 1, "@id(str) takes exactly one string literal argument");
+  assertMessage(tu_is(astString, *list.ptr[0]), "@id(str) requires a string literal");
+  fptr quoted = tu_catch(astString, *list.ptr[0]);
+  fptr name = slice_split(quoted, (1, quoted.len - 1))[0]; // strip quotes, same as lower_dot
+
+  ast *id_ast = acreate(ss->alloc, ast);
+  *id_ast = (ast)tu_of(astId, name);
+  return scope_add_rvalue(ss, s, (typed_value){tu_of(c_ast, {}), id_ast});
+}
+
+// ---- @qot(arg) / @uqot(arg) ----
+static u32 lower_builtin_qot(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(ss, args);
+  assertMessage(list.len == 1, "@qot(arg) takes exactly one argument");
+  return scope_add_rvalue(ss, s, (typed_value){tu_of(c_ast, {}), list.ptr[0]}); // unevaluated
+}
+static u32 lower_builtin_uqot(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(ss, args);
+  assertMessage(list.len == 1, "@uqot(arg) takes exactly one argument");
+  let quoted = temporary_interpret_ast(ss, s, list.ptr[0]);
+  assert_type(c_ast, quoted.t);
+  assertMessage(quoted.v.c_ast, "@uqot argument did not evaluate to a known ast");
+  return lower(ss, s, quoted.v.c_ast);
+}
+
+// ---- @at(arg) ----
+static u32 lower_builtin_at(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(ss, args);
+  assertMessage(list.len == 1, "@at(arg) takes exactly one argument");
+
+  u32 val = lower(ss, s, list.ptr[0]);
+  Type target = scope_find_origional(ss, s, val)->t;
+
+  // A pointer is always a runtime thing. r_ctime (statically-known-value)
+  // loses that guarantee once addressed - the pointee just becomes an
+  // ordinary instance of the underlying type ("makes it unknown").
+  if (tu_is(r_ctime, target)) target = *tu_catch(r_ctime, target);
+
+  // Anything still comptime-only after that unwrap (builtin/c_int/c_type/
+  // c_ast/c_any) has no runtime storage at all - "no address of at
+  // compile time."
+  assertMessage(!Type_is_comptime(target), "cannot take the address of a compile-time-only value");
+
+  Type ptr_type = (Type)tu_of(r_ptr, ss_getType(ss, target));
+  u32 dest = scope_add_rvalue(ss, s, (typed_value){ptr_type});
+  // NOTE: enum_op's ir_op is used for binary ops elsewhere; there's no
+  // dedicated unary "address-of" ir kind/op-code yet. Placeholder below -
+  // you'll want a real one wired into your backend.
+  scope_add_inst(ss, s, (ir)tu_of(ir_op, {.l = val, .r = 0, .d = dest, .op = (u32)-1}));
+  return dest;
+}
+
+// ---- @ast() / @any() / @int() / @type() ----
+static u32 lower_builtin_bare_type(superscope *ss, scope *s, ast *args, Type t, const char *name) {
+  assertMessage(!args, "@%s() takes no arguments", name);
+  return scope_add_rvalue(ss, s, Type_asValue(ss, t));
+}
+
+// ---- @const(T) / @volatile(T) ----
+static u32 lower_builtin_decor(superscope *ss, scope *s, ast *args, bool is_const, bool is_volatile) {
+  let list = builtin_arg_list(ss, args);
+  assertMessage(list.len == 1, "@%s(T) takes exactly one argument", is_const ? "const" : "volatile");
+  Type inner = value_asType(temporary_interpret_ast(ss, s, list.ptr[0]));
+  Type decorated = (Type)tu_of(r_decor, {.t = ss_getType(ss, inner), .constant = is_const, .valatile = is_volatile});
+  return scope_add_rvalue(ss, s, Type_asValue(ss, decorated));
+}
+
+// ---- @sint(N) / @uint(N) ----
+static u32 lower_builtin_intty(superscope *ss, scope *s, ast *args, bool is_signed) {
+  let list = builtin_arg_list(ss, args);
+  assertMessage(list.len == 1, "@%s(N) takes exactly one argument", is_signed ? "sint" : "uint");
+  let bits_tv = temporary_interpret_ast(ss, s, list.ptr[0]);
+  assert_type(c_int, bits_tv.t);
+  assertMessage(bits_tv.v.c_int, "@%s bit width must be a known compile-time integer", is_signed ? "sint" : "uint");
+
+  BInt.expand(ss->alloc, &bits_tv.v.c_int, sizeof(u16) / sizeof(bigint_unit) + 1);
+  u16 bits = *(u16 *)bits_tv.v.c_int; //
+  Type t = is_signed ? (Type)tu_of(r_sint, bits) : (Type)tu_of(r_uint, bits);
+  return scope_add_rvalue(ss, s, Type_asValue(ss, t));
+}
+
+// ---- @typeof(V) ----
+static u32 lower_builtin_typeof(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(ss, args);
+  assertMessage(list.len == 1, "@typeof(V) takes exactly one argument");
+  let si = scope_inferior(ss, s);
+  defer { scope_destroy(ss, si); };
+  Type t = scope_find_origional(ss, si, lower(ss, si, list.ptr[0]))->t;
+  return scope_add_rvalue(ss, s, Type_asValue(ss, t));
+}
+
+// ---- @arrof(N, T) / @ptrof(T) ----
+static u32 lower_builtin_arrof(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(ss, args);
+  assertMessage(list.len == 2, "@arrof(N, T) takes exactly two arguments");
+  let count_tv = temporary_interpret_ast(ss, s, list.ptr[0]);
+  assert_type(c_int, count_tv.t);
+  assertMessage(count_tv.v.c_int, "@arrof count must be a known compile-time integer");
+  BInt.expand(ss->alloc, &count_tv.v.c_int, sizeof(usize) / sizeof(bigint_unit) + 1);
+  usize count = *(usize *)count_tv.v.c_int;
+  Type elem = value_asType(temporary_interpret_ast(ss, s, list.ptr[1]));
+  Type arr = (Type)tu_of(r_arr, {ss_getType(ss, elem), count});
+  return scope_add_rvalue(ss, s, Type_asValue(ss, arr));
+}
+static u32 lower_builtin_ptrof(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(ss, args);
+  assertMessage(list.len == 1, "@ptrof(T) takes exactly one argument");
+  Type inner = value_asType(temporary_interpret_ast(ss, s, list.ptr[0]));
+  Type ptr = (Type)tu_of(r_ptr, ss_getType(ss, inner));
+  return scope_add_rvalue(ss, s, Type_asValue(ss, ptr));
+}
+
+//}
+u32 lower_builtin(superscope *ss, scope *s, builtin_id builtin, ast *args) {
+  switch (builtin) {
+      // clang-format off
+    case builtin_fn:        return lower_builtin_fn(ss, s, args);
+    case builtin_if:        return lower_builtin_if(ss, s, args);
+    case builtin_while:     return lower_builtin_while(ss, s, args);
+    case builtin_return:    return lower_builtin_return(ss, s, args);
+    case builtin_break:
+      assertMessage(sentList_len( tu_catch(astPBlock,*args).stmts ) == 0, "break takes no arguments");
+      scope_add_inst(ss, s, (ir)tu_of(ir_break, {}));
+      return scope_add_rvalue(ss, s, (typed_value){tu_of(r_void, {})});
+    case builtin_continue:
+      assertMessage(sentList_len( tu_catch(astPBlock,*args).stmts ) == 0, "continue takes no arguments");
+      scope_add_inst(ss, s, (ir)tu_of(ir_continue, {}));
+      return scope_add_rvalue(ss, s, (typed_value){tu_of(r_void, {})});
+    case builtin_toplevel:  return lower_builtin_toplevel(ss, s, args);
+    case builtin_ast:       return lower_builtin_bare_type(ss, s, args, (Type)tu_of(c_ast, {}), "ast");
+    case builtin__id:       return lower_builtin_id(ss, s, args);
+    case builtin_any:       return lower_builtin_bare_type(ss, s, args, (Type)tu_of(c_any, {}), "any");
+    case builtin_int:       return lower_builtin_bare_type(ss, s, args, (Type)tu_of(c_int, {}), "int");
+    case builtin_type:      return lower_builtin_bare_type(ss, s, args, (Type)tu_of(c_type, {}), "type");
+    case builtin_const:     return lower_builtin_decor(ss, s, args, true, false);
+    case builtin_volatile:  return lower_builtin_decor(ss, s, args, false, true);
+    case builtin_sint:      return lower_builtin_intty(ss, s, args, true);
+    case builtin_uint:      return lower_builtin_intty(ss, s, args, false);
+    case builtin_typeof:    return lower_builtin_typeof(ss, s, args);
+    case builtin_arrof:     return lower_builtin_arrof(ss, s, args);
+    case builtin_ptrof:     return lower_builtin_ptrof(ss, s, args);
+    case builtin_struct:    return lower_builtin_struct(ss, s, args);
+    case builtin__this:     return lower_builtin_this(ss, s, args);
+    case builtin_qot:       return lower_builtin_qot(ss, s, args);
+    case builtin_uqot:      return lower_builtin_uqot(ss, s, args);
+    case builtin_at:        return lower_builtin_at(ss, s, args);
+      // clang-format on
+  }
+  assertMessage(false, "unhandled builtin");
+  return 0;
+}
+
+u32 lower_call(superscope *ss, scope *s, u32 callable, u32 optional_instance, ast *args);
+u32 lower_call_type(superscope *ss, scope *s, u32 callable, u32 optional_instance, ast *args, Type t) {
+  tu_match_void(
+      t,
+      (builtin, b, return lower_builtin(ss, s, b, args)),
+
+      (c_type, t, lower_call_type(ss, s, callable, 0, args, scope_find_origional(ss, s, callable)->t)),
+      (r_struct, st, {
+        foreach (let item, mList_iter(st)) {
+          if (fptr_eq(item.name, fp("()"))) {
+            u32 method_val = scope_add_rvalue(ss, s, item.init);
+            return lower_call(ss, s, method_val, callable, args);
+          }
+        }
+        assertMessage(false, "struct has no '()' call operator defined");
+      }),
+
+      (r_tag, tt, return lower_call_type(ss, s, callable, optional_instance, args, *tt.t)),
+      (r_ctime, ctt, return lower_call_type(ss, s, callable, optional_instance, args, *ctt)),
+      (r_decor, dt, return lower_call_type(ss, s, callable, optional_instance, args, *dt.t)),
+      (r_ptr, pt, return lower_call_type(ss, s, callable, optional_instance, args, *pt)),
+
+      // (c_ast , _ , ), // TODO
+      // (r_void , _ , ),
+      // (r_uint , _ , ),
+      // (r_sint , _ , ),
+      // (r_arr , _ , ),
+      // (c_int , _ , ),
+      // (c_any , _ , ),
+      (default, assertMessage(false, "type does not support call")),
+
+      (r_func, _, {
+        // Standard function call
+        let fn_val = scope_find_origional(ss, s, callable);
+        let params = tu_catch(r_func, fn_val->t);
+        Type ret_type = mList_arr(params)[mList_len(params) - 1];
+
+        u32 dest = scope_add_rvalue(ss, s, (typed_value){ret_type});
+        let args_list = mList_init(ss->alloc, u32, 2);
+
+        if (optional_instance) mList_push(args_list, optional_instance);
+
+        if (args) {
+          if (tu_is(astPBlock, *args)) {
+            let block = tu_catch(astPBlock, *args);
+            foreach (let it, vlap(sentList_vla(block.stmts))) {
+              mList_push(args_list, lower(ss, s, it));
+            }
+          } else mList_push(args_list, lower(ss, s, args));
+        }
+
+        scope_add_inst(ss, s, (ir)tu_of(ir_call, {.l = callable, .d = dest, .args = {mList_len(args_list), mList_toOwned(ss->alloc, args_list)}}));
+        return dest;
+      }),
+  );
+  return 0;
+}
+u32 lower_call(superscope *ss, scope *s, u32 callable, u32 optional_instance, ast *args) {
+  let fn_val = scope_find_origional(ss, s, callable);
+  return lower_call_type(ss, s, callable, optional_instance, args, fn_val->t);
+}
+u32 lower_dot(superscope *ss, scope *s, u32 left, ast *right) {
+  fptr field_name;
+  tu_match_void(
+      *right,
+      (astId, id, field_name = id;),
+      (astString, str, field_name = slice_split(str, (1, str.len - 1))[0];),
+      (default, assertMessage(false, "expected id or string for member access"))
   );
 
-  u32 member_idx = scope_add_value(env, s, (typed_full){member_type});
+  let left_val = scope_find_origional(ss, s, left);
+  Type current_type = left_val->t;
 
-  ir_op op_inst = {
-      .l = left,
-      .r = offset_val,
-      .d = member_idx,
-      .op = opNumbers.dot,
-  };
-  scope_add_inst(env, s, (ir)tu_of(ir_op, op_inst));
+  bool inherited_const = false;
+  bool inherited_valatile = false;
 
-  if (left_val->v.value)
-    interpret_op(env, s, op_inst);
+  while (true) {
+    tu_match_void(
+        current_type,
+        (r_tag, tag, current_type = *tag.t; continue;),
+        (r_ptr, pt, current_type = *pt; continue;),
+        (r_ctime, ct, current_type = *ct; continue;),
+        (r_decor, dec, {
+          inherited_const |= dec.constant;
+          inherited_valatile |= dec.valatile;
+          current_type = *dec.t;
+          continue;
+        }),
+        (r_struct, st, {
+          foreach (let item, mList_iter(st)) {
+            if (fptr_eq(item.name, field_name)) {
+              typed_value member_val = item.init;
 
-  return member_idx;
+              if (Type_is_comptime(member_val.t))
+                member_val.t = (Type)tu_of(r_ctime, ss_getType(ss, member_val.t));
+              else if (inherited_const || inherited_valatile)
+                member_val.t = (Type)tu_of(r_decor, {.t = ss_getType(ss, member_val.t), .constant = inherited_const, .valatile = inherited_valatile});
+
+              return scope_add_rvalue(ss, s, member_val);
+            }
+          }
+          assertMessage(false, "struct member not found");
+        }),
+        (default, assertMessage(false, "type does not support member access")),
+    );
+    break;
+  }
+  return 0;
+}
+static inline fptr fptr_from_opnumber(u32 n) {
+  static char buf[sizeof(u32)];
+  memcpy(buf, &n, sizeof(u32));
+  usize len = 0;
+  while (len < sizeof(u32) && buf[len])
+    len++;
+  return (fptr){len, (u8 *)buf};
 }
 
-u32 lower_op(superscope *env, scope *s, astOp op) {
-  assertMessage(op.number_rep != opNumbers.call);
-  if (op.number_rep == opNumbers.dot) return lower_dot(env, s, lower(env, s, op.left), op.right);
+u32 lower_operator_overload(superscope *ss, scope *s, u32 left, enum_op op, ast *right) {
+  static char opname[5] = {};
+  memcpy(&op, opname, sizeof(op));
+  let op_name = fp((char *)opname);
+  let left_val = scope_find_origional(ss, s, left);
+  Type current_type = left_val->t;
 
-  u32 l_val = lower(env, s, op.left);
-  u32 r_val = lower(env, s, op.right);
-
-  Type l_type = scope_find(env, s, l_val)->t;
-
-  bool is_tagged = false;
-  r_tag tag_data;
-  if (tu_is(r_tag, l_type)) {
-    is_tagged = true;
-    tag_data = tu_catch(r_tag, l_type);
-  } else if (tu_is(r_ptr, l_type) && tu_is(r_tag, *tu_catch(r_ptr, l_type))) {
-    is_tagged = true;
-    tag_data = tu_catch(r_tag, *tu_catch(r_ptr, l_type));
+  while (true) {
+    tu_match_void(
+        current_type,
+        (r_tag, tag, current_type = *tag.t; continue;),
+        (r_ptr, pt, current_type = *pt; continue;),
+        (r_ctime, ct, current_type = *ct; continue;),
+        (r_decor, dec, current_type = *dec.t; continue;),
+        (r_struct, st, {
+          foreach (let item, mList_iter(st)) {
+            if (fptr_eq(item.name, op_name)) {
+              u32 method_val = scope_add_rvalue(ss, s, item.init);
+              return lower_call(ss, s, method_val, left, right);
+            }
+          }
+          return 0;
+        }),
+        (default, return 0;),
+    );
+    break;
   }
-
-  char *mname = nullptr;
-  if (op.number_rep == opNumbers.plus) mname = "__add";
-  else if (op.number_rep == opNumbers.minus) mname = "__sub";
-  else if (op.number_rep == opNumbers.mul) mname = "__mul";
-  else if (op.number_rep == opNumbers.div) mname = "__div";
-  else if (op.number_rep == opNumbers.mod) mname = "__mod";
-
-  if (is_tagged && mname) {
-    u32 fn_val = 0;
-    if_decl (let methods, moxmap_get(env->tfunc, tag_data)) {
-      for (usize i = 0; i < msList_len(*methods); i++) {
-        if (fptr_eq((*methods)[i].name, mname)) {
-          fn_val = (*methods)[i].fn;
-          break;
-        }
-      }
-    }
-
-    if (fn_val) {
-      typed_full *fn_type_val = scope_find(env, s, fn_val);
-      assert_type(r_func, fn_type_val->t);
-      let fn_params = tu_catch(r_func, fn_type_val->t);
-      Type ret_type = mList_arr(fn_params)[mList_len(fn_params) - 1];
-
-      let d = scope_add_value(env, s, (typed_full){ret_type});
-
-      let ir_args = mList_init(env->alloc, u32, 2);
-      defer { mList_deinit(ir_args); };
-      mList_push(ir_args, l_val);
-      mList_push(ir_args, r_val);
-
-      u32 *args_ptr = mList_toOwned(env->alloc, ir_args);
-      let call_inst = (ir_call){
-          .l = fn_val,
-          .d = d,
-          .args = (slice(u32)){.ptr = args_ptr, .len = 2}
-      };
-      scope_add_inst(env, s, (ir)tu_of(ir_call, call_inst));
-
-      bool can_interpret = scope_find(env, s, fn_val)->v.value || scope_find(env, s, fn_val)->func;
-      if (can_interpret && scope_find(env, s, l_val)->v.value && scope_find(env, s, r_val)->v.value) {
-        interpret_call(env, s, call_inst);
-      }
-      return d;
-    }
-  }
-
-  let iop = (ir_op){
-      .l = l_val,
-      .r = r_val,
-      .op = op.number_rep,
-  };
-  iop.d = scope_add_value(env, s, (typed_full){tu_of(c_any, {})});
-  scope_add_inst(env, s, (ir)tu_of(ir_op, iop));
-  interpret_op(env, s, iop);
-
-  return iop.d;
+  return 0;
 }
+
+u32 lower_boolean_op(superscope *ss, scope *s, u32 left, enum_boolean_op bop, ast *right) {
+  u32 right_val = lower(ss, s, right);
+
+  let left_tv = scope_find_origional(ss, s, left);
+  let right_tv = scope_find_origional(ss, s, right_val);
+
+  assertMessage(
+      Type_isint(left_tv->t) && Type_isint(right_tv->t),
+      "boolean/comparison operators currently only support integer operands"
+  );
+
+  u32 dest = scope_add_rvalue(ss, s, (typed_value){(Type)tu_of(r_uint, (u16)1)});
+
+  scope_add_inst(
+      ss, s, (ir)tu_of(ir_op, {.l = left, .r = right_val, .d = dest, .op = (u32)bop})
+  );
+
+  return dest;
+}
+
+u32 lower_op(superscope *ss, scope *s, u32 left, enum_op opn, ast *right) {
+  switch (opn) {
+      // clang-format off
+    default: assertMessage(false, "unhandled math operator");
+    case enop_dot: return lower_dot(ss, s, left, right);
+    case enop_colon: assertMessage(false, "colon operator must be followed by a function call");
+    case enop_call: return lower_call(ss, s, left, 0, right);
+      // clang-format on
+    case enop_pipe: {
+      let pipscope = scope_inferior(ss, s);
+      scope_bind(ss, pipscope, left, fp("_"));
+      scope_add_inst(ss, s, (ir)tu_of(ir_block, pipscope));
+      return lower(ss, pipscope, right);
+    }
+
+    case enop_set:
+    case enop_obor:
+    case enop_oband:
+    case enop_plus:
+    case enop_minus:
+    case enop_mul:
+    case enop_div:
+    case enop_mod:
+    case enop_shr:
+    case enop_shl:
+    case enop_oand:
+    case enop_oor:
+    case enop_mor:
+    case enop_les:
+    case enop_moq:
+    case enop_leq:
+    case enop_eq:
+    case enop_neq: {
+      static char opname[5] = {};
+      memcpy(opname, &opn, sizeof(opn));
+      let op_name = fp((char *)opname);
+      if_decl (let overload_result, lower_operator_overload(ss, s, left, opn, right))
+        return overload_result;
+
+      switch (opn) {
+          // clang-format off
+        case enop_set: assertMessage(false, "unhandled set op");
+        case enop_obor:
+        case enop_oband: assertMessage(false, "unhandled bitwise ops");
+        case enop_plus:
+        case enop_minus:
+        case enop_mul:
+        case enop_div:
+        case enop_mod:
+        case enop_shr:
+        case enop_shl: assertMessage(false, "unhandled mathematical ops");
+        default: return lower_boolean_op(ss, s, left, (enum_boolean_op)opn, right);
+          // clang-format on
+      }
+    }
+  }
+}
+u32 lower_call(superscope *ss, scope *s, u32 callable, u32 optional_instance, ast *args);
+
+// Forward declaration for recursively resolving aliases
 
 u32 lower(superscope *env, scope *s, astptr ast) {
   if (!ast) return 0;
@@ -550,48 +569,25 @@ u32 lower(superscope *env, scope *s, astptr ast) {
       (astNumber, num, ss_compileInt(env, s, num)),
       (astDecl, decl, ({
          let t = decl.type
-                     ? value_asType(temporary_interpret(env, s, decl.type))
+                     ? value_asType(temporary_interpret_ast(env, s, decl.type))
                      : (Type)tu_of(c_any, {});
-
-         u32 val = 0;
-
-         // Struct allocation backing memory
-         if (Type_rsize(t) > 0 && !tu_is(c_ast, t) && !tu_is(c_type, t) && !tu_is(c_any, t) && !Type_isint(t) && !tu_is(r_ptr, t)) {
-           val = scope_add_value(env, s, (typed_full){t});
-           typed_full *v = scope_find(env, s, val);
-           v->v.value = acreate(env->alloc, arrof(u8, Type_rsize(t)));
-           memset(v->v.value, 0, Type_rsize(t));
-         } else {
-           val = scope_add_value(env, s, (typed_full){t});
+         u32 val = decl.value
+                       ? tu_is(c_ast, t)
+                             ? scope_add_rvalue(env, s, (typed_value){t, decl.value})
+                             : lower(env, s, decl.value)
+                       : scope_add_rvalue(env, s, (typed_value){t});
+         assertMessage(tu_is(c_any, t) || !Type_cmp(t, scope_find_origional(env, s, val)->t));
+         if (decl.is_const) {
+           let resolved_val = scope_find_origional(env, s, val);
+           assertMessage(!tu_is(c_any, resolved_val->t), "cannot apply const to anytype");
+           resolved_val->t = (Type)tu_of(r_decor, {.t = ss_getType(env, resolved_val->t), .constant = true, .valatile = false});
          }
-
-         if (decl.value) {
-           if (tu_is(c_ast, t)) scope_find(env, s, val)->v.c_ast = decl.value;
-           else {
-             u32 expr = lower(env, s, decl.value);
-
-             // ---> HACKLESS LATE INFERENCE <---
-             // If we didn't have an explicit type, steal it from the lowered expression
-             if (tu_is(c_any, t)) {
-               scope_find(env, s, val)->t = scope_find(env, s, expr)->t;
-             }
-
-             scope_add_inst(env, s, (ir)tu_of(ir_op, {.l = val, .r = expr, .d = val, .op = opNumbers.set}));
-             interpret_op(env, s, (ir_op){.l = val, .r = expr, .d = val, .op = opNumbers.set});
-           }
-         }
-
-         assertMessage(
-             val &&
-             (tu_is(c_any, t) || !Type_cmp(scope_find(env, s, val)->t, t))
-         );
-
          if (decl.name) {
            tu_match_void(
                *decl.name,
                (astId, id, scope_bind(env, s, val, id)),
                (default, {
-                 let res = temporary_interpret(env, s, decl.name);
+                 let res = temporary_interpret_ast(env, s, decl.name);
                  assert_type(c_ast, res.t);
                  assertMessage(res.v.c_ast);
                  assertMessage(tu_is(astId, *res.v.c_ast));
@@ -599,7 +595,6 @@ u32 lower(superscope *env, scope *s, astptr ast) {
                }),
            );
          }
-         // if (decl.is_const) TODO();
          val;
        })),
       (astBBlock, ast_block, ({
@@ -608,18 +603,24 @@ u32 lower(superscope *env, scope *s, astptr ast) {
          u32 last = 0;
          foreach (let it, vlap(sentList_vla(ast_block.stmts)))
            last = lower(env, block, it);
-         last ?: scope_add_value(env, s, (typed_full){tu_of(r_void, {})});
+         last ?: scope_add_rvalue(env, s, (typed_value){tu_of(r_void, {})});
        })),
       (astPBlock, ast_block, ({
          let vla = sentList_vla(ast_block.stmts);
          assertMessage(countof(*vla) == 1, "no tuples");
-         lower(env, s, (*vla)[0]); // Parenthesis simply forward the node
+         let sn = scope_inferior(env, s);
+         msList_push(env->alloc, s->instructions, (ir)tu_of(ir_block, sn));
+         lower(env, sn, (*vla)[0]);
        })),
       (astABlock, _, assertMessage(false, "lone [...]"), (u32)0),
       (astOp, op, ({
-         op.number_rep != opNumbers.call
-             ? lower_op(env, s, op)
-             : lower_call(env, s, op.left, op.right);
+         u32 res = 0;
+         if (op.number_rep == opNumbers.call && tu_or(astOp, *op.left, (astOp){}).number_rep == opNumbers.colon) {
+           let colon_op = tu_catch(astOp, *op.left);
+           u32 instance = lower(env, s, colon_op.left);
+           res = lower_call(env, s, lower_dot(env, s, instance, colon_op.right), instance, op.right);
+         } else res = lower_op(env, s, lower(env, s, op.left), op_as_enum(op.number_rep), op.right);
+         res;
        })),
   );
 }

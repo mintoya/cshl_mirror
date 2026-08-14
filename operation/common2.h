@@ -1,11 +1,72 @@
 #pragma once
 #include "../type.h"
+#include "wheels/allocators/cballocator.h"
 #include "wheels/macros.h"
 #include "wheels/mytypes.h"
 #include "wheels/print/print_pre.h"
 #include "wheels/sList.h"
 #include "wheels/smap.h"
 #include <assert.h>
+
+typedef enum enum_op {
+  enop_call,
+  enop_dot,
+  enop_colon,
+  enop_mul,
+  enop_div,
+  enop_mod,
+  enop_plus,
+  enop_minus,
+  enop_oand,
+  enop_oor,
+  enop_oband,
+  enop_obor,
+  enop_shr,
+  enop_shl,
+  enop_mor,
+  enop_les,
+  enop_moq,
+  enop_leq,
+  enop_eq,
+  enop_neq,
+  enop_pipe,
+  enop_set,
+} enum_op;
+typedef enum enum_boolean_op {
+  bop_oand = enop_oand,
+  bop_oor = enop_oor,
+  bop_mor = enop_mor,
+  bop_les = enop_les,
+  bop_moq = enop_moq,
+  bop_leq = enop_leq,
+  bop_eq = enop_eq,
+  bop_neq = enop_neq,
+} enum_boolean_op;
+enum_op op_as_enum(u32 opn) {
+  if (opn == opNumbers.call) return enop_call;
+  if (opn == opNumbers.dot) return enop_dot;
+  if (opn == opNumbers.colon) return enop_colon;
+  if (opn == opNumbers.mul) return enop_mul;
+  if (opn == opNumbers.div) return enop_div;
+  if (opn == opNumbers.mod) return enop_mod;
+  if (opn == opNumbers.plus) return enop_plus;
+  if (opn == opNumbers.minus) return enop_minus;
+  if (opn == opNumbers.oand) return enop_oand;
+  if (opn == opNumbers.oor) return enop_oor;
+  if (opn == opNumbers.oband) return enop_oband;
+  if (opn == opNumbers.obor) return enop_obor;
+  if (opn == opNumbers.shr) return enop_shr;
+  if (opn == opNumbers.shl) return enop_shl;
+  if (opn == opNumbers.mor) return enop_mor;
+  if (opn == opNumbers.les) return enop_les;
+  if (opn == opNumbers.moq) return enop_moq;
+  if (opn == opNumbers.leq) return enop_leq;
+  if (opn == opNumbers.eq) return enop_eq;
+  if (opn == opNumbers.neq) return enop_neq;
+  if (opn == opNumbers.pipe) return enop_pipe;
+  if (opn == opNumbers.set) return enop_set;
+  assertMessage(false, "Unknown operator %x", opn);
+}
 
 #define assert_type(tag, val)              \
   assertMessage(                           \
@@ -37,33 +98,23 @@ tu_def(
     (ir_while /*   */, struct { u32 cnd; typeof(scope*) t; }),
     (ir_block /*   */, scope *),
 );
-int i = sizeof(ir);
 
-typedef struct {
-  Type t;
-  union {
-    itypeof(typed_value, v) v;
-    function *func;
-  };
-} typed_full;
-static_assert(sizeof(typed_full) == sizeof(typed_value));
-static_assert(offsetof(typed_full, v) == offsetof(typed_value, v));
+tu_def((value, u8), (rvalue, typed_value), (lvalue, void *));
 struct scope {
   scope *parent;
   msList(ir) instructions;
-  struct {
-    msList(typed_full) values;
-    moxmap(fptr, u32) named;
-    u32 start;
-  };
+  msList(value) values;
+  moxmap(fptr, u32) named;
+  u32 start;
 };
 struct superscope {
   allocfn alloc;
+
   moxmap(void *, usize) pointers;
-  moxmap(r_tag, msList(struct { u32 fn ; fptr name; })) tfunc;
   mxmap(Type, Type *) types;
   msList(function) all_functions;
   scope *outermost;
+  msList(Type*) thisstack;
 };
 
 //{function stuff
@@ -85,15 +136,20 @@ static inline astptr *function_body(function in) {
 }
 //}
 
-typed_full *scope_find(superscope *env, scope *s, u32 idx) {
+value *scope_find(superscope *env, scope *s, u32 idx) {
   while (s) {
-    if (idx > s->start && idx <= s->start + msList_len(s->values)) {
+    if (idx > s->start && idx <= s->start + msList_len(s->values))
       return &s->values[idx - s->start - 1];
-    }
     s = s->parent;
   }
   assertMessage(false, "value %u not found in scope", idx);
   return nullptr;
+}
+typed_value *scope_find_origional(superscope *env, scope *s, u32 idx) {
+  let i = scope_find(env, s, idx);
+  while (tu_is(lvalue, *i))
+    i = (value *)tu_catch(lvalue, *i);
+  return &tu_catch(rvalue, *i);
 }
 scope *scope_inferior(superscope *b, scope *s) {
   return avalue(
@@ -101,7 +157,7 @@ scope *scope_inferior(superscope *b, scope *s) {
       ((scope){
           .parent = s,
           .instructions = msList_init(b->alloc, ir),
-          .values = msList_init(b->alloc, typed_full),
+          .values = msList_init(b->alloc, value),
           .named = moxmap_init(b->alloc, fptr, u32, cmpfptr),
           .start = s ? s->start + msList_len(s->values) : 0,
 
@@ -115,19 +171,20 @@ void scope_destroy(superscope *b, scope *s) {
   adestroy(b->alloc, s);
 }
 
-u32 scope_add_value(superscope *env, scope *s, typed_full v) {
+u32 scope_add_rvalue(superscope *env, scope *s, typed_value v) {
   let res = msList_len(s->values) + s->start + 1;
-  msList_push(env->alloc, s->values, v);
+  msList_push(env->alloc, s->values, (value)tu_of(rvalue, v));
   return res;
 }
-
+void scope_add_inst(superscope *env, scope *s, ir i) { msList_push(env->alloc, s->instructions, i); }
 void scope_bind(superscope *env, scope *s, u32 idx, fptr name) {
   let variable = scope_find(env, s, idx);
-  println("binding {typed_value} to {slice(c8)}", *variable, name);
+  // println("binding {typed_value} to {slice(c8)}", *variable, name);
+  assertMessage(!moxmap_get(s->named, name), "already bound %s", snprint(stdAlloc, "{slice(c8)}", name).ptr);
+  assertMessage(idx < msList_len(s->values) + s->start);
   moxmap_set(s->named, name, idx);
 }
 
-#include "wheels/allocators/cballocator.h"
 void irb_cbb(const callbackallocatorhandle *h, void *p) {
   let _map = (itypeof(superscope, pointers))h->cbself->udata;
   moxmap_rem(_map, h->inptr);
@@ -138,8 +195,8 @@ superscope *ss_init(allocfn allocator) {
   superscope* res = avalue(allocator, ((superscope){
     .all_functions = msList_init(allocator, function),
     .pointers = moxmap_init(allocator, void*, usize),
-    .tfunc = moxmap_init(allocator, r_tag, moxmap_vt(res->tfunc)),
     .types = mxmap_init(allocator, Type, Type *,3,Type_hash_hash,Type_cmp_hash),
+    .thisstack = msList_init(allocator , Type*),
   }));
   // clang-format on
   res->alloc = cba_init(allocator, nullptr, irb_cbb, res->pointers);
@@ -175,7 +232,7 @@ superscope *ss_init(allocfn allocator) {
     scope_bind(
         res,
         res->outermost,
-        scope_add_value(res, res->outermost, (typed_full){tu_of(builtin, i.id)}),
+        scope_add_rvalue(res, res->outermost, (typed_value){tu_of(builtin, i.id)}),
         fp(i.name)
     );
   return res;
@@ -183,17 +240,23 @@ superscope *ss_init(allocfn allocator) {
 void ss_deInit(superscope *ss) {
   let allocator = ((struct cballocator *)ss->alloc)->allocator;
   msList_deInit(allocator, ss->all_functions);
+  msList_deInit(allocator, ss->thisstack);
   foreach (let it, moxmap_iter(ss->pointers, void *, usize))
     adestroy(allocator, (u8(*)[*it.val])it.key);
   moxmap_deinit(ss->pointers);
-  moxmap_deinit(ss->tfunc);
   mxmap_deinit(ss->types);
   adestroy(allocator, ss);
 }
 u32 ss_get_named(superscope *env, scope *s, fptr n) {
+  if_decl (let val, moxmap_get(s->named, n))
+    return *val;
+  let limit = s->start;
+  s = s->parent;
   while (s) {
     if_decl (let val, moxmap_get(s->named, n))
-      return *val;
+      if (*val <= limit)
+        return *val;
+    limit = s->start;
     s = s->parent;
   }
   assertMessage(false, "ir could'nt find %s", snprint(stdAlloc, "{slice(c8)}", n).ptr);
@@ -212,8 +275,8 @@ Type *ss_getType(superscope *b, Type t) {
       //
       (r_ptr, p, (Type)tu_of(r_ptr, ss_getType(b, *p))),
       (r_ctime, rct, (Type)tu_of(r_ctime, ss_getType(b, *rct))),
-      (r_tag, tag, (Type)tu_of(r_tag, {ss_getType(b, *tag.type), tag.name})),
-      (r_arr, arr, (Type)tu_of(r_arr, {ss_getType(b, *arr.type), arr.count})),
+      (r_tag, tag, (Type)tu_of(r_tag, {ss_getType(b, *tag.t), tag.name})),
+      (r_arr, arr, (Type)tu_of(r_arr, {ss_getType(b, *arr.t), arr.count})),
       (r_decor, dec, (Type)tu_of(r_decor, {ss_getType(b, *dec.t), dec.constant, dec.valatile})),
       //
       (r_struct, items, (Type)tu_of(r_struct, mList_map(allocator, items, ($.init.t = *ss_getType(b, $.init.t), $)))),
@@ -234,8 +297,9 @@ bool Type_isint(Type t) {
       (c_int, _, true),
       (r_uint, _, true),
       (r_sint, _, true),
-      (r_tag, tg, Type_isint(*tg.type)),
+      (r_tag, tg, Type_isint(*tg.t)),
       (r_decor, dec, Type_isint(*dec.t)),
+      (r_ctime, ct, Type_isint(*ct)),
       (default, false),
 
   );
@@ -243,10 +307,11 @@ bool Type_isint(Type t) {
 usize Type_int_size(Type t) {
   return tu_match_exp(
       t,
-      (c_int, _, (usize)SIZE_MAX),
+      (c_int, _, ~(usize)0),
       (r_uint, u, (usize)u),
       (r_sint, s, (usize)s),
-      (r_tag, tg, Type_int_size(*tg.type)),
+      (r_ctime, ct, Type_int_size(*ct)),
+      (r_tag, tg, Type_int_size(*tg.t)),
       (r_decor, dec, Type_int_size(*dec.t)),
       (default, (usize)0),
 
@@ -257,6 +322,7 @@ Type value_asType(typed_value t) {
   assertMessage(t.v.c_type, "type is unknown");
   return t.v.c_type[0];
 }
+typed_value Type_asValue(superscope *s, Type t) { return (typed_value){tu_of(c_type, {}), ss_getType(s, t)}; }
 
 u32 ss_compileInt(superscope *b, scope *s, fptr in) {
   let front = slice_split(in, (0, 2))[0];
@@ -265,7 +331,7 @@ u32 ss_compileInt(superscope *b, scope *s, fptr in) {
     result = BInt.from.fptr(b->alloc, fptr_eq(front, "0x") ? 16 : 2, slice_split(in, (2, -1))[0]);
   else result = BInt.from.fptr(b->alloc, 10, in);
   assertMessage(result);
-  return scope_add_value(b, s, (typed_full){tu_of(c_int, {}), {.v.c_int = result}});
+  return scope_add_rvalue(b, s, (typed_value){tu_of(c_int, {}), result});
 }
 u32 ss_compileString(superscope *b, scope *s, fptr in) {
   assertMessage(in.len > 1 && in.ptr[0] == '"' && in.ptr[in.len - 1] == '"');
@@ -302,10 +368,10 @@ u32 ss_compileString(superscope *b, scope *s, fptr in) {
     }
   }
 
-  return scope_add_value(
+  return scope_add_rvalue(
       b,
       s,
-      (typed_full){
+      (typed_value){
           *ss_getType(
               b,
               (Type)tu_of(
@@ -320,20 +386,19 @@ u32 ss_compileString(superscope *b, scope *s, fptr in) {
       }
   );
 }
-static inline u32 ss_find_tag_method(superscope *env, r_tag tag, fptr name) {
-  if_decl (let methods, moxmap_get(env->tfunc, tag)) {
-    for (usize i = 0; i < msList_len(*methods); i++) {
-      if (fptr_eq((*methods)[i].name, name)) {
-        return (*methods)[i].fn;
-      }
-    }
-  }
-  return 0;
-}
 
 u32 lower(superscope *, scope *, astptr);
 typed_value interpret(superscope *, scope *);
 void interpret_op(superscope *, scope *, ir_op);
 void interpret_call(superscope *, scope *, ir_call);
-
 astptr ast_dot(astptr node, astptr name);
+typed_value temporary_interpret(superscope *, scope *, ir);
+typed_value temporary_interpret_ast(superscope *ss, scope *s, ast *a) {
+  let si = scope_inferior(ss, s);
+  defer { scope_destroy(ss, si); };
+  lower(ss, si, a);
+  return temporary_interpret(ss, s, (ir)tu_of(ir_block, si));
+}
+
+typed_value temporary_interpret(superscope *, scope *, ir) { TODO(); }
+typed_value interpret(superscope *, scope *) { TODO(); }

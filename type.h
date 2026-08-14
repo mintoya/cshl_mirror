@@ -18,8 +18,11 @@ typedef enum : u8 {
   builtin_return,   // return x return
   builtin_break,    // @break()
   builtin_continue, // @continue()
+                    //
+  builtin_toplevel, // @toplevel(decl) creates symbol in the current file's scope,
                     // then when called with expression, yields an r_func
   builtin_ast,      // @ast() type of ast
+  builtin__id,      // @id(str) an id which corresponds to this string litteral
   builtin_any,      // @any() type of any
   builtin_int,      // @int() compile time bigint
   builtin_type,     // @type() the type of a type
@@ -49,9 +52,9 @@ tu_def( // type
     (r_void /*       */, struct {}),
     (r_uint /*       */, u16),
     (r_sint /*       */, u16),
-    (r_tag /*        */, struct { Type *type; fptr name; }),
+    (r_tag /*        */, struct { Type *t; fptr name; }),
     (r_ptr /*        */, Type *),
-    (r_arr /*        */, struct { Type *type; usize count; }),
+    (r_arr /*        */, struct { Type *t; usize count; }),
     (r_struct /*     */, mList(r_struct_item)),
     (r_bitfield /*   */, mList(r_bitf_item)),
     (r_func /*       */, mList(Type)),
@@ -89,12 +92,12 @@ typedef struct r_bitf_item {
 static inline usize Type_ralig(Type t) {
   return tu_match_exp(
       t,
-      (r_tag, tag, Type_ralig(*tag.type)),
+      (r_tag, tag, Type_ralig(*tag.t)),
       (r_void, _, (usize)1),
       (r_uint, u, lineup(u, 8) / 8), // TODO
       (r_sint, u, lineup(u, 8) / 8), // TODO
       (r_ptr, p, Type_ralig((Type)tu_of(r_uint, 64))),
-      (r_arr, a, (assertMessage(a.type), Type_ralig(a.type[0]))),
+      (r_arr, a, (assertMessage(a.t), Type_ralig(a.t[0]))),
       (r_bitfield, b, ({
          usize s = 0;
          foreach (let b, mList_iter(b))
@@ -115,12 +118,12 @@ static inline usize Type_ralig(Type t) {
 static inline usize Type_rsize(Type t) {
   return tu_match_exp(
       t,
-      (r_tag, tag, Type_rsize(*tag.type)),
+      (r_tag, tag, Type_rsize(*tag.t)),
       (r_void, _, (usize)0),
       (r_uint, u, lineup(u, 8) / 8),
       (r_sint, u, lineup(u, 8) / 8),
       (r_ptr, p, Type_rsize((Type)tu_of(r_uint, 64))),
-      (r_arr, a, (assertMessage(a.type), Type_rsize(a.type[0]) * a.count)),
+      (r_arr, a, (assertMessage(a.t), Type_rsize(a.t[0]) * a.count)),
       (r_bitfield, b, ({
          usize s = 0;
          foreach (let b, mList_iter(b))
@@ -161,7 +164,6 @@ i8 Type_cmp_ex(Type a, Type b, mList(type_cmp_pair) followed) {
       (c_any, _, return 0;),
       (c_ast, _, return 0;),
       (c_type, _, return 0;),
-      (r_ctime, _, return 0;),
 
       (r_tag, ai, return fptr_cmp(ai.name, tu_catch(r_tag, b).name);),
       (r_uint, ai, return icmp(ai, tu_catch(r_uint, b));),
@@ -184,6 +186,20 @@ i8 Type_cmp_ex(Type a, Type b, mList(type_cmp_pair) followed) {
         mList_rem(followed, mList_len(followed) - 1);
         return r;
       }),
+
+      (r_ctime, ai, {
+        let bi = tu_catch(r_ctime, b);
+        if (ai == bi) return 0;
+        if (!ai || !bi) return ai ? 1 : -1;
+
+        foreach (let p, mList_iter(followed))
+          if (p.a == ai && p.b == bi) return 0;
+
+        mList_push(followed, ((type_cmp_pair){.a = ai, .b = bi}));
+        i8 r = Type_cmp_ex(ai[0], bi[0], followed);
+        mList_rem(followed, mList_len(followed) - 1);
+        return r;
+      }),
       (r_ptr, ai, {
         let bi = tu_catch(r_ptr, b);
         if (ai == bi) return 0;
@@ -199,7 +215,7 @@ i8 Type_cmp_ex(Type a, Type b, mList(type_cmp_pair) followed) {
       }),
       (r_arr, ai, {
         let bi = tu_catch(r_arr, b);
-        return Type_cmp_ex(ai.type[0], bi.type[0], followed)
+        return Type_cmp_ex(ai.t[0], bi.t[0], followed)
                    ?: icmp(ai.count, bi.count);
       }),
       (r_func, ai, {
@@ -269,14 +285,14 @@ static u64 Type_hash_ex(Type a, bool follow) {
       (c_int, _, return 1),
       (c_type, _, return 2),
       (c_ast, _, return 3),
-      (r_ctime, _, return 4),
+      (r_ctime, _, return 4), // TODO
       (c_any, _, return 5),
       (r_uint, v, return (u64)v ^ 0x1000),
       (r_sint, v, return (u64)v ^ 0x2000),
       (r_ptr, p, return follow ? Type_hash_ex(*p, false) * 31 ^ 0x3000 : 0x3000),
       (r_decor, p, return follow ? Type_hash_ex(*p.t, false) * 31 ^ 0x3000 : 0x3000),
       (r_tag, v, return fptr_hash(v.name) ^ 0x4000),
-      (r_arr, arr, return (Type_hash_ex(*arr.type, follow) * 31) ^ arr.count ^ 0x5000),
+      (r_arr, arr, return (Type_hash_ex(*arr.t, follow) * 31) ^ arr.count ^ 0x5000),
       (r_struct, l, {
         u64 h = 0x5000;
         foreach (let item, mList_iter(l)) {
@@ -310,7 +326,7 @@ u64 Type_hash_hash(const void *t) { return Type_hash(*(Type *)t); }
 bool Type_is_comptime(Type t) {
   return tu_match_exp(
       t,
-      (r_tag, t, Type_is_comptime(*t.type)),
+      (r_tag, t, Type_is_comptime(*t.t)),
 
       (builtin, _, true),
       (c_ast, _, true),
@@ -336,8 +352,10 @@ typePrinter(builtin_id) {
   switch (in) {
       // clang-format off
     case(builtin_if):PUTS("if");break;
+    case(builtin__id):PUTS("id");break;
     case(builtin_fn):PUTS("fn");break;
     case(builtin_ast):PUTS("ast");break;
+    case(builtin_toplevel):PUTS("toplevel");break;
     case(builtin_arrof):PUTS("arrof");break;
     case(builtin_ptrof):PUTS("ptrof");break;
     case(builtin_at):PUTS("at");break;
@@ -354,6 +372,7 @@ typePrinter(builtin_id) {
     case(builtin_return):PUTS("return");break;
     case(builtin_typeof):PUTS("typeof");break;
     case(builtin_break):PUTS("break");break;
+    case(builtin_continue):PUTS("break");break;
     case(builtin_qot):PUTS("qot");break;
     case(builtin_uqot):PUTS("uqot");break;
       // clang-format on
@@ -363,7 +382,7 @@ typePrinter(builtin_id) {
 typedef struct {
   slice(u8) str;
 } id_str;
-bool iscid(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+bool id_str_iscid(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
 typePrinter(id_str) {
   if (fptr_eq(PRINTARGS(), "decode")) {
     let p = in.str.ptr;
@@ -381,11 +400,11 @@ typePrinter(id_str) {
   } else {
     let p = in.str.ptr;
     while (p < in.str.len + in.str.ptr) {
-      while (p < in.str.len + in.str.ptr && iscid(*p))
+      while (p < in.str.len + in.str.ptr && id_str_iscid(*p))
         PUTC((char)(*(p++)));
-      if (p < in.str.len + in.str.ptr && !iscid(*p)) {
+      if (p < in.str.len + in.str.ptr && !id_str_iscid(*p)) {
         PUTC((char)'_');
-        while (p < in.str.len + in.str.ptr && !iscid(*p)) {
+        while (p < in.str.len + in.str.ptr && !id_str_iscid(*p)) {
           char c = *(p++);
           PUTC((char)((((c) >> 4) & 0xf) + 'a'));
           PUTC((char)((((c) >> 0) & 0xf) + 'a'));
@@ -454,7 +473,7 @@ void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_co
         PUTS("[");
         USETYPEPRINTER(usize, arr.count);
         PUTS("] ");
-        if (arr.type) typePrinterWorker_recurse(*arr.type, visitedmap, _ctx);
+        if (arr.t) typePrinterWorker_recurse(*arr.t, visitedmap, _ctx);
         else PUTS("!");
       }),
       // multiple types, push
@@ -550,15 +569,15 @@ test_fn(type_ptr_equality) {
 test_fn(type_tag_nominal_equality) {
   let u32t = (Type)tu_of(r_uint, (u16)32);
   let u64t = (Type)tu_of(r_uint, (u16)64);
-  let a = (Type)tu_of(r_tag, {.name = fp("Meters"), .type = &u32t});
-  let b = (Type)tu_of(r_tag, {.name = fp("Meters"), .type = &u64t});
+  let a = (Type)tu_of(r_tag, {.name = fp("Meters"), .t = &u32t});
+  let b = (Type)tu_of(r_tag, {.name = fp("Meters"), .t = &u64t});
   test_assert(!Type_cmp(a, b));
   test_assert(Type_hash(a) == Type_hash(b));
 }
 test_fn(type_tag_distinct_names) {
   let u32t = (Type)tu_of(r_uint, (u16)32);
-  let a = (Type)tu_of(r_tag, {.name = fp("Meters"), .type = &u32t});
-  let b = (Type)tu_of(r_tag, {.name = fp("Seconds"), .type = &u32t});
+  let a = (Type)tu_of(r_tag, {.name = fp("Meters"), .t = &u32t});
+  let b = (Type)tu_of(r_tag, {.name = fp("Seconds"), .t = &u32t});
   test_assert(Type_cmp(a, b));
 }
 test_fn(type_ptr_structural_inequality) {
