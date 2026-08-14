@@ -1,10 +1,9 @@
 #include "wheels/macros.h"
 #include "wheels/print/print_pre.h"
 #include <stdio.h>
-#include <threads.h>
 #include <wheels/print.h>
 
-void indentout(const char *chars, void *instate, ulong len, bool flush) {
+void indentout(const char *chars, void *instate, usize len, bool flush) {
   static thread_local let state_st = struct_imm(
       (indent_level, (u32)0),
       (at_line_start, true),
@@ -121,10 +120,6 @@ static void sexplike_escape(char c) {
   }
 }
 
-#include <stdbool.h>
-#include <stdio.h>
-#include <threads.h> // for thread_local
-
 typedef struct {
   FILE *out;
   int depth;
@@ -141,8 +136,7 @@ static void emitIndent(SExprPrinterState *st) {
     fputs("  ", st->out);
 }
 
-// matches: void (*)(const char*, void*, unsigned long, bool)
-void sexplike(const char *data, void *userdata, unsigned long len, bool flush) {
+void sexplike(const char *data, void *userdata, usize len, bool flush) {
   SExprPrinterState *st = userdata ? (SExprPrinterState *)userdata : &tl_defaultState;
   if (!st->out) st->out = stdout;
 
