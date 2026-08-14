@@ -107,6 +107,70 @@ struct scope {
   moxmap(fptr, u32) named;
   u32 start;
 };
+typePrinter(scope) {
+  PUTS("scope{");
+  PUTS("instructions{");
+  foreach (let i, span(in.instructions, msList_len(in.instructions))) {
+    tu_match_void(
+        *i,
+        (ir_call, call, {
+          PUTS("ir_call(");
+          USETYPEPRINTER(u32, call.l);
+          PUTS("[");
+          foreach (let c, span(call.args.ptr, call.args.len))
+            USETYPEPRINTER(u32, *c), PUTS(" ");
+          PUTS("]");
+          USETYPEPRINTER(u32, call.d);
+          PUTS(")");
+        }),
+        (ir_op, op, {
+          PUTS("ir_op(");
+          USETYPEPRINTER(u32, op.l);
+          PUTS(" ");
+          USETYPEPRINTER(u32, op.op);
+          PUTS(" ");
+          USETYPEPRINTER(u32, op.r);
+          PUTS(")");
+        }),
+        (ir_if, ifv, {
+          PUTS("ir_if{");
+          USETYPEPRINTER(u32, ifv.cnd);
+          PUTS(",");
+          USETYPEPRINTER(scope, ifv.t);
+          PUTS(",");
+          USETYPEPRINTER(scope, ifv.f);
+          PUTS("}");
+        }),
+        (ir_while, ifv, {
+          PUTS("ir_while{");
+          USETYPEPRINTER(u32, ifv.cnd);
+          PUTS(",");
+          USETYPEPRINTER(scope, ifv.t);
+          PUTS("}");
+        }),
+        (ir_block, ifv, {
+          PUTS("ir_block(");
+          USETYPEPRINTER(scope, *ifv);
+          PUTS(")");
+        }),
+        (ir_ret, _, PUTS("ret")),
+        (ir_break, _, PUTS("break")),
+        (ir_continue, _, PUTS("continue")),
+    );
+    PUTS(",");
+  }
+  PUTS("}");
+  PUTS("values{");
+  foreach (let v, span(in.values, msList_len(in.values)))
+    tu_match(
+        *v,
+        (lvalue, l, PUTS("lvalue:"), USENAMEDPRINTER("ptr", l)),
+        (rvalue, r, PUTS("rvalue:"), USETYPEPRINTER(Type, r.t)),
+    ),
+        PUTS(",");
+  PUTS("}");
+  PUTS("}");
+}
 struct superscope {
   allocfn alloc;
 
@@ -114,7 +178,7 @@ struct superscope {
   mxmap(Type, Type *) types;
   msList(function) all_functions;
   scope *outermost;
-  msList(Type*) thisstack;
+  msList(Type *) thisstack;
 };
 
 //{function stuff
@@ -181,7 +245,7 @@ void scope_bind(superscope *env, scope *s, u32 idx, fptr name) {
   let variable = scope_find(env, s, idx);
   // println("binding {typed_value} to {slice(c8)}", *variable, name);
   assertMessage(!moxmap_get(s->named, name), "already bound %s", snprint(stdAlloc, "{slice(c8)}", name).ptr);
-  assertMessage(idx < msList_len(s->values) + s->start);
+  assertMessage(idx <= msList_len(s->values) + s->start, "%zu <= %zu + %zu", idx, msList_len(s->values), s->start);
   moxmap_set(s->named, name, idx);
 }
 

@@ -379,41 +379,6 @@ typePrinter(builtin_id) {
   }
 }
 
-typedef struct {
-  slice(u8) str;
-} id_str;
-bool id_str_iscid(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
-typePrinter(id_str) {
-  if (fptr_eq(PRINTARGS(), "decode")) {
-    let p = in.str.ptr;
-    while (p < in.str.len + in.str.ptr) {
-      if (*p == '_') {
-        p++;
-        while (p < in.str.len + in.str.ptr && *p != '_') {
-          assertMessage(p + 1 < in.str.len + in.str.ptr);
-          PUTC((char)(((*p - 'a') << 4) | (*(p + 1) - 'a')));
-          p += 2;
-        }
-        p++;
-      } else PUTC((char)*p++);
-    }
-  } else {
-    let p = in.str.ptr;
-    while (p < in.str.len + in.str.ptr) {
-      while (p < in.str.len + in.str.ptr && id_str_iscid(*p))
-        PUTC((char)(*(p++)));
-      if (p < in.str.len + in.str.ptr && !id_str_iscid(*p)) {
-        PUTC((char)'_');
-        while (p < in.str.len + in.str.ptr && !id_str_iscid(*p)) {
-          char c = *(p++);
-          PUTC((char)((((c) >> 4) & 0xf) + 'a'));
-          PUTC((char)((((c) >> 0) & 0xf) + 'a'));
-        }
-        PUTC((char)'_');
-      }
-    }
-  }
-}
 void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_context _ctx);
 static inline void typePrinterWorker_add(Type in, moxmap(Type, u32) visitedmap) {
   moxmap_set(visitedmap, in, ((u32)((oxmap *)visitedmap)->keys->length));

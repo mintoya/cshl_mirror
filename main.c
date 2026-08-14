@@ -4,6 +4,7 @@
 #include <wheels/smap.h>
 
 #include "ast.h"
+#include "indentprinter.h"
 #include "operation/common2.h"
 #include "operation/int.h"
 #include "operation/lower.h"
@@ -43,58 +44,6 @@
   opNumbers.neq = /*  */ ((opS){"!="}).n;
   opNumbers.pipe = /* */ ((opS){"|>"}).n;
   opNumbers.set = /*  */ ((opS){"="}).n;
-}
-void depth_output(const c8 *str, void *arb, usize length, bool is_last) {
-  DepthState *state = (DepthState *)arb;
-  if (!state || !state->inner_put) return;
-  if (!length) {
-    if (is_last) state->inner_put("", state->inner_arb, 0, true);
-    return;
-  }
-
-  usize last_flush = 0;
-
-  for (usize i = 0; i < length; ++i) {
-    // 1. Handle our control characters
-    if (str[i] == '\x11' || str[i] == '\x12') {
-      // Flush everything before the control character
-      if (i > last_flush) {
-        state->inner_put(str + last_flush, state->inner_arb, i - last_flush, false);
-      }
-
-      if (str[i] == '\x11') state->depth++;
-      if (str[i] == '\x12' && state->depth) state->depth--;
-
-      last_flush = i + 1; // Skip the control character
-      continue;
-    }
-
-    // 2. Handle newlines and indentation
-    if (state->at_line_start && str[i] != '\n' && str[i] != '\r') {
-      for (usize d = 0; d < state->depth * state->indent_spaces; ++d) {
-        state->inner_put(" ", state->inner_arb, 1, false);
-      }
-      state->at_line_start = false;
-    }
-
-    if (str[i] == '\n') {
-      state->inner_put(str + last_flush, state->inner_arb, (i - last_flush) + 1, false);
-      last_flush = i + 1;
-      state->at_line_start = true;
-    }
-  }
-
-  if (last_flush < length) {
-    if (state->at_line_start) {
-      for (usize d = 0; d < state->depth * state->indent_spaces; ++d) {
-        state->inner_put(" ", state->inner_arb, 1, false);
-      }
-      state->at_line_start = false;
-    }
-    state->inner_put(str + last_flush, state->inner_arb, length - last_flush, is_last);
-  } else if (is_last) {
-    state->inner_put("", state->inner_arb, 0, true);
-  }
 }
 fptr *filectx = nullptr;
 __attribute__((noreturn)) void(error_at)(u8 *location, fptr message) {
@@ -161,21 +110,15 @@ cmd_main(
   let ast = parse_source(allocator, buffer);
   println("(log) after ast : {dbga_stats}", debugAllocator_stats(allocator));
 
-  let dstate = (DepthState){
-      .inner_put = fileprint,
-      .inner_arb = stdout,
-      .depth = 0,
-      .indent_spaces = 1,
-      .at_line_start = true
-  };
-
   if (echo_ast)
-    print_wfO(depth_output, &dstate, "{ast}\n", ast);
+    print_wfO(sexplike, nullptr, "{ast}\n", ast);
 
   if (execute) {
     let env = ss_init(allocator);
     lower(env, env->outermost, ast);
-    interpret(env, env->outermost);
+    // interpret(env, env->outermost);
+    print_wfO(indentout, nullptr, "{scope}", *env->outermost);
+    print_wfO(sexplike, nullptr, "{scope}", *env->outermost);
   }
 
   return 0;

@@ -15,6 +15,42 @@
 extern __attribute__((noreturn)) void error_at(u8 *location, fptr message);
 static inline __attribute__((noreturn)) void error_at_sc8(u8 *loc, slice(c8) message) { error_at(loc, (fptr){message.len, (u8 *)message.ptr}); };
 static inline __attribute__((noreturn)) void error_at_str(u8 *loc, char *messag) { error_at(loc, fptr_CSP(messag)); };
+
+typedef struct {
+  slice(u8) str;
+} id_str;
+static inline bool id_str_iscid(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+typePrinter(id_str) {
+  if (fptr_eq(PRINTARGS(), "decode")) {
+    let p = in.str.ptr;
+    while (p < in.str.len + in.str.ptr) {
+      if (*p == '_') {
+        p++;
+        while (p < in.str.len + in.str.ptr && *p != '_') {
+          assertMessage(p + 1 < in.str.len + in.str.ptr);
+          PUTC((char)(((*p - 'a') << 4) | (*(p + 1) - 'a')));
+          p += 2;
+        }
+        p++;
+      } else PUTC((char)*p++);
+    }
+  } else {
+    let p = in.str.ptr;
+    while (p < in.str.len + in.str.ptr) {
+      while (p < in.str.len + in.str.ptr && id_str_iscid(*p))
+        PUTC((char)(*(p++)));
+      if (p < in.str.len + in.str.ptr && !id_str_iscid(*p)) {
+        PUTC((char)'_');
+        while (p < in.str.len + in.str.ptr && !id_str_iscid(*p)) {
+          char c = *(p++);
+          PUTC((char)((((c) >> 4) & 0xf) + 'a'));
+          PUTC((char)((((c) >> 0) & 0xf) + 'a'));
+        }
+        PUTC((char)'_');
+      }
+    }
+  }
+}
 #define error_at(loc, message)     \
   ({                               \
     var_ _msg = message;           \
@@ -59,7 +95,7 @@ tu_def(
       union{
         c8 symLiteral[sizeof(u32)]; 
         u32 number_rep;
-      };}),
+      }; }),
 
     // PBlocks
     // whatever is inside ()
@@ -110,84 +146,89 @@ static inline isize fptr_toi(fptr p) {
 
   return result * sign;
 }
-#define P_INDENT_IN "\x11"
-#define P_INDENT_OUT "\x12"
-
 typePrinter("ast", ast *) {
-  if (!in) return PUTS("null\n");
+  if (!in) {
+    PUTS("(null)");
+    return;
+  }
 
   tu_match_void(
       (*in),
+
       (astId, id, {
-        PUTS("Id '");
-        USENAMEDPRINTER("slice(c8)", id);
-        PUTS("'\n");
+        PUTS("(Id ");
+        USENAMEDPRINTER("id_str", id);
+        PUTS(")");
       }),
+
       (astNumber, num, {
-        PUTS("Number '");
+        PUTS("(Number ");
         USENAMEDPRINTER("slice(c8)", num);
-        PUTS("'\n");
+        PUTS(")");
       }),
+
       (astString, str, {
-        PUTS("String \"");
-        USENAMEDPRINTER("slice(c8)", str);
-        PUTS("\"\n");
+        PUTS("(String \"");
+        USENAMEDPRINTER("id_str", str); // assumes escaping
+        PUTS("\")");
       }),
+
       (astDecl, decl, {
-        PUTS("Decl");
-        if (decl.is_const) {
-          PUTS(" [const]");
-        }
-        PUTS("\n" P_INDENT_IN);
-
-        PUTS("name: ");
+        PUTS("(Decl");
+        if (decl.is_const) PUTS(" :const");
+        PUTS(",");
         USENAMEDPRINTER("ast", decl.name);
-
-        PUTS("type: ");
+        PUTS(",");
         USENAMEDPRINTER("ast", decl.type);
-
-        PUTS("value: ");
+        PUTS(",");
         USENAMEDPRINTER("ast", decl.value);
-
-        PUTS(P_INDENT_OUT);
+        PUTS(")");
       }),
+
       (astOp, op, {
-        PUTS("Op '");
-        char s[countof(op.symLiteral) + 1] = {};
-        memcpy(s, op.symLiteral, sizeof(op.symLiteral));
-        USENAMEDPRINTER("cstr", (char *)s);
-        PUTS("'\n" P_INDENT_IN);
-
-        PUTS("l: ");
+        PUTS("(Op \"");
+        let s = (char[5]){};
+        let l = op.symLiteral[sizeof(u32) - 1] ? 4 : strlen(op.symLiteral);
+        memcpy(s, op.symLiteral, l);
+        USENAMEDPRINTER("cstr", s + 0);
+        PUTS("\","); // was: PUTS("\" ");
         USENAMEDPRINTER("ast", op.left);
-
-        PUTS("r: ");
+        PUTS(","); // was: PUTS(" ");
         USENAMEDPRINTER("ast", op.right);
+        PUTS(")");
+      }),
 
-        PUTS(P_INDENT_OUT);
-      }),
       (astPBlock, block, {
-        PUTS("PBlock\n" P_INDENT_IN);
+        PUTS("(PBlock");
         foreach (let stmt, vlap(sentList_vla(block.stmts))) {
+          PUTS(",");
           USENAMEDPRINTER("ast", stmt);
         }
-        PUTS(P_INDENT_OUT);
+        PUTS(")");
       }),
+
       (astBBlock, block, {
-        PUTS("BBlock\n" P_INDENT_IN);
+        PUTS("(BBlock");
         foreach (let stmt, vlap(sentList_vla(block.stmts))) {
+          PUTS(",");
           USENAMEDPRINTER("ast", stmt);
         }
-        PUTS(P_INDENT_OUT);
+        PUTS(")");
       }),
+
       (astABlock, block, {
-        PUTS("ABlock\n" P_INDENT_IN);
+        PUTS("(ABlock");
         foreach (let stmt, vlap(sentList_vla(block.items))) {
+          PUTS(",");
           USENAMEDPRINTER("ast", stmt);
         }
-        PUTS(P_INDENT_OUT);
+        PUTS(")");
       }),
-      (astEmptyStatement, _, { PUTS("Empty"); }),
+
+      (astEmptyStatement, _, {
+        PUTS("(Empty)");
+      }),
+
       (default, unreachable())
   );
 }
