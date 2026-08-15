@@ -32,5 +32,3 @@ c~point~ a."+"(a,b);
 d~point~ a:"+" b ;
 e~point~ a + b;
 
-a:b:c();
-

@@ -6,8 +6,9 @@ module.exports = grammar({
   ],
   conflicts: $ => [
     [$._expression, $.decl],
-    [$.op, $._expression_list ],
-    [$.op],
+    [$._any_expression, $.op],
+    [$._any_expression, $.nblock],
+    [$.nblock],
   ],
   precedences: $ => [
     [
@@ -17,7 +18,7 @@ module.exports = grammar({
       'add',
       'bit',
       'cmp',
-      'comma',       
+      'nblock',      
       'call',        // loose call
       'pipe',
       'decl',
@@ -26,11 +27,17 @@ module.exports = grammar({
   ],
   rules: {
     program: $ => repeat($._statement),
+    empty_statement: $=>';',
     _statement: $ => choice(
-      seq($._expression, ';'),
-      // $.empty_statement
+      seq($._any_expression, ';'),
+      $.empty_statement
     ),
-    // empty_statement: $ => ';',
+
+    _any_expression: $ => choice(
+      $._expression,
+      $.nblock
+    ),
+
     _expression: $ => choice(
       $.id,
       $.string,
@@ -41,7 +48,9 @@ module.exports = grammar({
     ),
     op: $ => choice(
       prec.left('block-call', seq(field('left', $._expression), field('right', $._block_immediate))),
-      prec.left('call', seq(field('left', $._expression), field('right', $._expression))), 
+      
+      prec.left('call', seq(field('left', $._expression), field('right', $._any_expression))), 
+      
       prec.left('access', seq(field('left', $._expression), field('operator', '.'), field('right', $._expression))),
       prec.left('access', seq(field('left', $._expression), field('operator', ':'), field('right', $._expression))),
       prec.left('mul', seq(field('left', $._expression), field('operator', choice('*', '/', '%')), field('right', $._expression))),
@@ -50,7 +59,6 @@ module.exports = grammar({
       prec.left('cmp', seq(field('left', $._expression), field('operator', choice('<', '>', '<=', '>=', '==', '!=')), field('right', $._expression))),
       prec.left('pipe', seq(field('left', $._expression), field('operator', '|>'), field('right', $._expression))),
       prec.right('assign', seq(field('left', $._expression), field('operator', '='), field('right', $._expression))),
-      prec.right('comma', seq(field('left', $._expression), field('operator', ','), field('right', $._expression))),
     ),
     decl: $ => prec.right('decl', choice(
       prec.dynamic(3, seq(
@@ -74,9 +82,17 @@ module.exports = grammar({
     )),
 
     _block: $ => choice($.bblock, $.ablock, $.pblock),
-    bblock: $ => seq('{', repeat($._statement), '}'),
-    ablock: $ => seq('[', optional($._expression_list), ']'),
-    pblock: $ => seq('(', optional($._expression_list), ')'),
+    
+    _comma_list: $ =>  seq($._expression, repeat(seq(',', $._expression)), optional(',')),
+    bblock: $ => prec(2,seq('{', repeat($._statement), '}')),
+    ablock: $ => prec(2,seq('[',optional($._comma_list),']')),
+    pblock: $ => prec(2,seq('(',optional($._comma_list),')')),
+    
+    _nblock_continuation: $ => prec('nblock', seq(',', $._expression)),
+
+    nblock: $ => prec('nblock', 
+      seq($._expression, repeat1($._nblock_continuation))
+    ),
 
     _block_immediate: $ => choice(
       $._bblock_immediate,
@@ -84,17 +100,13 @@ module.exports = grammar({
       $._pblock_immediate,
     ),
     
-    // Explicit hidden rules for immediate blocks to prevent 'alias' from swallowing children
     _bblock_immediate: $ => alias($.__bblock_immediate, $.bblock),
-    __bblock_immediate: $ => seq(token.immediate('{'), repeat($._statement), '}'),
-    
     _ablock_immediate: $ => alias($.__ablock_immediate, $.ablock),
-    __ablock_immediate: $ => seq(token.immediate('['), optional($._expression_list), ']'),
-    
     _pblock_immediate: $ => alias($.__pblock_immediate, $.pblock),
-    __pblock_immediate: $ => seq(token.immediate('('), optional($._expression_list), ')'),
+    __bblock_immediate: $ => seq( token.immediate('{'), optional(repeat($._statement)), '}'),
+    __ablock_immediate: $ => seq( token.immediate('['), optional($._comma_list),']'),
+    __pblock_immediate: $ => seq( token.immediate('('), optional($._comma_list),')'),
 
-    _expression_list: $ => seq($._expression, repeat(seq(',', $._expression)), optional(',')),
     id: $ => /@?[a-zA-Z_][a-zA-Z0-9_]*/,
     string: $ => /"([^"\\]|\\.)*"/,
     number: $ => choice(
@@ -104,14 +116,9 @@ module.exports = grammar({
       /0b[01]+/
     ),
     
-    // Comments
     comment: $ => token(choice(
       seq('//', /.*/),
-      seq(
-        '/*',
-        /[^*]*\*+([^/*][^*]*\*+)*/,
-        '/'
-      )
+      seq( '/*', /[^*]*\*+([^/*][^*]*\*+)*/, '/')
     ))
   }
 });

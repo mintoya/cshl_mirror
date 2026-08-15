@@ -5,39 +5,6 @@
 
 extern const TSLanguage *tree_sitter_cshl(void);
 
-static bool ts_op_is_comma(const u8 *source, TSNode node) {
-  TSNode op_node = ts_node_child_by_field_name(node, "operator", 8);
-  if (ts_node_is_null(op_node)) return false;
-  u32 start = ts_node_start_byte(op_node);
-  u32 len = ts_node_end_byte(op_node) - start;
-  return len == 1 && source[start] == ',';
-}
-static u32 ts_comma_count(const u8 *source, TSNode node) {
-  const char *type = ts_node_type(node);
-  if (!strcmp(type, "op") && ts_op_is_comma(source, node)) {
-    TSNode left = ts_node_child_by_field_name(node, "left", 4);
-    TSNode right = ts_node_child_by_field_name(node, "right", 5);
-    u32 n = 0;
-    n += ts_node_is_null(left) ? 0 : 1;
-    n += ts_node_is_null(right) ? ts_comma_count(source, right) : (!strcmp(ts_node_type(right), "op") && ts_op_is_comma(source, right) ? ts_comma_count(source, right) : 1);
-    return n;
-  }
-  return 1;
-}
-
-static ast *ts_to_ast(allocfn allocator, const u8 *source, TSNode ts_node);
-static u32 ts_comma_fill(allocfn allocator, const u8 *source, TSNode node, ptrof(ast) * rp, u32 idx) {
-  const char *type = ts_node_type(node);
-  if (!strcmp(type, "op") && ts_op_is_comma(source, node)) {
-    TSNode left = ts_node_child_by_field_name(node, "left", 4);
-    TSNode right = ts_node_child_by_field_name(node, "right", 5);
-    if (!ts_node_is_null(left)) rp[idx++] = ts_to_ast(allocator, (u8 *)source, left);
-    if (!ts_node_is_null(right)) idx = ts_comma_fill(allocator, source, right, rp, idx);
-    return idx;
-  }
-  rp[idx++] = ts_to_ast(allocator, (u8 *)source, node);
-  return idx;
-}
 static ast *ts_to_ast(allocfn allocator, const u8 *source, TSNode ts_node) {
   if (ts_node_is_null(ts_node)) return nullptr;
 
@@ -73,15 +40,6 @@ static ast *ts_to_ast(allocfn allocator, const u8 *source, TSNode ts_node) {
 
     return avalue(allocator, (ast)tu_of(astDecl, decl));
   } else if (!strcmp(type, "op")) {
-    if (ts_op_is_comma((u8 *)source, ts_node)) {
-      u32 count = ts_comma_count((u8 *)source, ts_node);
-      u8 *loc = (u8 *)(source + ts_node_start_byte(ts_node));
-      let rp = *acreate(allocator, arrof(ptrof(ast), count + 2));
-      rp[0] = avalue(allocator, (ast)tu_of(astPBlock, ((astPBlock){loc, rp + 1})));
-      u32 actual_count = ts_comma_fill(allocator, (const u8 *)source, ts_node, rp + 1, 0);
-      rp[actual_count + 1] = 0;
-      return rp[0];
-    }
 
     TSNode left_node = ts_node_child_by_field_name(ts_node, "left", 4);
     TSNode right_node = ts_node_child_by_field_name(ts_node, "right", 5);
@@ -100,17 +58,17 @@ static ast *ts_to_ast(allocfn allocator, const u8 *source, TSNode ts_node) {
     } else opNode->astOp.number_rep = ((union {char s[sizeof(u32)] ; u32 u ; }){"()"}).u;
 
     return opNode;
-  } else if (!strcmp(type, "program") || !strcmp(type, "pblock") || !strcmp(type, "bblock") || !strcmp(type, "ablock")) {
+  } else if (!strcmp(type, "program") || !strcmp(type, "pblock") || !strcmp(type, "bblock") || !strcmp(type, "ablock") || !strcmp(type, "nblock")) {
     u32 count = ts_node_named_child_count(ts_node);
     u8 *loc = (u8 *)(source + ts_node_start_byte(ts_node));
 
     let rp = *acreate(allocator, arrof(ptrof(ast), count + 3));
 
-    if (!strcmp(type, "pblock"))
-      rp[0] = avalue(allocator, (ast)tu_of(astPBlock, ((astPBlock){loc, rp + 1})));
+    if (!strcmp(type, "bblock"))
+      rp[0] = avalue(allocator, (ast)tu_of(astBBlock, {loc, rp + 1}));
     else if (!strcmp(type, "ablock"))
-      rp[0] = avalue(allocator, (ast)tu_of(astABlock, ((astABlock){loc, rp + 1})));
-    else rp[0] = avalue(allocator, (ast)tu_of(astBBlock, ((astBBlock){loc, rp + 1})));
+      rp[0] = avalue(allocator, (ast)tu_of(astABlock, {loc, rp + 1}));
+    else rp[0] = avalue(allocator, (ast)tu_of(astPBlock, {loc, rp + 1}));
 
     u32 actual_count = 0;
     for (u32 i = 0; i < count; i++) {

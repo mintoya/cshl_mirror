@@ -309,7 +309,7 @@ superscope *ss_init(allocfn allocator) {
     char *name;
     builtin_id id;
   } builtins[] = {
-      {"fn", builtin_fn},
+      {"@fn", builtin_fn},
       {"@this", builtin__this},
       {"struct", builtin_struct},
       {"@at", builtin_at},

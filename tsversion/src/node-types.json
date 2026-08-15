@@ -63,7 +63,15 @@
           "named": true
         },
         {
+          "type": "empty_statement",
+          "named": true
+        },
+        {
           "type": "id",
+          "named": true
+        },
+        {
+          "type": "nblock",
           "named": true
         },
         {
@@ -196,6 +204,54 @@
     }
   },
   {
+    "type": "empty_statement",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "nblock",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "ablock",
+          "named": true
+        },
+        {
+          "type": "bblock",
+          "named": true
+        },
+        {
+          "type": "decl",
+          "named": true
+        },
+        {
+          "type": "id",
+          "named": true
+        },
+        {
+          "type": "number",
+          "named": true
+        },
+        {
+          "type": "op",
+          "named": true
+        },
+        {
+          "type": "pblock",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "number",
     "named": true,
     "fields": {}
@@ -260,10 +316,6 @@
           },
           {
             "type": "+",
-            "named": false
-          },
-          {
-            "type": ",",
             "named": false
           },
           {
@@ -361,6 +413,10 @@
             "named": true
           },
           {
+            "type": "nblock",
+            "named": true
+          },
+          {
             "type": "number",
             "named": true
           },
@@ -445,7 +501,15 @@
           "named": true
         },
         {
+          "type": "empty_statement",
+          "named": true
+        },
+        {
           "type": "id",
+          "named": true
+        },
+        {
+          "type": "nblock",
           "named": true
         },
         {
