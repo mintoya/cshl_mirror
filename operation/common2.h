@@ -225,7 +225,6 @@ struct superscope {
 // wrapper for slice(astptr)
 struct function {
   slice(astptr) _;
-  r_func main_t;
   moxmap(sentList_t(Type), u32) specs;
 };
 i8 cmpstl_type(const void *a, const void *b) {
@@ -258,17 +257,6 @@ static inline bool Type_compatible(superscope *ss, Type a, Type b) {
   // const stripping and such
   Type *ss_getType(superscope * b, Type t);
   return !Type_cmp(*ss_getType(ss, a), *ss_getType(ss, b));
-}
-static u32 function_trySpec(superscope *ss, scope *s, function *fn, sentList_t(Type) typeList) {
-  if_decl (let m, moxmap_get(function_initSpecs(ss->alloc, fn), typeList)) return *m;
-  let l = sentList_vla(typeList);
-  assertMessage(countof(*l) == fn->_.len, "function called with too many args");
-  let gt = fn->main_t;
-  TODO(
-      "create a temp scope"
-      "evaluat first arg with the type"
-      "evaluaate consecutive args with the bound id"
-  );
 }
 //}
 
@@ -555,3 +543,43 @@ typed_value temporary_interpret_ast(superscope *ss, scope *s, ast *a) {
 
 typed_value temporary_interpret(superscope *, scope *, ir) { TODO(); }
 typed_value interpret(superscope *, scope *) { TODO(); }
+
+static u32 function_trySpec(superscope *ss, scope *s, function *fn, sentList_t(Type) typeList) {
+
+  if_decl (let m, moxmap_get(function_initSpecs(ss->alloc, fn), typeList)) return *m;
+  let l = sentList_vla(typeList);
+  if (countof * l != fn->_.len - 2) error_print(nullptr, "function called with too many args");
+
+  {
+    let tpe_evaluated = msList_init(ss->alloc, Type);
+    defer { msList_deInit(ss->alloc, tpe_evaluated); };
+    let temp = scope_inferior(ss, s);
+    defer { scope_destroy(ss, temp); };
+
+    foreach (let idx, range(0, countof * l)) {
+      ast *inner = fn->_.ptr[idx];
+      Type arg_type = (*l)[idx];
+      if (tu_is(c_any, arg_type))
+        error_print(nullptr, "any is not allowed as an argument inside of a call");
+      iflet_tu (let dcl, astDecl, *inner) {
+        Type *param_type = &scope_find_origional(ss, temp, lower(ss, temp, inner))->t;
+        if (tu_is(c_any, *param_type))
+          msList_push(ss->alloc, tpe_evaluated, (*param_type = arg_type));
+        else msList_push(ss->alloc, tpe_evaluated, (*param_type));
+      } else {
+        Type param_type = temporary_interpret_ast(ss, temp, inner).t;
+        if (tu_is(c_any, param_type))
+          msList_push(ss->alloc, tpe_evaluated, arg_type);
+        else msList_push(ss->alloc, tpe_evaluated, param_type);
+      }
+    }
+    msList_push(ss->alloc, tpe_evaluated, {});
+    if (cmpstl_type(&tpe_evaluated, &typeList))
+      error_print(nullptr, "function could not be resolved");
+  }
+  TODO(
+      "create a temp scope"
+      "evaluat first arg with the type"
+      "evaluaate consecutive args with the bound id"
+  );
+}

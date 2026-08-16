@@ -8,7 +8,6 @@
 #include "operation/common2.h"
 #include "operation/int.h"
 #include "operation/lower.h"
-#include "type.h"
 #include "wheels/fptr.h"
 #include "wheels/print/print_pre.h"
 #include <wheels/allocators/arenaAllocator.h>

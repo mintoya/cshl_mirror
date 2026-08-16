@@ -1,0 +1,13 @@
+#!/bin/nu
+let deps = "deps" | path expand 
+let args = { CompileFlags : {
+  Add:[
+    "-x","c",
+    "-std=c2y",
+    "-fdefer-ts",
+    "-I",$deps
+  ]
+}};
+$args |
+to yaml | 
+print $in
