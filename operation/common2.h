@@ -225,6 +225,7 @@ struct superscope {
 // wrapper for slice(astptr)
 struct function {
   slice(astptr) _;
+  r_func main_t;
   moxmap(sentList_t(Type), u32) specs;
 };
 i8 cmpstl_type(const void *a, const void *b) {
@@ -238,12 +239,8 @@ i8 cmpstl_type(const void *a, const void *b) {
       return dif;
   return 0;
 }
-static inline function function_init(allocfn alloc, slice(astptr) _) {
-  function res = {
-      ._ = _,
-      .specs = moxmap_init(alloc, sentList_t(Type), moxmap_vt(res.specs), cmpstl_type)
-  };
-  return res;
+static inline itypeof(function, specs) function_initSpecs(allocfn alloc, function *f) {
+  return f->specs = f->specs ?: moxmap_init(alloc, sentList_t(Type), moxmap_vt(f->specs), cmpstl_type);
 }
 static inline slice(astptr) function_args(function in) {
   assertMessage(in._.len >= 2);
@@ -256,6 +253,22 @@ static inline astptr *function_return(function in) {
 static inline astptr *function_body(function in) {
   assertMessage(in._.len >= 2);
   return &in._.ptr[in._.len - 1];
+}
+static inline bool Type_compatible(superscope *ss, Type a, Type b) {
+  // const stripping and such
+  Type *ss_getType(superscope * b, Type t);
+  return !Type_cmp(*ss_getType(ss, a), *ss_getType(ss, b));
+}
+static u32 function_trySpec(superscope *ss, scope *s, function *fn, sentList_t(Type) typeList) {
+  if_decl (let m, moxmap_get(function_initSpecs(ss->alloc, fn), typeList)) return *m;
+  let l = sentList_vla(typeList);
+  assertMessage(countof(*l) == fn->_.len, "function called with too many args");
+  let gt = fn->main_t;
+  TODO(
+      "create a temp scope"
+      "evaluat first arg with the type"
+      "evaluaate consecutive args with the bound id"
+  );
 }
 //}
 
