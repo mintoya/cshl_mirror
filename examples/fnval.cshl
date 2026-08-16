@@ -1,0 +1,11 @@
+ast ~~ @ast();
+any ~~ @any();
+fn ~~ @fn((a~ast,r~ast),any,
+  return @fn((b~ast),any,return @qot @fn(
+    @uqot(a),
+    @uqot(r),
+    @uqot(b)
+)));
+
+add2 ~~ fn (a~any,b~any),any 
+  return a + b;
