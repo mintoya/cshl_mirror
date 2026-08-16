@@ -10,4 +10,4 @@ let args = { CompileFlags : {
 }};
 $args |
 to yaml | 
-print $in
+save -f .clangd
