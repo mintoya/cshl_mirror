@@ -7,8 +7,6 @@
 #include "wheels/sList.h"
 #include "wheels/smap.h"
 #include <assert.h>
-#include <string.h>
-
 typedef enum enum_op {
   enop_call,
   enop_dot,

@@ -80,12 +80,12 @@ typedef struct typed_value {
   value_store v;
 } typed_value;
 typedef struct r_struct_item {
+  Type t;
   fptr name;
-  typed_value init; // type in here
-  usize alignment, offset;
+  usize offset, alignment;
 } r_struct_item;
 typedef struct r_bitf_item {
-  typed_value init; // type in here
+  Type t;
   fptr name;
   usize width;
 } r_bitf_item;
@@ -133,7 +133,7 @@ static inline usize Type_rsize(Type t) {
       (r_struct, s, ({
          usize sz = 0;
          foreach (let i, mList_iter(s))
-           sz = MAX$(i.offset + Type_rsize(i.init.t), sz);
+           sz = MAX$(i.offset + Type_rsize(i.t), sz);
          lineup(sz, Type_ralig(t));
        })),
       (r_func, _, (usize)0),
@@ -239,7 +239,7 @@ i8 Type_cmp_ex(Type a, Type b, mList(type_cmp_pair) followed) {
         foreach (let i, range(0, la)) {
           let a = mList_arr(ai)[i];
           let b = mList_arr(bi)[i];
-          if_decl (let cmp, Type_cmp_ex(a.init.t, b.init.t, followed))
+          if_decl (let cmp, Type_cmp_ex(a.t, b.t, followed))
             return cmp;
           if_decl (let cmp, fptr_cmp(a.name, b.name))
             return cmp;
@@ -256,7 +256,7 @@ i8 Type_cmp_ex(Type a, Type b, mList(type_cmp_pair) followed) {
         foreach (let i, range(0, la)) {
           let a = mList_arr(ai)[i];
           let b = mList_arr(bi)[i];
-          if_decl (let cmp, Type_cmp_ex(a.init.t, b.init.t, followed))
+          if_decl (let cmp, Type_cmp_ex(a.t, b.t, followed))
             return cmp;
           if_decl (let cmp, fptr_cmp(a.name, b.name))
             return cmp;
@@ -277,52 +277,6 @@ i8 Type_cmp(Type a, Type b) {
 
 i8 Type_cmp_hash(const void *a, const void *b) { return Type_cmp(*(Type *)a, *(Type *)b); }
 
-static u64 Type_hash_ex(Type a, bool follow) {
-  tu_match_void(
-      a,
-      (builtin, b, return b + 6),
-      (r_void, _, return 0),
-      (c_int, _, return 1),
-      (c_type, _, return 2),
-      (c_ast, _, return 3),
-      (r_ctime, _, return 4), // TODO
-      (c_any, _, return 5),
-      (r_uint, v, return (u64)v ^ 0x1000),
-      (r_sint, v, return (u64)v ^ 0x2000),
-      (r_ptr, p, return follow ? Type_hash_ex(*p, false) * 31 ^ 0x3000 : 0x3000),
-      (r_decor, p, return follow ? Type_hash_ex(*p.t, false) * 31 ^ 0x3000 : 0x3000),
-      (r_tag, v, return fptr_hash(v.name) ^ 0x4000),
-      (r_arr, arr, return (Type_hash_ex(*arr.t, follow) * 31) ^ arr.count ^ 0x5000),
-      (r_struct, l, {
-        u64 h = 0x5000;
-        foreach (let item, mList_iter(l)) {
-          h = (h * 31) ^ Type_hash_ex(item.init.t, follow);
-          h = (h * 31) ^ fptr_hash(item.name);
-          h = (h * 31) ^ item.alignment;
-          h = (h * 31) ^ item.offset;
-        }
-        return h;
-      }),
-      (r_bitfield, l, {
-        u64 h = 0x6000;
-        foreach (let item, mList_iter(l)) {
-          h = (h * 31) ^ Type_hash_ex(item.init.t, follow);
-          h = (h * 31) ^ fptr_hash(item.name);
-          h = (h * 31) ^ item.width;
-        }
-        return h;
-      }),
-      (r_func, l, {
-        u64 h = 0x7000;
-        foreach (let t, mList_iter(l))
-          h = (h * 31) ^ Type_hash_ex(t, follow);
-        return h;
-      })
-  );
-}
-
-u64 Type_hash(Type a) { return Type_hash_ex(a, true); }
-u64 Type_hash_hash(const void *t) { return Type_hash(*(Type *)t); }
 bool Type_is_comptime(Type t) {
   return tu_match_exp(
       t,
@@ -453,7 +407,7 @@ void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_co
           PUTS("@");
           USETYPEPRINTER(usize, type->offset);
           PUTS(":");
-          typePrinterWorker_recurse(type->init.t, visitedmap, _ctx);
+          typePrinterWorker_recurse(type->t, visitedmap, _ctx);
         }
       }),
       (r_bitfield, st, {
@@ -467,7 +421,7 @@ void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_co
           PUTS("|");
           USETYPEPRINTER(usize, type->width);
           PUTS(":");
-          typePrinterWorker_recurse(type->init.t, visitedmap, _ctx);
+          typePrinterWorker_recurse(type->t, visitedmap, _ctx);
         }
       }),
       (r_func, fn, {
@@ -527,7 +481,7 @@ test_fn(type_ptr_equality) {
           .alignment = 8,
           .name = fp("self"),
           .offset = 0,
-          .init = (typed_value){tu_of(r_ptr, &v)},
+          .t = tu_of(r_ptr, &v),
       }
   );
   test_assert(!Type_cmp(v, v));
@@ -538,7 +492,6 @@ test_fn(type_tag_nominal_equality) {
   let a = (Type)tu_of(r_tag, {.name = fp("Meters"), .t = &u32t});
   let b = (Type)tu_of(r_tag, {.name = fp("Meters"), .t = &u64t});
   test_assert(!Type_cmp(a, b));
-  test_assert(Type_hash(a) == Type_hash(b));
 }
 test_fn(type_tag_distinct_names) {
   let u32t = (Type)tu_of(r_uint, (u16)32);
@@ -560,14 +513,14 @@ test_fn(type_struct_hash_consistency) {
     mList_deinit(tu_catch(r_struct, a));
     mList_deinit(tu_catch(r_struct, b));
   };
-  let u32t = (typed_value){tu_of(r_uint, (u16)32)};
+  let u32t = (Type)tu_of(r_uint, (u16)32);
   mList_push(
       tu_catch(r_struct, a),
       {
           .alignment = 4,
           .name = fp("x"),
           .offset = 0,
-          .init = u32t,
+          .t = u32t,
       }
   );
   mList_push(
@@ -576,11 +529,10 @@ test_fn(type_struct_hash_consistency) {
           .alignment = 4,
           .name = fp("x"),
           .offset = 0,
-          .init = u32t,
+          .t = u32t,
       }
   );
   test_assert(!Type_cmp(a, b));
-  test_assert(Type_hash(a) == Type_hash(b));
 }
 test_fn(type_struct_field_order_matters) {
   let a = (Type)tu_of(r_struct, mList_init(allocator, r_struct_item));
@@ -589,12 +541,12 @@ test_fn(type_struct_field_order_matters) {
     mList_deinit(tu_catch(r_struct, a));
     mList_deinit(tu_catch(r_struct, b));
   };
-  let u32t = (typed_value){tu_of(r_uint, (u16)32)};
-  let u8t = (typed_value){tu_of(r_uint, (u16)8)};
-  mList_push(tu_catch(r_struct, a), {.alignment = 4, .name = fp("x"), .offset = 0, .init = u32t});
-  mList_push(tu_catch(r_struct, a), {.alignment = 1, .name = fp("y"), .offset = 4, .init = u8t});
-  mList_push(tu_catch(r_struct, b), {.alignment = 1, .name = fp("y"), .offset = 4, .init = u8t});
-  mList_push(tu_catch(r_struct, b), {.alignment = 4, .name = fp("x"), .offset = 0, .init = u32t});
+  let u32t = (Type)tu_of(r_uint, (u16)32);
+  let u8t = (Type)tu_of(r_uint, (u16)8);
+  mList_push(tu_catch(r_struct, a), {.alignment = 4, .name = fp("x"), .offset = 0, .t = u32t});
+  mList_push(tu_catch(r_struct, a), {.alignment = 1, .name = fp("y"), .offset = 4, .t = u8t});
+  mList_push(tu_catch(r_struct, b), {.alignment = 1, .name = fp("y"), .offset = 4, .t = u8t});
+  mList_push(tu_catch(r_struct, b), {.alignment = 4, .name = fp("x"), .offset = 0, .t = u32t});
   test_assert(Type_cmp(a, b));
 }
 test_fn(type_func_equality) {

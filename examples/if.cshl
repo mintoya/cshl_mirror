@@ -6,7 +6,7 @@ a ~= 1;
 ast ~~ @ast();
 any ~~ @any();
 
-if ~~ fn((a~ ast), ast, {
+if ~~ @fn((a~ ast), ast, {
   // ascessing inactive field of an ast gives you an empty ast, which is falsy
   // for string literal ascess, it returns the node itself if the node is an operation, 
   // where that operation is the thing in quotes

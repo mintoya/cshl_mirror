@@ -16,6 +16,39 @@ extern __attribute__((noreturn)) void error_at(u8 *location, fptr message);
 static inline __attribute__((noreturn)) void error_at_sc8(u8 *loc, slice(c8) message) { error_at(loc, (fptr){message.len, (u8 *)message.ptr}); };
 static inline __attribute__((noreturn)) void error_at_str(u8 *loc, char *messag) { error_at(loc, fptr_CSP(messag)); };
 
+#define error_at(loc, message)         \
+  ({                                   \
+    let _msg = message;                \
+    let _loc = loc;                    \
+    u8 *_gloc = match_type(            \
+        _loc,                          \
+        (char *, l, (u8 *)l),          \
+        (u8 *, l, l),                  \
+        (typeof(nullptr), l, (u8 *)0), \
+        (ast, l, ast_loc(l))           \
+    );                                 \
+    _Generic(                          \
+        _msg,                          \
+        char *: (error_at_str),        \
+        slice(c8): (error_at_sc8),     \
+        default: (error_at)            \
+    )(_gloc, _msg);                    \
+  })
+#define error_print(loc, msg, ...)                        \
+  ({                                                      \
+    error_at_sc8(                                         \
+        match_type(                                       \
+            loc,                                          \
+            (char *, l, (u8 *)l),                         \
+            (u8 *, l, l),                                 \
+            (typeof(nullptr), l, (u8 *)0),                \
+            (ast, l, ast_loc(l)),                         \
+            (ast *, l, l ? ast_loc(*l) : nullptr)         \
+        ),                                                \
+        snprint(stdAlloc, msg __VA_OPT__(, ) __VA_ARGS__) \
+    );                                                    \
+  })
+
 typedef struct {
   slice(u8) str;
 } id_str;
@@ -51,16 +84,6 @@ typePrinter(id_str) {
     }
   }
 }
-#define error_at(loc, message)     \
-  ({                               \
-    var_ _msg = message;           \
-    _Generic(                      \
-        _msg,                      \
-        char *: (error_at_str),    \
-        slice(c8): (error_at_sc8), \
-        default: (error_at)        \
-    )(loc, _msg);                  \
-  })
 
 //
 // ast {
@@ -236,28 +259,30 @@ typePrinter("ast", ast *) {
 // }
 //
 
-extern ast *parse_source(allocfn allocator, fptr input);
-static inline __attribute__((noreturn)) void error_ast(ast a, slice(c8) message) {
-  tu_match_void(
+static inline u8 *ast_loc(ast a) {
+  return tu_match_exp(
       a,
-      (astId, s, error_at(s.ptr, message);),
-      (astNumber, s, error_at(s.ptr, message);),
-      (astString, s, error_at(s.ptr, message);),
+      (astId, s, s.ptr),
+      (astNumber, s, s.ptr),
+      (astString, s, s.ptr),
 
-      (astDecl, d, error_ast(d.name[0], message);),
-      (astOp, o, error_ast(o.right[0], message);),
+      (astDecl, d, ast_loc(d.name[0])),
+      (astOp, o, ast_loc(o.right[0])),
 
-      (astPBlock, b, error_at(b.loc, message);),
-      (astBBlock, b, error_at(b.loc, message);),
-      (astABlock, b, error_at(b.loc, message);),
-
-      (default, error_at(nullptr, message);),
+      (astPBlock, b, b.loc),
+      (astBBlock, b, b.loc),
+      (astABlock, b, b.loc),
+      (default, (u8 *)nullptr),
   );
+}
+static inline __attribute__((noreturn)) void error_ast(ast a, slice(c8) message) {
+  error_at(a, message);
   unreachable();
 }
+extern ast *parse_source(allocfn allocator, fptr input);
 
 static inline slice(u8) readFileAlloc(allocfn allocator, const char *filename) {
-  var_ fileptr = fopen(filename, "rb");
+  let fileptr = fopen(filename, "rb");
   assertMessage(fileptr);
   defer { fclose(fileptr); };
 
@@ -265,10 +290,10 @@ static inline slice(u8) readFileAlloc(allocfn allocator, const char *filename) {
   usize len = ftell(fileptr);
   fseek(fileptr, 0, SEEK_SET);
 
-  var_ resp = acreate(allocator, u8[len ?: 1]);
+  let resp = acreate(allocator, u8[len ?: 1]);
   usize len2 = fread(resp, sizeof(u8), len, fileptr);
   assertMessage(len2 == len);
-  return (slice(u8))slice_stat(*resp);
+  return slice_stat(slice(u8), *resp);
 }
 static struct { // opNumbers
   u32

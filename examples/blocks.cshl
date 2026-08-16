@@ -3,4 +3,5 @@ x {a;b;c};
 x [a,b,c];
 x (a,b,c);
 
-fn (nargs~i32 , args~@ptr(i8)) , void;
+fn (nargs~i32 , args~@ptr(i8)),void;
+fn (nargs~i32 , args~@ptr(i8)),void {};

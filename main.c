@@ -15,7 +15,6 @@
 #include <wheels/allocators/debugallocator.h>
 #include <wheels/mytypes.h>
 
-
 // { util
 [[gnu::constructor]] void initOpNumbers() {
   typedef union {
@@ -24,7 +23,7 @@
   } opS;
   opNumbers.call = /* */ ((opS){"()"}).n;
   opNumbers.dot = /*  */ ((opS){"."}).n;
-  opNumbers.colon = /* */ ((opS){":"}).n;
+  opNumbers.colon = /**/ ((opS){":"}).n;
   opNumbers.mul = /*  */ ((opS){"*"}).n;
   opNumbers.div = /*  */ ((opS){"/"}).n;
   opNumbers.mod = /*  */ ((opS){"%"}).n;
