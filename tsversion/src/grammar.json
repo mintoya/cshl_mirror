@@ -36,17 +36,21 @@
       ]
     },
     "_any_expression": {
-      "type": "CHOICE",
-      "members": [
-        {
-          "type": "SYMBOL",
-          "name": "_expression"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "nblock"
-        }
-      ]
+      "type": "PREC_RIGHT",
+      "value": "call",
+      "content": {
+        "type": "CHOICE",
+        "members": [
+          {
+            "type": "SYMBOL",
+            "name": "_expression"
+          },
+          {
+            "type": "SYMBOL",
+            "name": "nblock"
+          }
+        ]
+      }
     },
     "_expression": {
       "type": "CHOICE",
@@ -106,7 +110,7 @@
           }
         },
         {
-          "type": "PREC_LEFT",
+          "type": "PREC_RIGHT",
           "value": "call",
           "content": {
             "type": "SEQ",
@@ -1023,14 +1027,6 @@
     [
       "_expression",
       "decl"
-    ],
-    [
-      "_any_expression",
-      "op"
-    ],
-    [
-      "_any_expression",
-      "nblock"
     ],
     [
       "nblock"

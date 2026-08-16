@@ -15,7 +15,7 @@ if ~~ @fn((a~ ast), ast, {
   cond ~ast~ call.left;
   rest ~ast~ call.right; // not putting ast in the expected type causes an evaluation of the ast argument
 
-  @if(rest."()", {
+  @if((rest."()".left == "else"), {
     then ~ast~ rest.left;
     else ~ast~ rest.right."()";
 

@@ -1,6 +1,6 @@
 a~~ 1;
-c~~fn((arg ~ @typeof(a)) , @typeof(arg), 
+c~~@fn((arg ~ @typeof(a)) , @typeof(arg), 
   return a * 2);
-@unique() ~ typeof(c a) = c a;
+d ~ typeof(c a) = c a;
 b = c b;
 b = c(b);
