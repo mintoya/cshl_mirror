@@ -75,6 +75,7 @@ typedef union {
   arrstype(c_ast) c_ast;
   arrstype(c_type) c_type;
 } value_store;
+
 typedef struct typed_value {
   Type t;
   value_store v;

@@ -1,6 +1,7 @@
 #pragma once
 #include "../type.h"
 #include "wheels/allocators/cballocator.h"
+#include "wheels/fptr.h"
 #include "wheels/macros.h"
 #include "wheels/mytypes.h"
 #include "wheels/print/print_pre.h"
@@ -122,8 +123,8 @@ tu_def(
     (ir_continue /**/, struct {}),
 
     // scope
-    (ir_if /*      */, struct { u32 cnd; typeof(scope*) t, f; }),
-    (ir_while /*   */, struct { u32 cnd; typeof(scope*) t; }),
+    (ir_if /*      */, struct { u32 cnd; typeof(scope *) t, f; }),
+    (ir_while /*   */, struct { u32 cnd; typeof(scope *) t; }),
     (ir_block /*   */, scope *),
 );
 
@@ -213,7 +214,8 @@ struct superscope {
   allocfn alloc;
 
   moxmap(void *, usize) pointers;
-  mxmap(Type, Type *) types;
+  moxmap(Type, Type *) types;
+  moxmap(Type, msList(value_store)) tdata;
   msList(function) all_functions;
   scope *outermost;
   msList(Type *) thisstack;
@@ -223,7 +225,26 @@ struct superscope {
 // wrapper for slice(astptr)
 struct function {
   slice(astptr) _;
+  moxmap(sentList_t(Type), u32) specs;
 };
+i8 cmpstl_type(const void *a, const void *b) {
+  let ap = *(sentList_t(Type) *)a;
+  let bp = *(sentList_t(Type) *)b;
+  let al = sentList_len(ap);
+  let bl = sentList_len(ap);
+  if_decl (let dif, (int)al - (int)bl) return dif;
+  foreach (let i, range(0, al))
+    if_decl (let dif, Type_cmp(ap[i], bp[i]))
+      return dif;
+  return 0;
+}
+static inline function function_init(allocfn alloc, slice(astptr) _) {
+  function res = {
+      ._ = _,
+      .specs = moxmap_init(alloc, sentList_t(Type), moxmap_vt(res.specs), cmpstl_type)
+  };
+  return res;
+}
 static inline slice(astptr) function_args(function in) {
   assertMessage(in._.len >= 2);
   return slice_split(in._, (0, in._.len - 2))[0];
@@ -297,8 +318,9 @@ superscope *ss_init(allocfn allocator) {
   superscope* res = avalue(allocator, ((superscope){
     .all_functions = msList_init(allocator, function),
     .pointers = moxmap_init(allocator, void*, usize),
-    .types = mxmap_init(allocator, Type, Type *,3,Type_hash_hash,Type_cmp_hash),
+    .types = moxmap_init(allocator, Type, Type *,Type_cmp_hash),
     .thisstack = msList_init(allocator , Type*),
+    .tdata = moxmap_init(allocator, Type, msList(value_store),Type_cmp_hash)
   }));
   // clang-format on
   res->alloc = cba_init(allocator, nullptr, irb_cbb, res->pointers);
@@ -346,7 +368,7 @@ void ss_deInit(superscope *ss) {
   foreach (let it, moxmap_iter(ss->pointers, void *, usize))
     adestroy(allocator, (u8(*)[*it.val])it.key);
   moxmap_deinit(ss->pointers);
-  mxmap_deinit(ss->types);
+  moxmap_deinit(ss->types);
   adestroy(allocator, ss);
 }
 u32 ss_get_named(superscope *env, scope *s, fptr n) {
@@ -380,10 +402,10 @@ Type decor_bubble(superscope *b, Type t, bool *iconst, bool *ivolatile) {
 }
 Type *ss_getType(superscope *b, Type t) {
   t = decor_bubble(b, t, nullptr, nullptr);
-  if_decl (let t, mxmap_get(b->types, t)) return *t;
+  if_decl (let t, moxmap_get(b->types, t)) return *t;
   let allocator = (b->alloc);
   let pt = acreate(allocator, Type);
-  mxmap_set(b->types, t, pt);
+  moxmap_set(b->types, t, pt);
   *pt = tu_match_exp(
       t,
       (builtin, b, (Type)tu_of(builtin, b)),
@@ -397,8 +419,8 @@ Type *ss_getType(superscope *b, Type t) {
       (r_arr, arr, (Type)tu_of(r_arr, {ss_getType(b, *arr.t), arr.count})),
       (r_decor, dec, (Type)tu_of(r_decor, {ss_getType(b, *dec.t), dec.constant, dec.valatile})),
       //
-      (r_struct, items, (Type)tu_of(r_struct, mList_map(allocator, items, ($.init.t = *ss_getType(b, $.init.t), $)))),
-      (r_bitfield, items, (Type)tu_of(r_bitfield, mList_map(allocator, items, ($.init.t = *ss_getType(b, $.init.t), $)))),
+      (r_struct, items, (Type)tu_of(r_struct, mList_map(allocator, items, ($.t = *ss_getType(b, $.t), $)))),
+      (r_bitfield, items, (Type)tu_of(r_bitfield, mList_map(allocator, items, ($.t = *ss_getType(b, $.t), $)))),
       (r_func, params, (Type)tu_of(r_func, mList_map(allocator, params, (*ss_getType(b, $))))),
       //
       (r_void, v, (Type)tu_of(r_void, {})),
@@ -407,7 +429,7 @@ Type *ss_getType(superscope *b, Type t) {
       (c_int, _, (Type)tu_of(c_int, {})),
       (c_type, _, (Type)tu_of(c_type, {})),
   );
-  return *mxmap_set(b->types, *pt, pt);
+  return *moxmap_set(b->types, *pt, pt);
 }
 bool Type_isint(Type t) {
   return tu_match_exp(
