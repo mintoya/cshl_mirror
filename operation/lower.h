@@ -35,28 +35,39 @@ static u32 lower_builtin_fn(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
   if (list.len != 3) error_print(args, "fn takes (args,result,body)");
   let argdecls = tu_catch(astPBlock, *list.ptr[0], error_print(list.ptr[0], "args must be parenthesized"));
-  foreach (let did, vlap(sentList_vla(argdecls.stmts)))
-    tu_match_void(
-        did[0],
-        (astDecl, dcl, ),
-        (astId, id, ),
-        (default, error_print(did, "functoin arg must be decl or type"))
-    );
-  tu_match_void(
-      *list.ptr[1],
-      (astDecl, dcl, ),
-      (astId, id, ),
-      (default, error_print(*list.ptr[1], "functoin result must be decl or type"))
-  );
-  function result = {slice_stat(slice(astptr), *acreate(ss->alloc, astptr[sentList_len(argdecls.stmts) + 2]))};
-  memcpy(result._.ptr, argdecls.stmts, sizeof(astptr[result._.len - 2]));
-  result._.ptr[result._.len - 2] = list.ptr[1];
-  result._.ptr[result._.len - 1] = list.ptr[2];
-  println("generating function {slice:ast}", result);
-  TODO("lower functions more");
-  assertMessage(!msList_len(ss->thisstack), "todo");
-}
 
+  let result = acreate(ss->alloc, function);
+  result->_ = slice_stat(slice(astptr), *acreate(ss->alloc, astptr[sentList_len(argdecls.stmts) + 2]));
+
+  memcpy(result->_.ptr, argdecls.stmts, sizeof(astptr[result->_.len - 2]));
+  result->_.ptr[result->_.len - 2] = list.ptr[1];
+  result->_.ptr[result->_.len - 1] = list.ptr[2];
+
+  println("generating function {slice:ast}", *result);
+  assertMessage(!msList_len(ss->thisstack), "todo");
+
+  let temp = scope_inferior(ss, s);
+  defer { scope_destroy(ss, temp); };
+
+  let fn_params = mList_init(ss->alloc, Type, sentList_len(argdecls.stmts) + 1);
+  foreach (let did, vlap(sentList_vla(argdecls.stmts))) {
+    iflet_tu (let _, astDecl, *did)
+      mList_push(fn_params, scope_find_origional(ss, temp, lower(ss, temp, did))->t);
+    else mList_push(fn_params, value_asType(temporary_interpret_ast(ss, temp, did)));
+  }
+
+  Type ret_type = (Type)tu_of(c_any, {});
+  iflet_tu (let _, astDecl, *list.ptr[1])
+    ret_type = scope_find_origional(ss, temp, lower(ss, temp, list.ptr[1]))->t;
+  else ret_type = value_asType(temporary_interpret_ast(ss, temp, list.ptr[1]));
+
+  mList_push(fn_params, ret_type);
+
+  Type func_type = *ss_getType(ss, (Type)tu_of(r_func, fn_params));
+  Type ctime_func_type = *ss_getType(ss, (Type)tu_of(r_ctime, ss_getType(ss, func_type)));
+
+  return scope_add_rvalue(ss, s, (typed_value){ctime_func_type, result});
+}
 // ---- @if(cnd, then, else) ----
 static u32 lower_builtin_if(superscope *ss, scope *s, ast *args) {
   // empty statment is not that hard
@@ -491,10 +502,15 @@ u32 lower_math_op(superscope *ss, scope *s, u32 left, enum_op opn, ast *right) {
   let left_tv = scope_find_origional(ss, s, left);
   let right_tv = scope_find_origional(ss, s, right_val);
 
-  assertMessage(Type_isint(left_tv->t) && Type_isint(right_tv->t));
+  assertMessage(Type_isint(left_tv->t) && Type_isint(right_tv->t), "Math ops require integer types");
 
-  u32 dest = scope_add_rvalue(ss, s, (typed_value){left_tv->t}); // TODO: bigger value promotion?
+  // Type Promotion: If one is a literal (c_int) and the other is sized, yield the sized type.
+  Type dest_type = left_tv->t;
+  if (tu_is(c_int, dest_type) && !tu_is(c_int, right_tv->t)) {
+    dest_type = right_tv->t;
+  }
 
+  u32 dest = scope_add_rvalue(ss, s, (typed_value){dest_type});
   scope_add_inst(ss, s, (ir)tu_of(ir_op, {.l = left, .r = right_val, .d = dest, .op = (u32)opn}));
 
   return dest;
@@ -598,27 +614,65 @@ u32 lower_op(superscope *ss, scope *s, u32 left, enum_op opn, ast *right) {
   }
 }
 u32 lower_call(superscope *ss, scope *s, u32 callable, u32 optional_instance, ast *args);
-
-// Forward declaration for recursively resolving aliases
-
-u32 lower(superscope *env, scope *s, astptr ast) {
-  if (!ast) return 0;
+u32 try_coerce(superscope *ss, scope *s, Type t, u32 v) {
+  let o = *scope_find_origional(ss, s, v);
+  if (!Type_cmp(o.t, t)) return v;
+  let ot = strip_decor(o.t);
+  if (!Type_cmp(ot, t)) return v;
+  tu_match_void(
+      ot,
+      (c_int, rs, {
+        if (Type_isint(t)) {
+          let m = (typed_value){t, acreate(ss->alloc, u8[Type_rsize(strip_decor(t)) ?: 1])};
+          bigint_into_int(ss, &m, o.v.c_int);
+          return scope_add_rvalue(ss, s, m);
+        }
+      }),
+      (default, return 0)
+  );
+  return 0;
+}
+u32 clone_decl(superscope *ss, scope *s, u32 v) {
+  let o = *scope_find_origional(ss, s, v);
+  tu_match_void(
+      strip_decor(o.t),
+      (c_int, i, return scope_add_rvalue(ss, s, (typed_value){tu_of(c_int, {}), BInt.copy(ss->alloc, o.v.c_int)})),
+      (default, {
+        if (!Type_is_comptime(strip_decor(o.t))) {
+          let m = acreate(ss->alloc, u8[Type_rsize(strip_decor(o.t)) ?: 1]);
+          if (o.v.value) memcpy(m, o.v.value, sizeof(*m));
+          return scope_add_rvalue(ss, s, (typed_value){o.t, m});
+        } else return v;
+      }),
+  );
+}
+u32 lower(superscope *env, scope *s, astptr ats) {
+  if (!ats) return 0;
   return tu_match_exp(
-      *ast,
+      *ats,
       (astEmptyStatement, _, (u32)0),
       (astId, id, ss_get_named(env, s, id)),
       (astString, str, ss_compileString(env, s, str)),
       (astNumber, num, ss_compileInt(env, s, num)),
       (astDecl, decl, ({
+         // println("parsing decl {ast}", ats);
          let t = decl.type
                      ? value_asType(temporary_interpret_ast(env, s, decl.type))
                      : (Type)tu_of(c_any, {});
+         // println("\ttype:{Type}", t);
          u32 val = decl.value
                        ? tu_is(c_ast, t)
                              ? scope_add_rvalue(env, s, (typed_value){t, decl.value})
                              : lower(env, s, decl.value)
                        : scope_add_rvalue(env, s, (typed_value){t});
-         assertMessage(tu_is(c_any, t) || !Type_cmp(t, scope_find_origional(env, s, val)->t));
+
+         // println("\tvalue:{*:typed_value}", scope_find_origional(env, s, val));
+         {
+           let nt = scope_find_origional(env, s, val)->t;
+           if (!tu_is(c_any, t) && Type_cmp(t, nt) && !(val = try_coerce(env, s, t, val)))
+             error_print(ats, "{Type}!={Type}", t, nt);
+         }
+         val = clone_decl(env, s, val);
          if (decl.is_const) {
            let resolved_val = scope_find_origional(env, s, val);
            assertMessage(!tu_is(c_any, resolved_val->t), "cannot apply const to anytype");

@@ -1,13 +1,13 @@
 #!/bin/nu
-let deps = "deps" | path expand 
-let args = { CompileFlags : {
-  Add:[
+{
+  CompileFlags : { Add:[
     "-x","c",
     "-std=c2y",
     "-fdefer-ts",
-    "-I",$deps
-  ]
-}};
-$args |
-to yaml | 
-save -f .clangd
+    "-I",("deps" | path expand)
+  ],
+  Compiler : "clang"
+  },
+} 
+| to yaml 
+| save -f .clangd

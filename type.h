@@ -445,13 +445,25 @@ typePrinter(Type) {
   typePrinterWorker(in, visited, _ctx);
 }
 
+static inline Type strip_decor(Type t) {
+  let decorated = true;
+  while (decorated) {
+    tu_match_void(
+        t,
+        (r_ctime, ct, t = *ct),
+        (r_decor, dec, t = *dec.t),
+        (default, decorated = false;)
+    );
+  }
+  return t;
+}
 typePrinter(typed_value) {
-  PUTS("{t:");
+  PUTS("(tv,");
   USETYPEPRINTER(Type, in.t);
-  PUTS(",v:");
+  PUTS(",");
   tu_match_void(
-      in.t,
-      (c_int, _, USENAMEDPRINTER("bigint", in.v.c_int);),
+      strip_decor(in.t),
+      (c_int, _, in.v.c_int ? USENAMEDPRINTER("bigint", in.v.c_int) : PUTS("??");),
       (c_ast, _,
 #if defined TV_EXPAND_VALUE && TV_EXPAND_VALUE == 1
        USENAMEDPRINTER("ast", in.v.c_ast)
@@ -466,7 +478,7 @@ typePrinter(typed_value) {
         else PUTS("(nil)");
       })
   );
-  PUTS("}");
+  PUTS(")");
 }
 
 // { test functions

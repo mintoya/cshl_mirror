@@ -5,19 +5,20 @@
 
 #include "ast.h"
 #include "indentprinter.h"
-#include "operation/common2.h"
-#include "operation/int.h"
-#include "operation/lower.h"
 #include "wheels/fptr.h"
 #include "wheels/print/print_pre.h"
 #include <wheels/allocators/arenaAllocator.h>
 #include <wheels/allocators/debugallocator.h>
 #include <wheels/mytypes.h>
+// module like
+#include "operation/common2.h"
+#include "operation/int.h"
+#include "operation/lower.h"
 
 // { util
 [[gnu::constructor]] void initOpNumbers() {
   typedef union {
-    char s[sizeof(u32)];
+    char s[sizeof(u32) + 1];
     u32 n;
   } opS;
   opNumbers.call = /* */ ((opS){"()"}).n;

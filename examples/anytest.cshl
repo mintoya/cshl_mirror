@@ -10,6 +10,3 @@ a ~i32~ 3;
 b ~i32~ 1;
 c ~~ a + b;
 d ~~ c;
-
-
-op ~ast~ "hello";

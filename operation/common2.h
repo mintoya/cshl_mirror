@@ -193,15 +193,15 @@ typePrinter(scope) {
   foreach (let v, span(in.values, msList_len(in.values)))
     tu_match(
         *v,
-        (lvalue, l, PUTS("(l :"), USETYPEPRINTER(u32, in.start + v - in.values + 1), USENAMEDPRINTER("ptr", l), PUTS(")")),
-        (rvalue, r, PUTS("(r :"), USETYPEPRINTER(u32, in.start + v - in.values + 1), USETYPEPRINTER(Type, r.t), PUTS(")")),
+        (lvalue, l, PUTS("(l"), USETYPEPRINTER(u32, in.start + v - in.values + 1), PUTS(","), USENAMEDPRINTER("ptr", l), PUTS(")")),
+        (rvalue, r, PUTS("(r"), USETYPEPRINTER(u32, in.start + v - in.values + 1), PUTS(","), USETYPEPRINTER(typed_value, r), PUTS(")")),
     ),
         PUTS(",");
   PUTS("),");
   PUTS("(named,");
   foreach (let v, moxmap_iter(in.named, fptr, u32)) {
     PUTS("('");
-    USETYPEPRINTER(id_str, v.key);
+    USENAMEDPRINTER("slice(c8)", v.key);
     PUTS("' ");
     USETYPEPRINTER(u32, *v.val);
     PUTS(")");
@@ -216,7 +216,10 @@ struct superscope {
   moxmap(void *, usize) pointers;
   moxmap(Type, Type *) types;
   moxmap(Type, msList(value_store)) tdata;
-  msList(function) all_functions;
+  msList(struct {
+    sentList_t(Type) sig;
+    scope *body;
+  }) all_functions;
   scope *outermost;
   msList(Type *) thisstack;
 };
@@ -231,7 +234,7 @@ i8 cmpstl_type(const void *a, const void *b) {
   let ap = *(sentList_t(Type) *)a;
   let bp = *(sentList_t(Type) *)b;
   let al = sentList_len(ap);
-  let bl = sentList_len(ap);
+  let bl = sentList_len(bp);
   if_decl (let dif, (int)al - (int)bl) return dif;
   foreach (let i, range(0, al))
     if_decl (let dif, Type_cmp(ap[i], bp[i]))
@@ -303,7 +306,7 @@ u32 scope_add_rvalue(superscope *env, scope *s, typed_value v) {
 void scope_add_inst(superscope *env, scope *s, ir i) { msList_push(env->alloc, s->instructions, i); }
 void scope_bind(superscope *env, scope *s, u32 idx, fptr name) {
   let variable = scope_find(env, s, idx);
-  println("binding {u32} to {slice(c8)}", idx, name);
+  // println("binding {u32} to {slice(c8)}", idx, name);
   assertMessage(!moxmap_get(s->named, name), "already bound %s", snprint(stdAlloc, "{slice(c8)}", name).ptr);
   assertMessage(idx <= msList_len(s->values) + s->start, "%zu <= %zu + %zu", idx, msList_len(s->values), s->start);
   moxmap_set(s->named, name, idx);
@@ -317,7 +320,7 @@ void irb_cbb(const callbackallocatorhandle *h, void *p) {
 superscope *ss_init(allocfn allocator) {
   // clang-format off
   superscope* res = avalue(allocator, ((superscope){
-    .all_functions = msList_init(allocator, function),
+    .all_functions = msList_init(allocator, ptrstype(res->all_functions)),
     .pointers = moxmap_init(allocator, void*, usize),
     .types = moxmap_init(allocator, Type, Type *,Type_cmp_hash),
     .thisstack = msList_init(allocator , Type*),
@@ -459,7 +462,8 @@ usize Type_int_size(Type t) {
   );
 }
 Type value_asType(typed_value t) {
-  assert_type(c_type, t.t);
+  Type current_type = strip_decor(t.t);
+  assert_type(c_type, current_type);
   assertMessage(t.v.c_type, "type is unknown");
   return t.v.c_type[0];
 }
@@ -530,27 +534,27 @@ u32 ss_compileString(superscope *b, scope *s, fptr in) {
 
 u32 lower(superscope *, scope *, astptr);
 typed_value interpret(superscope *, scope *);
-void interpret_op(superscope *, scope *, ir_op);
-void interpret_call(superscope *, scope *, ir_call);
-astptr ast_dot(astptr node, astptr name);
-typed_value temporary_interpret(superscope *, scope *, ir);
+
 typed_value temporary_interpret_ast(superscope *ss, scope *s, ast *a) {
   let si = scope_inferior(ss, s);
   defer { scope_destroy(ss, si); };
-  lower(ss, si, a);
-  return temporary_interpret(ss, s, (ir)tu_of(ir_block, si));
+
+  u32 val_idx = lower(ss, si, a);
+  interpret(ss, si); // Execute any instructions (if there are any)
+
+  if (val_idx) {
+    return *scope_find_origional(ss, si, val_idx);
+  }
+
+  return (typed_value){tu_of(r_void, {})};
 }
 
-typed_value temporary_interpret(superscope *, scope *, ir) { TODO(); }
-typed_value interpret(superscope *, scope *) { TODO(); }
-
 static u32 function_trySpec(superscope *ss, scope *s, function *fn, sentList_t(Type) typeList) {
-
   if_decl (let m, moxmap_get(function_initSpecs(ss->alloc, fn), typeList)) return *m;
   let l = sentList_vla(typeList);
+  let returnT = (Type)tu_of(c_any, {});
   if (countof * l != fn->_.len - 2) error_print(nullptr, "function called with too many args");
-
-  {
+  else {
     let tpe_evaluated = msList_init(ss->alloc, Type);
     defer { msList_deInit(ss->alloc, tpe_evaluated); };
     let temp = scope_inferior(ss, s);
@@ -561,7 +565,8 @@ static u32 function_trySpec(superscope *ss, scope *s, function *fn, sentList_t(T
       Type arg_type = (*l)[idx];
       if (tu_is(c_any, arg_type))
         error_print(nullptr, "any is not allowed as an argument inside of a call");
-      iflet_tu (let dcl, astDecl, *inner) {
+
+      iflet_tu (let _, astDecl, *inner) {
         Type *param_type = &scope_find_origional(ss, temp, lower(ss, temp, inner))->t;
         if (tu_is(c_any, *param_type))
           msList_push(ss->alloc, tpe_evaluated, (*param_type = arg_type));
@@ -573,13 +578,72 @@ static u32 function_trySpec(superscope *ss, scope *s, function *fn, sentList_t(T
         else msList_push(ss->alloc, tpe_evaluated, param_type);
       }
     }
+
+    astptr ret_ast = *function_return(*fn);
+    iflet_tu (let _, astDecl, *ret_ast) returnT = scope_find_origional(ss, temp, lower(ss, temp, ret_ast))->t;
+    else returnT = value_asType(temporary_interpret_ast(ss, temp, ret_ast));
+
     msList_push(ss->alloc, tpe_evaluated, {});
     if (cmpstl_type(&tpe_evaluated, &typeList))
       error_print(nullptr, "function could not be resolved");
   }
-  TODO(
-      "create a temp scope"
-      "evaluat first arg with the type"
-      "evaluaate consecutive args with the bound id"
+  let body = fn->_.ptr[fn->_.len - 1];
+
+  let real_body = scope_inferior(ss, s);
+
+  foreach (let idx, range(0, countof * l)) {
+    astptr inner = fn->_.ptr[idx];
+    u32 param_idx = lower(ss, real_body, inner);
+    scope_find_origional(ss, real_body, param_idx)->t = (*l)[idx];
+  }
+
+  astptr ret_ast = *function_return(*fn);
+  u32 ret_idx = 0;
+  iflet_tu (let _, astDecl, *ret_ast) {
+    ret_idx = lower(ss, real_body, ret_ast);
+    scope_find_origional(ss, real_body, ret_idx)->t = returnT;
+  }
+
+  lower(ss, real_body, body);
+  scope_add_inst(ss, real_body, (ir)tu_of(ir_ret, ret_idx));
+  let full_sig = msList_init(ss->alloc, Type);
+  foreach (let idx, range(0, countof * l))
+    msList_push(ss->alloc, full_sig, (*l)[idx]);
+  msList_push(ss->alloc, full_sig, returnT);
+  msList_push(ss->alloc, full_sig, {});
+
+  let spec_idx = msList_len(ss->all_functions);
+  msList_push(ss->alloc, ss->all_functions, {.sig = full_sig, .body = real_body});
+  return *moxmap_set(fn->specs, typeList, (u32)spec_idx);
+}
+bigint int_as_bigint(superscope *ss, typed_value t) {
+  assertMessage(t.v.value, "cannot convert unknown value");
+  return tu_match_exp(
+      strip_decor(t.t),
+      (c_int, _, BInt.copy(ss->alloc, t.v.c_int)),
+      (r_sint, si, BInt.from.bits(ss->alloc, t.v.value, si, 1)),
+      (r_uint, si, BInt.from.bits(ss->alloc, t.v.value, si, 0)),
+      (default, (bigint)(assertMessage(false, "should not be called with a non-int"), nullptr)),
+  );
+}
+void bigint_into_int(superscope *ss, typed_value *t, bigint b) {
+  assertMessage(t->v.value, "cannot convert unknown value");
+  // TODO
+  tu_match_void(
+      strip_decor(t->t),
+      (c_int, _, {
+        let o = &t->v.c_int;
+        msList_deInit(ss->alloc, *o);
+        *o = BInt.copy(ss->alloc, b);
+      }),
+      (r_sint, si, {
+        let allocated_len = Type_rsize(t->t);
+        memcpy(t->v.value, b, allocated_len);
+      }),
+      (r_uint, si, {
+        let allocated_len = Type_rsize(t->t);
+        memcpy(t->v.value, b, allocated_len);
+      }),
+      (default, assertMessage(false, "should not be called with a non-int")),
   );
 }

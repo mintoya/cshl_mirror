@@ -180,7 +180,8 @@ typePrinter("ast", ast *) {
 
       (astId, id, {
         PUTS("(Id ");
-        USENAMEDPRINTER("id_str", id);
+        USENAMEDPRINTER("slice(c8)", id);
+        // USENAMEDPRINTER("id_str", id);
         PUTS(")");
       }),
 
@@ -192,7 +193,7 @@ typePrinter("ast", ast *) {
 
       (astString, str, {
         PUTS("(String \"");
-        USENAMEDPRINTER("id_str", str); // assumes escaping
+        USENAMEDPRINTER("slice(c8)", str); // assumes escaping
         PUTS("\")");
       }),
 
