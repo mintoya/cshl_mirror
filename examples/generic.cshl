@@ -1,5 +1,4 @@
-type~~
-  @type();
+type~~ @type();
 typeof ~~ fn((a~@any()),type,
   @if(1 , return @typeof(a)));
 
@@ -11,5 +10,5 @@ c~typeof(a + b)
 arrof ~~ fn((a~type , b~ @int()) ,type,
   return @arr(b,a));
 
-int8Array ~~ arrof(@sint(8) , 5) ;
-arrayvalue ~ int8Array ;
+int8Array ~~ arrof @sint(8),5;
+arrayvalue ~ int8Array;

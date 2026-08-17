@@ -1,5 +1,6 @@
-ast ~~ @ast();
-any ~~ @any();
+type ~~ @type();
+ast ~type~ @ast();
+any ~type~ @any();
 fn ~~ @fn((a~ast,r~ast),any,
   return @fn((b~ast),any,return @qot @fn(
     @uqot(a),
@@ -9,3 +10,6 @@ fn ~~ @fn((a~ast,r~ast),any,
 
 add2 ~~ fn (a~any,b~any),any 
   return a + b;
+add3 ~~ fn (a~any,b~any,c~any),any { 
+  return a + b + c; 
+};
