@@ -40,28 +40,12 @@ if ~~ @fn((a~ ast), ast, {
 
 // juxteposition is a call
 // automatic quoting an unquoting as you see here
-i ~void~ if 1 (2)
-  else (3);
+i ~ast~ 
+  if 1 (2)
+    else (3);
 one ~= 1;
-
-if @void() {
-  @print(1);
-  one = 2;
-} else {
-  @print(0);
-  one = 3;
-};
-
 @if void,{
-  @print(1);
   one = 2;
 },{
-  @print(0);
   one = 3;
 };
-@print(one);
-@print if 1 @print("sucess 1");
-@print @uqot if 1 @print("sucess 2");
-
-
-

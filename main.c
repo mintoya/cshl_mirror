@@ -115,7 +115,7 @@ cmd_main(
   if (execute) {
     let env = ss_init(allocator);
     lower(env, env->outermost, ast);
-    // interpret(env, env->outermost);
+    interpret(env, env->outermost);
     print_wfO(sexplike, nullptr, "{scope}\n", *env->outermost);
   }
 

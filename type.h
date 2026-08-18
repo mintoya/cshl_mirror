@@ -1,4 +1,6 @@
 #pragma once
+// #define TV_EXPAND_VALUE 1
+
 #include "ast.h"
 #include "wheels/macros.h"
 #include "wheels/oxmap.h"
@@ -24,6 +26,7 @@ typedef enum : u8 {
   builtin_ast,      // @ast() type of ast
   builtin__id,      // @id(str) an id which corresponds to this string litteral
   builtin_any,      // @any() type of any
+  builtin_void,     // @void() the void type
   builtin_int,      // @int() compile time bigint
   builtin_type,     // @type() the type of a type
   builtin_const,    // @const(T) constant
@@ -315,6 +318,7 @@ typePrinter(builtin_id) {
     case(builtin_ptrof):PUTS("ptrof");break;
     case(builtin_at):PUTS("at");break;
     case(builtin_any):PUTS("any");break;
+    case(builtin_void):PUTS("void");break;
     case(builtin_int):PUTS("int");break;
     case(builtin_sint):PUTS("sint");break;
     case(builtin_uint):PUTS("uint");break;

@@ -111,6 +111,10 @@ typedef struct scope scope;
 typedef struct function function;
 typedef struct superscope superscope;
 
+// the source buffer, defined in main.c / tests.c; used to resolve call-site
+// locations for @dbg
+extern fptr *filectx;
+
 tu_def(
     (ir, u8),
     // expression
@@ -124,8 +128,11 @@ tu_def(
 
     // scope
     (ir_if /*      */, struct { u32 cnd; typeof(scope *) t, f; }),
-    (ir_while /*   */, struct { u32 cnd; typeof(scope *) t; }),
+    (ir_while /*   */, struct { u32 cnd; typeof(scope *) c, t; }),
     (ir_block /*   */, scope *),
+
+    // debug
+    (ir_dbg /*     */, struct { u32 l; u32 line, col; }),
 );
 
 tu_def((value, u8), (rvalue, typed_value), (lvalue, void *));
@@ -165,16 +172,22 @@ typePrinter(scope) {
           PUTS("(ir_if ");
           USETYPEPRINTER(u32, ifv.cnd);
           PUTS(",");
-          USETYPEPRINTER(scope, ifv.t);
+          if (ifv.t) USETYPEPRINTER(scope, *ifv.t);
+          else PUTS("(null)");
           PUTS(",");
-          USETYPEPRINTER(scope, ifv.f);
+          if (ifv.f) USETYPEPRINTER(scope, *ifv.f);
+          else PUTS("(null)");
           PUTS(")");
         }),
         (ir_while, ifv, {
           PUTS("(ir_while ");
           USETYPEPRINTER(u32, ifv.cnd);
           PUTS(",");
-          USETYPEPRINTER(scope, ifv.t);
+          if (ifv.c) USETYPEPRINTER(scope, *ifv.c);
+          else PUTS("(null)");
+          PUTS(",");
+          if (ifv.t) USETYPEPRINTER(scope, *ifv.t);
+          else PUTS("(null)");
           PUTS(")");
         }),
         (ir_block, ifv, {
@@ -185,6 +198,15 @@ typePrinter(scope) {
         (ir_ret, _, PUTS("(ir_ret )")),
         (ir_break, _, PUTS("(ir_break )")),
         (ir_continue, _, PUTS("(ir_continue )")),
+        (ir_dbg, dbgv, {
+          PUTS("(ir_dbg ");
+          USETYPEPRINTER(u32, dbgv.l);
+          PUTS(",");
+          USETYPEPRINTER(u32, dbgv.line);
+          PUTS(":");
+          USETYPEPRINTER(u32, dbgv.col);
+          PUTS(")");
+        }),
     );
     PUTS(",");
   }
@@ -334,21 +356,30 @@ superscope *ss_init(allocfn allocator) {
     builtin_id id;
   } builtins[] = {
       {"@fn", builtin_fn},
+      {"fn", builtin_fn},
       {"@this", builtin__this},
       {"struct", builtin_struct},
+      {"@struct", builtin_struct},
       {"@at", builtin_at},
       {"@uqot", builtin_uqot},
       {"@qot", builtin_qot},
       {"@type", builtin_type},
+      {"type", builtin_type},
       {"@ast", builtin_ast},
+      {"ast", builtin_ast},
       {"@any", builtin_any},
+      {"any", builtin_any},
+      {"@void", builtin_void},
+      {"void", builtin_void},
       {"@int", builtin_int},
+      {"int", builtin_int},
       {"@sint", builtin_sint},
       {"@uint", builtin_uint},
       {"@ptrof", builtin_ptrof},
       {"@volatile", builtin_volatile},
       {"@const", builtin_const},
       {"@typeof", builtin_typeof},
+      {"typeof", builtin_typeof},
       {"@arrof", builtin_arrof},
       {"break", builtin_break},
       {"continue", builtin_continue},
@@ -463,6 +494,24 @@ usize Type_int_size(Type t) {
 }
 Type value_asType(typed_value t) {
   Type current_type = strip_decor(t.t);
+  if (tu_is(builtin, current_type)) {
+    // a bare type name (`void`, `ast`, ...) references the uncalled builtin;
+    // in a type position it denotes the type itself
+    switch (tu_catch(builtin, current_type)) {
+      case builtin_ast:
+        return (Type)tu_of(c_ast, {});
+      case builtin_any:
+        return (Type)tu_of(c_any, {});
+      case builtin_void:
+        return (Type)tu_of(r_void, {});
+      case builtin_int:
+        return (Type)tu_of(c_int, {});
+      case builtin_type:
+        return (Type)tu_of(c_type, {});
+      default:
+        assertMessage(false, "builtin is not a type");
+    }
+  }
   assert_type(c_type, current_type);
   assertMessage(t.v.c_type, "type is unknown");
   return t.v.c_type[0];
@@ -548,8 +597,25 @@ typed_value temporary_interpret_ast(superscope *ss, scope *s, ast *a) {
 
   return (typed_value){tu_of(r_void, {})};
 }
+static bool interp_tv_truthy(typed_value *tv) {
+  assertMessage(tv);
+  Type t = strip_decor(tv->t);
+  if (tu_is(c_int, t)) return (bool)bigint_cmp(tv->v.c_int, nullptr);
+  if (tu_is(c_ast, t)) return tv->v.c_ast && !tu_is(astEmptyStatement, *tv->v.c_ast);
+  if (tu_is(r_uint, t) || tu_is(r_sint, t)) {
+    // The condition of a loop is often itself an ir_op whose evaluation
+    // happens inside the loop body: before the first store it has no
+    // storage, which means "not computed yet" and reads as true here.
+    if (!tv->v.value) return true; // TODO tf?
+    foreach (u8 *b, span((u8 *)tv->v.value, Type_rsize(t)))
+      if (*b) return true;
+    return false;
+  }
+  if (tu_is(r_void, t)) return false;
+  return tv->v.value != nullptr;
+}
 
-static u32 function_trySpec(superscope *ss, scope *s, function *fn, sentList_t(Type) typeList) {
+static u32 function_trySpec(superscope *ss, scope *s, function *fn, sentList_t(Type) typeList, slice(u32) args) {
   if_decl (let m, moxmap_get(function_initSpecs(ss->alloc, fn), typeList)) return *m;
   let l = sentList_vla(typeList);
   let returnT = (Type)tu_of(c_any, {});
@@ -595,6 +661,9 @@ static u32 function_trySpec(superscope *ss, scope *s, function *fn, sentList_t(T
     astptr inner = fn->_.ptr[idx];
     u32 param_idx = lower(ss, real_body, inner);
     scope_find_origional(ss, real_body, param_idx)->t = (*l)[idx];
+    // bind the argument value before lowering the body: macros quote/unquote
+    // their params at lower time, so they must already hold the actual values
+    *scope_find_origional(ss, real_body, param_idx) = *scope_find_origional(ss, s, args.ptr[idx]);
   }
 
   astptr ret_ast = *function_return(*fn);
