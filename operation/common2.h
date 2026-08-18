@@ -400,10 +400,14 @@ void ss_deInit(superscope *ss) {
   let allocator = ((struct cballocator *)ss->alloc)->allocator;
   msList_deInit(allocator, ss->all_functions);
   msList_deInit(allocator, ss->thisstack);
+  foreach (let it, moxmap_iter(ss->tdata, Type, msList(value_store)))
+    msList_deInit(allocator, *it.val);
+  moxmap_deinit(ss->tdata);
   foreach (let it, moxmap_iter(ss->pointers, void *, usize))
     adestroy(allocator, (u8(*)[*it.val])it.key);
   moxmap_deinit(ss->pointers);
   moxmap_deinit(ss->types);
+  cba_deinit(ss->alloc);
   adestroy(allocator, ss);
 }
 u32 ss_get_named(superscope *env, scope *s, fptr n) {

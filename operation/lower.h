@@ -244,12 +244,12 @@ static u32 lower_builtin_decor(superscope *ss, scope *s, ast *args, bool is_cons
 static u32 lower_builtin_intty(superscope *ss, scope *s, ast *args, bool is_signed) {
   let list = builtin_arg_list(&args);
   if (list.len != 1) error_print(args, "@sint/uint(N) takes exactly one argument");
-  bigint largest_int = BInt.from.i64(ss->alloc, ~(u16)0);
+  bigint largest_int = BInt.from.i64(ss->alloc, (u16)~0);
   defer { msList_deInit(ss->alloc, largest_int); };
   bigint bigbits = int_as_bigint(ss, temporary_interpret_ast(ss, s, list.ptr[0]));
   defer { msList_deInit(ss->alloc, bigbits); };
-  if (bigint_cmp(bigbits, nullptr) > 0) error_print(args, "integer width must be positive");
-  if (bigint_cmp(bigbits, largest_int) < 0) error_print(args, "integer width too large");
+  if (bigint_cmp(bigbits, nullptr) <= 0) error_print(args, "integer width must be positive");
+  if (bigint_cmp(bigbits, largest_int) > 0) error_print(args, "integer width too large");
   return P$(
       (is_signed ? (Type)tu_of(r_sint, *(u16 *)bigbits) : (Type)tu_of(r_uint, *(u16 *)bigbits)),
       scope_add_rvalue(ss, s, Type_asValue(ss, $))
@@ -316,14 +316,17 @@ u32 lower_builtin(superscope *ss, scope *s, builtin_id builtin, ast *args) {
   }
   assertMessage(false, "unhandled builtin");
 }
-// MARK: rest
 u32 lower_call(superscope *ss, scope *s, u32 callable, u32 optional_instance, ast *args);
-u32 lower_call_type(superscope *ss, scope *s, u32 callable, u32 optional_instance, ast *args, Type t) {
+// MARK: rest
+
+static inline u32 lower_ast_val(superscope *ss, scope *s, ast *child);
+u32 lower_call_type(superscope *ss, scope *s, u32 callable, u32 optional_instance, ast *args, typed_value tv) {
+  let t = tv.t;
   tu_match_void(
       t,
       (builtin, b, return lower_builtin(ss, s, b, args)),
 
-      (c_type, t, lower_call_type(ss, s, callable, 0, args, scope_find_origional(ss, s, callable)->t)),
+      (c_type, t, lower_call_type(ss, s, callable, 0, args, *scope_find_origional(ss, s, callable))),
       (r_struct, st, {
         foreach (let item, mList_iter(st))
           if (fptr_eq(item.name, "()"))
@@ -331,12 +334,30 @@ u32 lower_call_type(superscope *ss, scope *s, u32 callable, u32 optional_instanc
         error_print(args, "struct has no '()' call operator defined");
       }),
 
-      (r_tag, tt, return lower_call_type(ss, s, callable, optional_instance, args, *tt.t)),
-      (r_ctime, ctt, return lower_call_type(ss, s, callable, optional_instance, args, *ctt)),
-      (r_decor, dt, return lower_call_type(ss, s, callable, optional_instance, args, *dt.t)),
-      (r_ptr, pt, return lower_call_type(ss, s, callable, optional_instance, args, *pt)),
+      (r_tag, tt, return lower_call_type(ss, s, callable, optional_instance, args, (typed_value){*tt.t, tv.v})),
+      (r_ctime, ctt, return lower_call_type(ss, s, callable, optional_instance, args, (typed_value){*ctt, tv.v})),
+      (r_decor, dt, return lower_call_type(ss, s, callable, optional_instance, args, (typed_value){*dt.t, tv.v})),
+      (r_ptr, pt, return lower_call_type(ss, s, callable, optional_instance, args, (typed_value){*pt, tv.v})),
 
-      // (c_ast , _ , ), // TODO array ascess?
+      (c_ast, _, {
+        iflet_tu (let block, astABlock, *args)
+          if (sentList_len(block.items) == 1) {
+            let index = int_as_bigint(ss, temporary_interpret_ast(ss, s, block.items[0]));
+            bigint_expand(ss->alloc, &index, sizeof(usize) / sizeof(bigint_unit) + 1);
+            if (bigint_cmp(index, 0) < 0) error_print(args, "index must be positive");
+            let list = tu_match_exp(
+                *tv.v.c_ast,
+                (astBBlock, bb, bb.stmts),
+                (astPBlock, bb, bb.stmts),
+                (astABlock, bb, bb.items),
+                (default, (ast **)nullptr),
+            );
+            if (!list) return lower_ast_val(ss, s, nullptr);
+            let tindex = *(usize *)index;
+            return lower_ast_val(ss, s, tindex < sentList_len(list) ? list[tindex] : nullptr);
+          }
+        error_print(args, "ast does not support non-index call");
+      }),
       // (r_void , _ , ),
       // (r_uint , _ , ),
       // (r_sint , _ , ),
@@ -401,81 +422,72 @@ u32 lower_call_type(superscope *ss, scope *s, u32 callable, u32 optional_instanc
 }
 u32 lower_call(superscope *ss, scope *s, u32 callable, u32 optional_instance, ast *args) {
   let fn_val = scope_find_origional(ss, s, callable);
-  return lower_call_type(ss, s, callable, optional_instance, args, fn_val->t);
+  return lower_call_type(ss, s, callable, optional_instance, args, *fn_val);
 }
 //{ast member access
-static u32 lower_ast_empty(superscope *ss, scope *s) {
-  return scope_add_rvalue(ss, s, (typed_value){tu_of(c_ast, {}), avalue(ss->alloc, (ast)tu_of(astEmptyStatement, {}))});
-}
-static u32 lower_ast_child(superscope *ss, scope *s, ast *child) {
-  // inactive fields yield the empty ast, which is falsy in boolean contexts
-  if (!child) return lower_ast_empty(ss, s);
-  return scope_add_rvalue(ss, s, (typed_value){tu_of(c_ast, {}), child});
-}
-// the statement/item list of a block node, if self is one
-static bool lower_ast_block_items(ast self, sentList_t(ast *) * out) {
-  return tu_match_exp(
-      self,
-      (astBBlock, b, (*out = b.stmts, true)),
-      (astPBlock, p, (*out = p.stmts, true)),
-      (astABlock, a, (*out = a.items, true)),
-      (default, false)
+static inline u32 lower_ast_val(superscope *ss, scope *s, ast *child) {
+  return scope_add_rvalue(
+      ss,
+      s,
+      (typed_value){tu_of(c_ast, {}), child ?: avalue(ss->alloc, (ast)tu_of(astEmptyStatement, {}))}
   );
 }
-// the 4-byte operator encoding of a string, like initOpNumbers does
-static u32 ast_string_op_rep(fptr s) {
-  assertMessage(s.len <= sizeof(u32), "operator too long");
-  char buf[sizeof(u32)] = {};
-  memcpy(buf, s.ptr, s.len);
-  u32 n;
-  memcpy(&n, buf, sizeof(u32));
-  return n;
-}
 static u32 lower_ast_access(superscope *ss, scope *s, ast *self, ast *right) {
-  if (!self) return lower_ast_empty(ss, s);
+  if (!self) return lower_ast_val(ss, s, nullptr);
   tu_match_void(
       *right,
-      // string literal: if self is an operation with that operator, the
-      // access yields the node itself (a."()" on a call), else empty ast
       (astString, str, {
-        if (tu_is(astOp, *self)) {
-          let op = tu_catch(astOp, *self);
+        iflet_tu (let op, astOp, *self) {
           let inner = slice_split(str, (1, str.len - 1))[0];
-          if (op.number_rep == ast_string_op_rep(inner))
-            return lower_ast_child(ss, s, self);
-        }
-        return lower_ast_empty(ss, s);
+          if (inner.len > 4) error_print(right, "operator too long");
+          u32 u = 0;
+          memcpy(&u, inner.ptr, inner.len);
+          if (op.number_rep == u)
+            return lower_ast_val(ss, s, self);
+        } else return lower_ast_val(ss, s, nullptr);
       }),
       (astId, id, {
-        if (tu_is(astOp, *self)) {
-          let op = tu_catch(astOp, *self);
-          if (fptr_eq(id, "left")) return lower_ast_child(ss, s, op.left);
-          if (fptr_eq(id, "right")) return lower_ast_child(ss, s, op.right);
-        } else if (tu_is(astDecl, *self)) {
-          let d = tu_catch(astDecl, *self);
-          if (fptr_eq(id, "name")) return lower_ast_child(ss, s, d.name);
-          if (fptr_eq(id, "type")) return lower_ast_child(ss, s, d.type);
-          if (fptr_eq(id, "value")) return lower_ast_child(ss, s, d.value);
-        } else if (fptr_eq(id, "block")) {
-          sentList_t(ast *) items;
-          if (lower_ast_block_items(*self, &items))
-            return lower_ast_child(ss, s, self);
-        }
-        return lower_ast_empty(ss, s);
-      }),
-      // number: n-th statement/item inside a block (0-based)
-      (astNumber, num, {
-        sentList_t(ast *) items;
-        if (lower_ast_block_items(*self, &items)) {
-          usize n = fptr_toi(num);
-          if (n < sentList_len(items))
-            return lower_ast_child(ss, s, sentList_vla(items)[0][n]);
-        }
-        return lower_ast_empty(ss, s);
+        if (fptr_eq(id, "block"))
+          return tu_match_exp(
+              *self,
+              (astBBlock, bb, lower_ast_val(ss, s, self)),
+              (astPBlock, bb, lower_ast_val(ss, s, self)),
+              (astABlock, bb, lower_ast_val(ss, s, self)),
+              (default, lower_ast_val(ss, s, nullptr)),
+          );
+        else if (fptr_eq(id, "bblock") || fptr_eq(id, "ablock") || fptr_eq(id, "pblock"))
+          return tu_match_exp(
+              *self,
+              (astBBlock, bb, lower_ast_val(ss, s, fptr_eq(id, "bblock") ? self : nullptr)),
+              (astPBlock, bb, lower_ast_val(ss, s, fptr_eq(id, "pblock") ? self : nullptr)),
+              (astABlock, bb, lower_ast_val(ss, s, fptr_eq(id, "ablock") ? self : nullptr)),
+              (default, lower_ast_val(ss, s, nullptr)),
+          );
+        else if (fptr_eq(id, "op"))
+          return tu_match_exp(*self, (astOp, bb, lower_ast_val(ss, s, self)), (default, lower_ast_val(ss, s, nullptr)));
+        else if (fptr_eq(id, "opleft"))
+          return tu_match_exp(*self, (astOp, bb, lower_ast_val(ss, s, bb.left)), (default, lower_ast_val(ss, s, nullptr)));
+        else if (fptr_eq(id, "opright"))
+          return tu_match_exp(*self, (astOp, bb, lower_ast_val(ss, s, bb.right)), (default, lower_ast_val(ss, s, nullptr)));
+        else if (fptr_eq(id, "number"))
+          return tu_match_exp(*self, (astNumber, bb, lower_ast_val(ss, s, self)), (default, lower_ast_val(ss, s, nullptr)));
+        else if (fptr_eq(id, "string"))
+          return tu_match_exp(*self, (astString, bb, lower_ast_val(ss, s, self)), (default, lower_ast_val(ss, s, nullptr)));
+        else if (fptr_eq(id, "decl"))
+          return tu_match_exp(*self, (astDecl, bb, lower_ast_val(ss, s, self)), (default, lower_ast_val(ss, s, nullptr)));
+        else if (fptr_eq(id, "dname"))
+          return tu_match_exp(*self, (astDecl, bb, lower_ast_val(ss, s, bb.name)), (default, lower_ast_val(ss, s, nullptr)));
+        else if (fptr_eq(id, "dvalue"))
+          return tu_match_exp(*self, (astDecl, bb, lower_ast_val(ss, s, bb.value)), (default, lower_ast_val(ss, s, nullptr)));
+        else if (fptr_eq(id, "dtype"))
+          return tu_match_exp(*self, (astDecl, bb, lower_ast_val(ss, s, bb.type)), (default, lower_ast_val(ss, s, nullptr)));
+        else if (fptr_eq(id, "id"))
+          return tu_match_exp(*self, (astId, bb, lower_ast_val(ss, s, self)), (default, lower_ast_val(ss, s, nullptr)));
       }),
       (default, assertMessage(false, "expected id, string or number for member access"))
   );
-  return 0;
+  error_print(right, "failed to get {ast} from {ast}", right, self);
+  return lower_ast_val(ss, s, nullptr);
 }
 //}
 u32 lower_dot(superscope *ss, scope *s, u32 left, ast *right) {
@@ -817,10 +829,6 @@ u32 lower(superscope *env, scope *s, astptr ats) {
          u32 last = 0;
          foreach (let it, vlap(sentList_vla(ast_block.stmts))) {
            last = lower(env, block, it);
-           // an ast that is not assigned to an ast value evaluates itself:
-           // a bare expression statement like `if @void() {...} else {...};`
-           // produces a quoted ast which must be unquoted here (the decl case
-           // already handles named/typed ast decls and nameless decls above)
            if (!tu_is(astDecl, *it)) {
              let tv = scope_find_origional(env, block, last);
              if (tv && tu_is(c_ast, strip_decor(tv->t)))
@@ -832,8 +840,6 @@ u32 lower(superscope *env, scope *s, astptr ats) {
       (astPBlock, ast_block, ({
          let vla = sentList_vla(ast_block.stmts);
          assertMessage(countof(*vla) == 1, "no tuples");
-         // parens are grouping, not a scope: lowering into a nested scope would
-         // leave the resulting value index in a child, unreachable from here
          lower(env, s, (*vla)[0]);
        })),
       (astABlock, _, assertMessage(false, "lone [...]"), (u32)0),
