@@ -15,11 +15,15 @@ if ~~ @fn((a~ ast), ast, {
   cond ~ast~ call.left;
   rest ~ast~ call.right; // not putting ast in the expected type causes an evaluation of the ast argument
 
-  @if((rest."()".left == "else"), {
+  // `1 (2) else (3)` parses right-assoc as `1((2)(else(3)))`, so `rest` is
+  // an op `()` with left = then-branch, right = `else(3)` (op `()` with
+  // left = the `else` marker, right = the else-branch). Detect the else by
+  // checking that rest's right operand is an `else(...)` call.
+  @if((rest."()".right."()".left == "else"), {
     then ~ast~ rest.left;
     else ~ast~ rest.right."()";
 
-    @if(else and (rest.left == "else"), return @qot @if(
+    @if(else and (rest.right."()".left == "else"), return @qot @if(
             @uqot(cond),
             @uqot(then),
             @uqot(else.right)
@@ -38,3 +42,26 @@ if ~~ @fn((a~ ast), ast, {
 // automatic quoting an unquoting as you see here
 i ~void~ if 1 (2)
   else (3);
+one ~= 1;
+
+if @void() {
+  @print(1);
+  one = 2;
+} else {
+  @print(0);
+  one = 3;
+};
+
+@if void,{
+  @print(1);
+  one = 2;
+},{
+  @print(0);
+  one = 3;
+};
+@print(one);
+@print if 1 @print("sucess 1");
+@print @uqot if 1 @print("sucess 2");
+
+
+
