@@ -21,7 +21,6 @@ typedef enum : u8 {
   builtin_break,    // @break()
   builtin_continue, // @continue()
                     //
-  builtin_toplevel, // @toplevel(decl) creates symbol in the current file's scope,
                     // then when called with expression, yields an r_func
   builtin_ast,      // @ast() type of ast
   builtin__id,      // @id(str) an id which corresponds to this string litteral
@@ -41,7 +40,8 @@ typedef enum : u8 {
   builtin__this,    // @this() inside of struct, this is the result type
   builtin_qot,      // @qot(arg) ast of arg
   builtin_uqot,     // @unqot(arg) evaluate arg
-  builtin_at,       // @at(arg) address of arg
+  builtin_at,       // @at(arg) dereference arg
+  builtin_where,    // @where(arg) referance to arg
 } builtin_id;
 //{type
 typedef struct Type Type;
@@ -285,6 +285,7 @@ bool Type_is_comptime(Type t) {
   return tu_match_exp(
       t,
       (r_tag, t, Type_is_comptime(*t.t)),
+      (r_decor, t, Type_is_comptime(*t.t)),
 
       (builtin, _, true),
       (c_ast, _, true),
@@ -293,7 +294,6 @@ bool Type_is_comptime(Type t) {
       (c_type, _, true),
       (r_ctime, _, true),
 
-      (r_decor, _, false),
       (r_func, _, false),
       (r_struct, _, false),
       (r_bitfield, _, false),
@@ -313,10 +313,10 @@ typePrinter(builtin_id) {
     case(builtin__id):PUTS("id");break;
     case(builtin_fn):PUTS("fn");break;
     case(builtin_ast):PUTS("ast");break;
-    case(builtin_toplevel):PUTS("toplevel");break;
     case(builtin_arrof):PUTS("arrof");break;
     case(builtin_ptrof):PUTS("ptrof");break;
     case(builtin_at):PUTS("at");break;
+    case(builtin_where):PUTS("where");break;
     case(builtin_any):PUTS("any");break;
     case(builtin_void):PUTS("void");break;
     case(builtin_int):PUTS("int");break;
@@ -461,8 +461,37 @@ static inline Type strip_decor(Type t) {
   }
   return t;
 }
+typedef struct {
+  Type t;
+  bool is_comptime;
+  bool is_const;
+  bool is_volatile;
+} peeled_type;
+static inline peeled_type Type_peel(Type t, bool deref_ptr) {
+  peeled_type r = {.t = t};
+  while (1)
+    tu_match_void(
+        r.t,
+        (r_tag, tag, r.t = *tag.t; continue;),
+        (r_ctime, ct, r.is_comptime = true, r.t = *ct; continue;),
+        (r_decor, dec, {
+          r.is_const |= dec.constant;
+          r.is_volatile |= dec.valatile;
+          r.t = *dec.t;
+          continue;
+        }),
+        (r_ptr, pt, {
+          if (deref_ptr) {
+            r.t = *pt;
+            continue;
+          }
+          return r;
+        }),
+        (default, return r)
+    );
+}
 typePrinter(typed_value) {
-  PUTS("(tv,");
+  PUTS("(tv ");
   USETYPEPRINTER(Type, in.t);
   PUTS(",");
   tu_match_void(

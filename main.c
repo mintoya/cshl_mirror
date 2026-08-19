@@ -48,19 +48,20 @@ fptr *filectx = nullptr;
 __attribute__((noreturn)) void(error_at)(u8 *location, fptr message) {
   assertMessage(filectx);
   usize loc = (u8 *)location - filectx->ptr;
-  assertMessage(loc <= filectx->len);
   usize line = 0;
   usize col = 0;
-  usize i = 0, k = 0;
-  for (; k < loc; k++) {
-    if (filectx[0].ptr[k] == '\n') {
-      line++;
-      i = 0;
-      continue;
+  if (loc <= filectx->len) {
+    usize i = 0, k = 0;
+    for (; k < loc; k++) {
+      if (filectx[0].ptr[k] == '\n') {
+        line++;
+        i = 0;
+        continue;
+      }
+      i++;
     }
-    i++;
+    col = i;
   }
-  col = i;
   println("error : {slice(c8)} , at line {} column {}", message, line + 1, col + 1);
   exit(1);
 }

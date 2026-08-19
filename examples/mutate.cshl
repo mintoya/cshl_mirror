@@ -1,0 +1,8 @@
+asize ~= 1;
+type ~~ @type();
+increasing_array~~@fn((t~type),type,
+  { asize = asize + 1;} 
+  |> return @arr _,t );
+
+a ~increasing_array @sint 8;
+b ~increasing_array @uint 8;

@@ -30,6 +30,7 @@ static u32 lower_builtin_struct(superscope *ss, scope *s, ast *args) {
   );
 }
 let constexpr void_value = (typed_value){tu_of(r_void, {})};
+
 // ---- @fn() ----
 static u32 lower_builtin_fn(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
@@ -52,12 +53,12 @@ static u32 lower_builtin_fn(superscope *ss, scope *s, ast *args) {
   let fn_params = mList_init(ss->alloc, Type, sentList_len(argdecls.stmts) + 1);
   foreach (let did, vlap(sentList_vla(argdecls.stmts)))
     iflet_tu (let _, astDecl, *did)
-      mList_push(fn_params, scope_find_origional(ss, temp, lower(ss, temp, did))->t);
+      mList_push(fn_params, scope_find(ss, temp, lower(ss, temp, did))->t);
     else mList_push(fn_params, value_asType(temporary_interpret_ast(ss, temp, did)));
 
   Type ret_type = (Type)tu_of(c_any, {});
   iflet_tu (let _, astDecl, *list.ptr[1])
-    ret_type = scope_find_origional(ss, temp, lower(ss, temp, list.ptr[1]))->t;
+    ret_type = scope_find(ss, temp, lower(ss, temp, list.ptr[1]))->t;
   else ret_type = value_asType(temporary_interpret_ast(ss, temp, list.ptr[1]));
 
   mList_push(fn_params, ret_type);
@@ -112,9 +113,6 @@ static u32 lower_builtin_return(superscope *ss, scope *s, ast *args) {
   scope_add_inst(ss, s, (ir)tu_of(ir_ret, val));
   return scope_add_rvalue(ss, s, void_value);
 }
-
-// ---- @toplevel(decl) ----
-static u32 lower_builtin_toplevel(superscope *ss, scope *s, ast *args) { TODO("flesh out"); }
 
 // ---- @id(str) ----
 static u32 lower_builtin_id(superscope *ss, scope *s, ast *args) {
@@ -202,32 +200,38 @@ static u32 lower_builtin_uqot(superscope *ss, scope *s, ast *args) {
   return lower(ss, s, quoted.v.c_ast);
 }
 
-// ---- @at(arg) ----
+// ---- @at(arg)/where ----
 static u32 lower_builtin_at(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
   if (list.len != 1) error_print(args, "@at(arg) takes exactly one argument");
   u32 val = lower(ss, s, list.ptr[0]);
-  let target = scope_find_origional(ss, s, val);
-  assertMessage(!Type_is_comptime(target->t), "cannot take the address of a comptime value");
-  target->v.value = nullptr;
-
-  Type ptr_type = (Type)tu_of(r_ptr, ss_getType(ss, target->t));
-  let dest = scope_add_rvalue(ss, s, (typed_value){ptr_type});
-  // clang-format off
-  scope_add_inst(ss, s, (ir)tu_of(ir_op, {
-        .l = val, 
-        .r = (TODO("add address of operator"), 0), 
-        .d = dest, 
-        .op = (TODO("add address of operator"), 0)})
+  let target = scope_find(ss, s, val);
+  let peeled = Type_peel(target->t, false);
+  iflet_tu (let pt, r_ptr, peeled.t) {
+    target->v.value = nullptr; // the pointer is unknown now
+    u32 dest = scope_add_rvalue(ss, s, (typed_value){*pt});
+    scope_add_inst(ss, s, (ir)tu_of(ir_deref, {.d = dest, .s = val}));
+    return dest;
+  }
+  error_print(args, "@at requires a pointer argument, got {Type}", target->t);
+}
+static u32 lower_builtin_where(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(&args);
+  if (list.len != 1) error_print(args, "@at(arg) takes exactly one argument");
+  let o = scope_find(ss, s, lower(ss, s, list.ptr[0]));
+  if (Type_is_comptime(o->t)) error_print(args, "taking address of comptime value");
+  o->v.value = nullptr;
+  return scope_add_rvalue(
+      ss,
+      s,
+      (typed_value){(Type)tu_of(r_ptr, &o->t)}
   );
-  // clang-format on
-  return dest;
 }
 
 // ---- @ast() / @any() / @int() / @type() helper----
-static u32 lower_builtin_bare_type(superscope *ss, scope *s, ast *args, Type t, const char *name) {
+static u32 lower_builtin_bare_type(superscope *ss, scope *s, ast *args, Type t) {
   let list = builtin_arg_list(&args);
-  assertMessage(list.len == 0, "@%s() takes no arguments", name);
+  assertMessage(list.len == 0, "@(type)() takes no arguments");
   return scope_add_rvalue(ss, s, Type_asValue(ss, t));
 }
 
@@ -293,13 +297,12 @@ u32 lower_builtin(superscope *ss, scope *s, builtin_id builtin, ast *args) {
       if(builtin_arg_list(&args).len)error_print(args, "break/continue take no args");
       scope_add_inst(ss, s,builtin == builtin_break? (ir)tu_of(ir_break, {}):(ir)tu_of(ir_continue, {}));
       return scope_add_rvalue(ss, s, (typed_value){tu_of(r_void, {})});
-    case builtin_toplevel:  return lower_builtin_toplevel(ss, s, args);
-    case builtin_ast:       return lower_builtin_bare_type(ss, s, args, (Type)tu_of(c_ast, {}), "ast");
+    case builtin_ast:       return lower_builtin_bare_type(ss, s, args, (Type)tu_of(c_ast, {}));
     case builtin__id:       return lower_builtin_id(ss, s, args);
-    case builtin_any:       return lower_builtin_bare_type(ss, s, args, (Type)tu_of(c_any, {}), "any");
-    case builtin_void:      return lower_builtin_bare_type(ss, s, args, (Type)tu_of(r_void, {}), "void");
-    case builtin_int:       return lower_builtin_bare_type(ss, s, args, (Type)tu_of(c_int, {}), "int");
-    case builtin_type:      return lower_builtin_bare_type(ss, s, args, (Type)tu_of(c_type, {}), "type");
+    case builtin_any:       return lower_builtin_bare_type(ss, s, args, (Type)tu_of(c_any, {}));
+    case builtin_void:      return lower_builtin_bare_type(ss, s, args, (Type)tu_of(r_void, {}));
+    case builtin_int:       return lower_builtin_bare_type(ss, s, args, (Type)tu_of(c_int, {}));
+    case builtin_type:      return lower_builtin_bare_type(ss, s, args, (Type)tu_of(c_type, {}));
     case builtin_const:     return lower_builtin_decor(ss, s, args, true, false);
     case builtin_volatile:  return lower_builtin_decor(ss, s, args, false, true);
     case builtin_sint:      return lower_builtin_intty(ss, s, args, true);
@@ -312,12 +315,12 @@ u32 lower_builtin(superscope *ss, scope *s, builtin_id builtin, ast *args) {
     case builtin_qot:       return lower_builtin_qot(ss, s, args);
     case builtin_uqot:      return lower_builtin_uqot(ss, s, args);
     case builtin_at:        return lower_builtin_at(ss, s, args);
+    case builtin_where:        return lower_builtin_where(ss, s, args);
       // clang-format on
   }
   assertMessage(false, "unhandled builtin");
 }
 u32 lower_call(superscope *ss, scope *s, u32 callable, u32 optional_instance, ast *args);
-// MARK: rest
 
 static inline u32 lower_ast_val(superscope *ss, scope *s, ast *child);
 u32 lower_call_type(superscope *ss, scope *s, u32 callable, u32 optional_instance, ast *args, typed_value tv) {
@@ -326,7 +329,7 @@ u32 lower_call_type(superscope *ss, scope *s, u32 callable, u32 optional_instanc
       t,
       (builtin, b, return lower_builtin(ss, s, b, args)),
 
-      (c_type, t, lower_call_type(ss, s, callable, 0, args, *scope_find_origional(ss, s, callable))),
+      (c_type, t, lower_call_type(ss, s, callable, 0, args, *scope_find(ss, s, callable))),
       (r_struct, st, {
         foreach (let item, mList_iter(st))
           if (fptr_eq(item.name, "()"))
@@ -352,21 +355,31 @@ u32 lower_call_type(superscope *ss, scope *s, u32 callable, u32 optional_instanc
                 (astABlock, bb, bb.items),
                 (default, (ast **)nullptr),
             );
-            if (!list) return lower_ast_val(ss, s, nullptr);
             let tindex = *(usize *)index;
-            return lower_ast_val(ss, s, tindex < sentList_len(list) ? list[tindex] : nullptr);
+            return lower_ast_val(ss, s, list && tindex < sentList_len(list) ? list[tindex] : nullptr);
           }
+        // asts lower themselves: an ast used as a callable evaluates to a value
+        // (e.g. a quoted @fn(...)), then the call applies to that value. The
+        // evaluated value becomes a fresh rvalue so call resolution (and any
+        // eager interpret_call) looks it up, not the original ast.
+        if (tv.v.c_ast) {
+          let val = temporary_interpret_ast(ss, s, tv.v.c_ast);
+          u32 resolved = scope_add_rvalue(ss, s, val);
+          return lower_call_type(ss, s, resolved, optional_instance, args, val);
+        }
         error_print(args, "ast does not support non-index call");
       }),
-      // (r_void , _ , ),
-      // (r_uint , _ , ),
+      // (r_bitfield , _ , ),
       // (r_sint , _ , ),
       // (r_arr , _ , ),
+      // (r_void , _ , ),
+      // (r_uint , _ , ),
       // (c_int , _ , ),
       (c_any, _, {
         // a value whose type is not statically known (e.g. a function returned
-        // through an `any` ret type): we can't resolve the call at lower time,
-        // so emit a runtime call and let interpret_call dispatch on the value
+        // through an `any` ret type). We can't resolve the call at lower time,
+        // so emit a runtime call: interpret_call reads the concrete function
+        // the payload now holds and dispatches on it.
         u32 dest = scope_add_rvalue(ss, s, (typed_value){tu_of(c_any, {})});
         let args_list = mList_init(ss->alloc, u32, 2);
         if (optional_instance) mList_push(args_list, optional_instance);
@@ -414,15 +427,21 @@ u32 lower_call_type(superscope *ss, scope *s, u32 callable, u32 optional_instanc
             mList_push(args_list, lower(ss, s, args));
         }
 
-        scope_add_inst(ss, s, (ir)tu_of(ir_call, {.l = callable, .d = dest, .args = {mList_len(args_list), mList_toOwned(ss->alloc, args_list)}}));
+        // Functions whose result is compile-time are evaluated here, while
+        // the current scope (and any enclosing macro params) is still live;
+        // only runtime results are deferred to interpret time.
+        let c = (ir_call){.l = callable, .d = dest, .args = {mList_len(args_list), mList_toOwned(ss->alloc, args_list)}};
+        if (Type_is_comptime(ret_type))
+          interpret_call(ss, s, c);
+        else
+          scope_add_inst(ss, s, (ir)tu_of(ir_call, c));
         return dest;
       }),
   );
   return 0;
 }
 u32 lower_call(superscope *ss, scope *s, u32 callable, u32 optional_instance, ast *args) {
-  let fn_val = scope_find_origional(ss, s, callable);
-  return lower_call_type(ss, s, callable, optional_instance, args, *fn_val);
+  return lower_call_type(ss, s, callable, optional_instance, args, *scope_find(ss, s, callable));
 }
 //{ast member access
 static inline u32 lower_ast_val(superscope *ss, scope *s, ast *child) {
@@ -438,7 +457,8 @@ static u32 lower_ast_access(superscope *ss, scope *s, ast *self, ast *right) {
       *right,
       (astString, str, {
         iflet_tu (let op, astOp, *self) {
-          let inner = slice_split(str, (1, str.len - 1))[0];
+          let inner = string_escape(ss->alloc, str);
+          defer { slice_free(ss->alloc, inner); };
           if (inner.len > 4) error_print(right, "operator too long");
           u32 u = 0;
           memcpy(&u, inner.ptr, inner.len);
@@ -491,91 +511,73 @@ static u32 lower_ast_access(superscope *ss, scope *s, ast *self, ast *right) {
 }
 //}
 u32 lower_dot(superscope *ss, scope *s, u32 left, ast *right) {
-  fptr field_name;
-  tu_match_void(
-      *right,
-      (astId, id, field_name = id;),
-      (astString, str, field_name = slice_split(str, (1, str.len - 1))[0];),
-      (astNumber, num, field_name = num;),
-      (default, assertMessage(false, "expected id, string or number for member access"))
-  );
-
-  let left_val = scope_find_origional(ss, s, left);
+  let left_val = scope_find(ss, s, left);
   if (tu_is(c_ast, strip_decor(left_val->t)))
     return lower_ast_access(ss, s, left_val->v.c_ast, right);
-  Type current_type = left_val->t;
+  let field_name =
+      tu_match_exp(
+          *right,
+          (astId, id, id),
+          (astNumber, num, num),
+          (default, (error_print(right, "expected id, string or number for member access"), nullFptr))
+      );
+  let current_type = Type_peel(left_val->t, true); // auto-deref, like member access
+  iflet_tu (let st, r_struct, current_type.t) {
+    foreach (let item, mList_iter(st)) {
+      if (fptr_eq(item.name, field_name)) {
+        typed_value member_val = {item.t};
 
-  bool inherited_const = false;
-  bool inherited_valatile = false;
+        if (Type_is_comptime(member_val.t))
+          member_val.t = (Type)tu_of(r_ctime, ss_getType(ss, member_val.t));
+        else if (current_type.is_const || current_type.is_volatile)
+          member_val.t = (Type)tu_of(r_decor, {.t = ss_getType(ss, member_val.t), .constant = current_type.is_const, .valatile = current_type.is_volatile});
 
-  while (true) {
-    tu_match_void(
-        current_type,
-        (r_tag, tag, current_type = *tag.t; continue;),
-        (r_ptr, pt, current_type = *pt; continue;),
-        (r_ctime, ct, current_type = *ct; continue;),
-        (r_decor, dec, {
-          inherited_const |= dec.constant;
-          inherited_valatile |= dec.valatile;
-          current_type = *dec.t;
-          continue;
-        }),
-        (r_struct, st, {
-          foreach (let item, mList_iter(st)) {
-            if (fptr_eq(item.name, field_name)) {
-              typed_value member_val = {item.t};
-
-              if (Type_is_comptime(member_val.t))
-                member_val.t = (Type)tu_of(r_ctime, ss_getType(ss, member_val.t));
-              else if (inherited_const || inherited_valatile)
-                member_val.t = (Type)tu_of(r_decor, {.t = ss_getType(ss, member_val.t), .constant = inherited_const, .valatile = inherited_valatile});
-
-              return scope_add_rvalue(ss, s, member_val);
-            }
-          }
-          assertMessage(false, "struct member not found");
-        }),
-        (default, error_print(right, "{Type} does not support dot", current_type)),
-    );
-    break;
+        return scope_add_rvalue(ss, s, member_val);
+      }
+    }
+    assertMessage(false, "struct member not found");
   }
-  return 0;
-}
-static inline fptr fptr_from_opnumber(u32 n) {
-  static char buf[sizeof(u32)];
-  memcpy(buf, &n, sizeof(u32));
-  usize len = 0;
-  while (len < sizeof(u32) && buf[len])
-    len++;
-  return (fptr){len, (u8 *)buf};
+  error_print(right, "{Type} does not support dot", current_type.t);
 }
 
 u32 lower_operator_overload(superscope *ss, scope *s, u32 left, enum_op op, ast *right) {
-  static char opname[5] = {};
-  memcpy(&op, opname, sizeof(op));
-  let op_name = fp((char *)opname);
-  let left_val = scope_find_origional(ss, s, left);
-  Type current_type = left_val->t;
-
-  while (true) {
-    tu_match_void(
-        current_type,
-        (r_tag, tag, current_type = *tag.t; continue;),
-        (r_ptr, pt, current_type = *pt; continue;),
-        (r_ctime, ct, current_type = *ct; continue;),
-        (r_decor, dec, current_type = *dec.t; continue;),
-        (r_struct, st, {
-          foreach (let item, mList_iter(st)) {
-            if (fptr_eq(item.name, op_name)) {
-              u32 method_val = scope_add_rvalue(ss, s, (typed_value){item.t});
-              return lower_call(ss, s, method_val, left, right);
-            }
-          }
-          return 0;
-        }),
-        (default, return 0;),
-    );
-    break;
+  // Operators are packed symbols: main.c's initOpNumbers packs each operator's
+  // source text into a u32 via the opS union (see opNumbers). Map the enum to
+  // its packed symbol, then unpack those bytes back into the name string.
+  u32 packed = 0;
+  switch (op) {
+      // clang-format off
+    case enop_mul:   packed = opNumbers.mul;   break;
+    case enop_div:   packed = opNumbers.div;   break;
+    case enop_mod:   packed = opNumbers.mod;   break;
+    case enop_plus:  packed = opNumbers.plus;  break;
+    case enop_minus: packed = opNumbers.minus; break;
+    case enop_oand:  packed = opNumbers.oand;  break;
+    case enop_oor:   packed = opNumbers.oor;   break;
+    case enop_oband: packed = opNumbers.oband; break;
+    case enop_obor:  packed = opNumbers.obor;  break;
+    case enop_shr:   packed = opNumbers.shr;   break;
+    case enop_shl:   packed = opNumbers.shl;   break;
+    case enop_mor:   packed = opNumbers.mor;   break;
+    case enop_les:   packed = opNumbers.les;   break;
+    case enop_moq:   packed = opNumbers.moq;   break;
+    case enop_leq:   packed = opNumbers.leq;   break;
+    case enop_set:   packed = opNumbers.set;   break;
+    default: return 0;
+      // clang-format on
+  }
+  char opname[5] = {};
+  memcpy(opname, &packed, sizeof(u32));
+  let left_val = scope_find(ss, s, left);
+  let current_type = Type_peel(left_val->t, true); // auto-deref, like member access
+  iflet_tu (let st, r_struct, current_type.t) {
+    foreach (let item, mList_iter(st))
+      if (fptr_eq(item.name, fp((char *)opname)))
+        return P$(
+            scope_add_rvalue(ss, s, (typed_value){item.t}),
+            lower_call(ss, s, $, left, right)
+        );
+    return 0;
   }
   return 0;
 }
@@ -583,12 +585,11 @@ u32 lower_operator_overload(superscope *ss, scope *s, u32 left, enum_op op, ast 
 u32 lower_boolean_op(superscope *ss, scope *s, u32 left, enum_boolean_op bop, ast *right) {
   u32 right_val = lower(ss, s, right);
 
-  let left_tv = scope_find_origional(ss, s, left);
-  let right_tv = scope_find_origional(ss, s, right_val);
+  let left_tv = scope_find(ss, s, left);
+  let right_tv = scope_find(ss, s, right_val);
 
   if (tu_is(c_ast, strip_decor(left_tv->t)) || tu_is(c_ast, strip_decor(right_tv->t))) {
-    // asts are compile-time; only and/or are defined on them, via truthiness
-    assertMessage(bop == bop_oand || bop == bop_oor, "comparisons on asts are not supported");
+    if (!EQUAL_ANY(bop, bop_oand, bop_oor)) error_print(right, "only or/and for asts");
     bool r = bop == bop_oand ? (interp_tv_truthy(left_tv) && interp_tv_truthy(right_tv))
                              : (interp_tv_truthy(left_tv) || interp_tv_truthy(right_tv));
     return scope_add_rvalue(ss, s, (typed_value){tu_of(c_int, {}), BInt.from.i64(ss->alloc, r ? 1 : 0)});
@@ -610,20 +611,19 @@ u32 lower_boolean_op(superscope *ss, scope *s, u32 left, enum_boolean_op bop, as
 u32 lower_math_op(superscope *ss, scope *s, u32 left, enum_op opn, ast *right) {
   u32 right_val = lower(ss, s, right);
 
-  let left_tv = scope_find_origional(ss, s, left);
-  let right_tv = scope_find_origional(ss, s, right_val);
+  let left_tv = scope_find(ss, s, left);
+  let right_tv = scope_find(ss, s, right_val);
 
-  assertMessage(Type_isint(left_tv->t) && Type_isint(right_tv->t), "Math ops require integer types");
-
-  // Type Promotion: If one is a literal (c_int) and the other is sized, yield the sized type.
+  if (!Type_isint(left_tv->t) && Type_isint(right_tv->t)) error_print(right, "math between non-numbers");
   Type dest_type = left_tv->t;
-  if (tu_is(c_int, dest_type) && !tu_is(c_int, right_tv->t)) {
+  if (tu_is(c_int, dest_type) && !tu_is(c_int, right_tv->t))
     dest_type = right_tv->t;
-  }
 
-  u32 dest = scope_add_rvalue(ss, s, (typed_value){dest_type});
-  scope_add_inst(ss, s, (ir)tu_of(ir_op, {.l = left, .r = right_val, .d = dest, .op = (u32)opn}));
-
+  let dest = scope_add_rvalue(ss, s, (typed_value){dest_type});
+  let op = (ir_op){.l = left, .r = right_val, .d = dest, .op = (u32)opn};
+  if (Type_is_comptime(dest_type))
+    interpret_op(ss, s, op);
+  else scope_add_inst(ss, s, (ir)tu_of(ir_op, op));
   return dest;
 }
 
@@ -632,7 +632,7 @@ u32 lower_op(superscope *ss, scope *s, u32 left, enum_op opn, ast *right) {
       // clang-format off
     default: assertMessage(false, "unhandled math operator");
     case enop_dot: return lower_dot(ss, s, left, right);
-    case enop_colon: assertMessage(false, "colon operator must be followed by a function call");
+    case enop_colon: assertMessage(false, "colon without function call");
     case enop_call: return lower_call(ss, s, left, 0, right);
       // clang-format on
 
@@ -643,7 +643,7 @@ u32 lower_op(superscope *ss, scope *s, u32 left, enum_op opn, ast *right) {
 
       u32 inner_res = lower(ss, pipscope, right);
 
-      let inner_tv = scope_find_origional(ss, pipscope, inner_res);
+      let inner_tv = scope_find(ss, pipscope, inner_res);
       u32 hoisted_res = scope_add_rvalue(ss, s, *inner_tv);
 
       scope_add_inst(
@@ -652,6 +652,20 @@ u32 lower_op(superscope *ss, scope *s, u32 left, enum_op opn, ast *right) {
           (ir)tu_of(ir_op, {.l = inner_res, .r = 0, .d = hoisted_res, .op = enop_set})
       );
       return hoisted_res;
+    }
+    case enop_eq:
+    case enop_neq: {
+      iflet_tu (let str, astString, *right) {
+        str = string_escape(ss->alloc, str);
+        defer { slice_free(ss->alloc, str); };
+        let lv = scope_find(ss, s, left);
+        if (tu_is(c_ast, strip_decor(lv->t))) {
+          bool eq = lv->v.c_ast && tu_is(astId, *lv->v.c_ast) &&
+                    fptr_eq(tu_catch(astId, *lv->v.c_ast), str);
+          if (opn == enop_neq) eq = !eq;
+          return scope_add_rvalue(ss, s, (typed_value){tu_of(c_int, {}), BInt.from.i64(ss->alloc, eq ? 1 : 0)});
+        }
+      }
     }
     case enop_set:
     case enop_obor:
@@ -668,22 +682,7 @@ u32 lower_op(superscope *ss, scope *s, u32 left, enum_op opn, ast *right) {
     case enop_mor:
     case enop_les:
     case enop_moq:
-    case enop_leq:
-    case enop_eq:
-    case enop_neq: {
-      // ast ids compare against string literals: `id == "name"`
-      iflet_tu (let str, astString, *right) {
-        let lv = scope_find_origional(ss, s, left);
-        if (tu_is(c_ast, strip_decor(lv->t))) {
-          bool eq = lv->v.c_ast && tu_is(astId, *lv->v.c_ast) &&
-                    fptr_eq(tu_catch(astId, *lv->v.c_ast), slice_split(str, (1, str.len - 1))[0]);
-          if (opn == enop_neq) eq = !eq;
-          return scope_add_rvalue(ss, s, (typed_value){tu_of(c_int, {}), BInt.from.i64(ss->alloc, eq ? 1 : 0)});
-        }
-      }
-      static char opname[5] = {};
-      memcpy(opname, &opn, sizeof(opn));
-      let op_name = fp((char *)opname);
+    case enop_leq: {
       if_decl (let overload_result, lower_operator_overload(ss, s, left, opn, right))
         return overload_result;
 
@@ -691,31 +690,21 @@ u32 lower_op(superscope *ss, scope *s, u32 left, enum_op opn, ast *right) {
         case enop_set: {
           u32 right_val = lower(ss, s, right);
 
-          let l_tv = scope_find_origional(ss, s, left);
-          let r_tv = scope_find_origional(ss, s, right_val);
+          let l_tv = scope_find(ss, s, left);
+          let r_tv = scope_find(ss, s, right_val);
 
           Type l_type = *ss_getType(ss, l_tv->t);
-          Type r_type = *ss_getType(ss, r_tv->t);
-
-          bool is_const = false;
-
-          iflet_tu (let dec, r_decor, l_type) {
-            is_const = dec.constant;
-            l_type = *dec.t; // Peeling off const/volatile
-          }
-
-          iflet_tu (let dec, r_decor, r_type)
-            r_type = *dec.t; // RHS qualifiers don't matter for the underlying type match
+          let uq = Type_peel(*ss_getType(ss, r_tv->t), false);
+          Type r_type = uq.t;
 
           if (tu_is(c_any, l_type))
             l_tv->t = r_type;
-          else
-            // Both are unqualified now, so structural comparison works perfectly
-            if (Type_cmp(l_type, r_type)) error_print(right, "{Type}!={Type}", l_type, r_type);
-          assertMessage(!is_const, "cannot assign to a const variable");
+          else if (Type_cmp(l_type, r_type)) error_print(right, "{Type}!={Type}", l_type, r_type);
+          assertMessage(!uq.is_const, "cannot assign to a const variable");
 
-          scope_add_inst(ss, s, (ir)tu_of(ir_op, {.l = right_val, .r = 0, .d = left, .op = enop_set}));
-
+          let op = (ir_op){.l = right_val, .r = 0, .d = left, .op = enop_set};
+          if (Type_is_comptime(l_tv->t)) interpret_op(ss, s, op);
+          else scope_add_inst(ss, s, (ir)tu_of(ir_op, op));
           return left;
         }
           // clang-format off
@@ -735,8 +724,9 @@ u32 lower_op(superscope *ss, scope *s, u32 left, enum_op opn, ast *right) {
   }
 }
 u32 lower_call(superscope *ss, scope *s, u32 callable, u32 optional_instance, ast *args);
+// MARK: rest
 u32 try_coerce(superscope *ss, scope *s, Type t, u32 v) {
-  let o = *scope_find_origional(ss, s, v);
+  let o = *scope_find(ss, s, v);
   if (!Type_cmp(o.t, t)) return v;
   let ot = strip_decor(o.t);
   if (!Type_cmp(ot, t)) return v;
@@ -755,15 +745,11 @@ u32 try_coerce(superscope *ss, scope *s, Type t, u32 v) {
   return 0;
 }
 u32 clone_decl(superscope *ss, scope *s, u32 v) {
-  let o = *scope_find_origional(ss, s, v);
+  let o = *scope_find(ss, s, v);
   tu_match_void(
       strip_decor(o.t),
       (c_int, i, return scope_add_rvalue(ss, s, (typed_value){tu_of(c_int, {}), BInt.copy(ss->alloc, o.v.c_int)})),
       (default, {
-        // r_ctime *is* the compile-time marker, so check the unstripped type:
-        // strip_decor would peel it off and leave e.g. r_func, which is not
-        // comptime, sending function values down the byte-copy path below
-        // (which memcpys sizeof(*m)==1 byte of the payload -> garbage).
         if (!Type_is_comptime(o.t)) {
           let m = acreate(ss->alloc, u8[Type_rsize(strip_decor(o.t)) ?: 1]);
           if (o.v.value) memcpy(m, o.v.value, sizeof(*m));
@@ -786,23 +772,20 @@ u32 lower(superscope *env, scope *s, astptr ats) {
                      ? value_asType(temporary_interpret_ast(env, s, decl.type))
                      : (Type)tu_of(c_any, {});
          // println("\ttype:{Type}", t);
-         u32 val = decl.value
+         u32 val = decl.value && !tu_is(astEmptyStatement, *decl.value)
                        ? lower(env, s, decl.value)
                        : scope_add_rvalue(env, s, (typed_value){t});
-
-         // println("\tvalue:{*:typed_value}", scope_find_origional(env, s, val));
+         // println("\tvalue:{*:typed_value}", scope_find(env, s, val));
          {
-           let nt = scope_find_origional(env, s, val)->t;
+           let nt = scope_find(env, s, val)->t;
            if (!tu_is(c_any, t) && Type_cmp(t, nt) && !(val = try_coerce(env, s, t, val)))
              error_print(ats, "{Type}!={Type}", t, nt);
-           // an expression smuggled into a decl without a name or type:
-           // evaluate it, so a statement that produces an ast runs it
            else if (!decl.name && !decl.type && tu_is(c_ast, strip_decor(nt)))
              val = try_coerce(env, s, (Type)tu_of(c_any, {}), val);
          }
          val = clone_decl(env, s, val);
          if (decl.is_const) {
-           let resolved_val = scope_find_origional(env, s, val);
+           let resolved_val = scope_find(env, s, val);
            assertMessage(!tu_is(c_any, resolved_val->t), "cannot apply const to anytype");
            resolved_val->t = (Type)tu_of(r_decor, {ss_getType(env, resolved_val->t), true, false});
          }
@@ -819,7 +802,7 @@ u32 lower(superscope *env, scope *s, astptr ats) {
                }),
            );
          }
-         let resolved_val = scope_find_origional(env, s, val);
+         let resolved_val = scope_find(env, s, val);
          resolved_val->t = *ss_getType(env, resolved_val->t);
          val;
        })),
@@ -830,7 +813,7 @@ u32 lower(superscope *env, scope *s, astptr ats) {
          foreach (let it, vlap(sentList_vla(ast_block.stmts))) {
            last = lower(env, block, it);
            if (!tu_is(astDecl, *it)) {
-             let tv = scope_find_origional(env, block, last);
+             let tv = scope_find(env, block, last);
              if (tv && tu_is(c_ast, strip_decor(tv->t)))
                last = try_coerce(env, block, (Type)tu_of(c_any, {}), last);
            }

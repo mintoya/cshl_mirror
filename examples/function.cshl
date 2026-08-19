@@ -1,6 +1,0 @@
-a~~ 1;
-c~~@fn((arg ~ @typeof(a)) , @typeof(arg), 
-  return a * 2);
-d ~ typeof(c a) = c a;
-b ~= c a;
-b = c(b);

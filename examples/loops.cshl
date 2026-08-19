@@ -1,9 +1,0 @@
-// loops: @while lowers to ir_while, conditions run through the interpreter
-// note: loop counters must be mutable (~=); ~~ declares a const
-a ~= 10;
-@while(a, a = a - 1);   // countdown to zero
-
-b ~= 0;
-@while(b < 5, b = b + 1); // computed condition, stops at five
-
-@if(1, c ~~ 7);            // if with a block body

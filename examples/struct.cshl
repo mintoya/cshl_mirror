@@ -14,7 +14,7 @@ point ~type~ @struct{
       y~~ self.y * scale + other.y
     ));
   // first arg is a type, so this is basically a static menber of the type
-  @id("+") ~~ fn((type,x~i32,y~i32), Self,{
+  @id("()") ~~ fn((type,x~i32,y~i32), Self,{
     r~Self ;
     r.x = x;
     r.y = y;
@@ -25,7 +25,6 @@ point ~type~ @struct{
 
 a~~ point(1,2);
 b~~ point(3,4);
-
 //  analogous
 c~point~ a."+"(a,b);
 // for functions, pointer can only use colon for call 
