@@ -8,23 +8,23 @@ point ~type~ @struct{
   x ~ i32;
   y ~ i32;
 
-  @id("+") ~~ fn((self~Self,other~Self), Self,
+  @id("+") ~~ @fn((self~Self,other~Self),Self,
     return @construct(Self,
       x~~ self.x * scale + other.x,
       y~~ self.y * scale + other.y
     ));
   // first arg is a type, so this is basically a static menber of the type
-  @id("()") ~~ fn((type,x~i32,y~i32), Self,{
+  @id("()") ~~ @fn((type,x~i32,y~i32),Self,{
     r~Self ;
     r.x = x;
     r.y = y;
     return r;
-  });
+  });;
 };
 
 
-a~~ point(1,2);
-b~~ point(3,4);
+a~~ @construct(point,x~~1,y~~2);
+b~~ @construct(point,x~~3,y~~4);
 //  analogous
 c~point~ a."+"(a,b);
 // for functions, pointer can only use colon for call 

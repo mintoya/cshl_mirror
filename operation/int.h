@@ -7,14 +7,7 @@
 #include <string.h>
 
 static bool Type_mutable(Type t) {
-  while (1)
-    tu_match_void(
-        t,
-        (r_ctime, ct, t = *ct;),
-        (r_decor, dec, if (dec.constant) return false; t = *dec.t;),
-        (r_tag, tag, t = *tag.t;),
-        (default, return true)
-    );
+  return !Type_peel(t, false).is_const;
 }
 
 typedef enum {
@@ -24,10 +17,6 @@ typedef enum {
   int_ctrl_ret,
 } interpret_ctrl;
 
-// -- value helpers ---------------------------------------------------------
-// Store bigint `b` into the storage of `dest`, honoring dest's type.
-// c_int destinations own a bigint; sized integer destinations get the low
-// bytes (sign-padded first so bigint_into_int's memcpy never overreads).
 static void interp_store_bigint(superscope *ss, typed_value *dest, bigint b) {
   Type t = strip_decor(dest->t);
   if (tu_is(c_int, t)) {
@@ -48,7 +37,7 @@ static void interp_store_bigint(superscope *ss, typed_value *dest, bigint b) {
 }
 
 static bool interp_truthy(superscope *ss, scope *s, u32 idx) {
-  return interp_tv_truthy(scope_find_origional(ss, s, idx));
+  return interp_tv_truthy(scope_find(ss, s, idx));
 }
 
 // 2^n as a bigint. bigint.h has no pow2/shift primitives, so build the bit
@@ -99,8 +88,8 @@ static bigint bigint_bitop(superscope *ss, bigint a, bigint b, bool is_or) {
 typed_value interpret_op(superscope *ss, scope *s, ir_op c);
 
 static typed_value interpret_set(superscope *ss, scope *s, ir_op c) {
-  let dst = scope_find_origional(ss, s, c.d);
-  let src = scope_find_origional(ss, s, c.l);
+  let dst = scope_find(ss, s, c.d);
+  let src = scope_find(ss, s, c.l);
   Type dt = strip_decor(dst->t);
   if (Type_isint(dt)) {
     let b = int_as_bigint(ss, *src);
@@ -116,8 +105,8 @@ static typed_value interpret_set(superscope *ss, scope *s, ir_op c) {
 }
 
 typed_value interpret_math(superscope *ss, scope *s, ir_op c) {
-  let lv = scope_find_origional(ss, s, c.l);
-  let rv = scope_find_origional(ss, s, c.r);
+  let lv = scope_find(ss, s, c.l);
+  let rv = scope_find(ss, s, c.r);
   let a = int_as_bigint(ss, *lv);
   defer { msList_deInit(ss->alloc, a); };
   let b = int_as_bigint(ss, *rv);
@@ -163,14 +152,14 @@ typed_value interpret_math(superscope *ss, scope *s, ir_op c) {
   }
   defer { msList_deInit(ss->alloc, res); };
 
-  let dest = scope_find_origional(ss, s, c.d);
+  let dest = scope_find(ss, s, c.d);
   interp_store_bigint(ss, dest, res);
   return *dest;
 }
 
 typed_value interpret_bool(superscope *ss, scope *s, ir_op c) {
-  let lv = scope_find_origional(ss, s, c.l);
-  let rv = scope_find_origional(ss, s, c.r);
+  let lv = scope_find(ss, s, c.l);
+  let rv = scope_find(ss, s, c.r);
   bool r = false;
   switch ((enum_op)c.op) {
     case enop_oand:
@@ -210,7 +199,7 @@ typed_value interpret_bool(superscope *ss, scope *s, ir_op c) {
     }
   }
 
-  let dest = scope_find_origional(ss, s, c.d);
+  let dest = scope_find(ss, s, c.d);
   let rb = BInt.from.i64(ss->alloc, r ? 1 : 0);
   defer { msList_deInit(ss->alloc, rb); };
   interp_store_bigint(ss, dest, rb);
@@ -252,10 +241,10 @@ typed_value interpret_op(superscope *ss, scope *s, ir_op c) {
   }
 }
 
-typed_value interpret_state(superscope *ss, scope *s, interpret_ctrl *ctrl);
+typed_value interpret_state(superscope *ss, scope *s, u8 *location, interpret_ctrl *ctrl);
 
-typed_value interpret_call(superscope *ss, scope *s, ir_call c) {
-  let fn_val = scope_find_origional(ss, s, c.l);
+typed_value interpret_call(superscope *ss, scope *s, u8 *loc, ir_call c) {
+  let fn_val = scope_find(ss, s, c.l);
   Type t = strip_decor(fn_val->t);
   iflet_tu (let _, r_ctime, t) t = *_;
   // a statically-known function is r_func; a dynamically-typed callable
@@ -267,23 +256,27 @@ typed_value interpret_call(superscope *ss, scope *s, ir_call c) {
   // concrete argument types -> spec (param+body) lookup
   let typeList = acreate(ss->alloc, Type[c.args.len + 1]);
   foreach (let i, range(0, c.args.len))
-    typeList[0][i] = strip_decor(scope_find_origional(ss, s, c.args.ptr[i])->t);
+    typeList[0][i] = strip_decor(scope_find(ss, s, c.args.ptr[i])->t);
   typeList[0][c.args.len] = (Type){}; // sentinel
 
-  let spec = ss->all_functions[function_trySpec(ss, s, fn, *typeList, c.args)];
+  // evaluate function_trySpec first: it may realloc ss->all_functions, so the
+  // array must be re-read *after* the call (C doesn't guarantee the order
+  // inside the subscript expression)
+  let spec_idx = function_trySpec(ss, s, loc, fn, *typeList, c.args);
+  let spec = ss->all_functions[spec_idx];
   let body = spec.body;
 
   // re-bind the arguments into the spec's parameter slots: on a spec cache hit
   // the slots still hold the previous call's values
   foreach (let i, range(0, c.args.len))
-    *scope_find_origional(ss, body, body->start + i + 1) = *scope_find_origional(ss, s, c.args.ptr[i]);
+    *scope_find(ss, body, body->start + i + 1) = *scope_find(ss, s, c.args.ptr[i]);
 
   // run the body; its trailing ir_ret hands back the returned value
   interpret_ctrl ctrl = int_ctrl_norm;
-  typed_value rv = interpret_state(ss, body, &ctrl);
+  typed_value rv = interpret_state(ss, body, loc, &ctrl);
   assertMessage(ctrl == int_ctrl_ret, "function body did not return");
 
-  let dest = scope_find_origional(ss, s, c.d);
+  let dest = scope_find(ss, s, c.d);
   *dest = rv;
   return rv;
 }
@@ -304,17 +297,17 @@ typed_value interpret_call(superscope *ss, scope *s, ir_call c) {
 // loop/function (or null at top level): break/continue/return are only
 // legal when it is non-null, which is exactly how those scopes are
 // guaranteed to be entered.
-typed_value interpret_state(superscope *ss, scope *s, interpret_ctrl *ctrl) {
+typed_value interpret_state(superscope *ss, scope *s, u8 *loc, interpret_ctrl *ctrl) {
   if (!s) return (typed_value){tu_of(r_void, {})};
   foreach (let ins, msList_iter(s->instructions))
     tu_match_void(
         ins,
         (ir_op, op, interpret_op(ss, s, op);),
-        (ir_call, call, interpret_call(ss, s, call);),
+        (ir_call, call, interpret_call(ss, s, loc, call);),
         (ir_ret, v, {
           assertMessage(ctrl, "return outside of a function");
           *ctrl = int_ctrl_ret;
-          return v ? (typed_value)*scope_find_origional(ss, s, v) : (typed_value){tu_of(r_void, {})};
+          return v ? (typed_value)*scope_find(ss, s, v) : (typed_value){tu_of(r_void, {})};
         }),
         (ir_break, _, {
           assertMessage(ctrl, "break outside of a loop");
@@ -328,8 +321,8 @@ typed_value interpret_state(superscope *ss, scope *s, interpret_ctrl *ctrl) {
         }),
         (ir_if, iv, {
           let r = interp_truthy(ss, s, iv.cnd)
-                      ? interpret_state(ss, iv.t, ctrl)
-                      : interpret_state(ss, iv.f, ctrl);
+                      ? interpret_state(ss, iv.t, loc, ctrl)
+                      : interpret_state(ss, iv.f, loc, ctrl);
           if (ctrl && *ctrl != int_ctrl_norm) return r;
         }),
         (ir_while, wv, {
@@ -340,12 +333,12 @@ typed_value interpret_state(superscope *ss, scope *s, interpret_ctrl *ctrl) {
           scope *cnd_scope = wv.c ? wv.c : wv.t;
           for (;;) {
             if (wv.c) {
-              typed_value cv = interpret_state(ss, wv.c, ctrl);
+              typed_value cv = interpret_state(ss, wv.c, loc, ctrl);
               if (ctrl && *ctrl != int_ctrl_norm) return cv;
             }
             if (!interp_truthy(ss, cnd_scope, wv.cnd)) break;
             lc = int_ctrl_norm;
-            rv = interpret_state(ss, wv.t, &lc);
+            rv = interpret_state(ss, wv.t, loc, &lc);
             if (lc == int_ctrl_brk) break;
             if (lc == int_ctrl_cnt) continue;
             if (lc == int_ctrl_ret) {
@@ -356,18 +349,19 @@ typed_value interpret_state(superscope *ss, scope *s, interpret_ctrl *ctrl) {
           }
         }),
         (ir_block, blk, {
-          typed_value r = interpret_state(ss, blk, ctrl);
+          typed_value r = interpret_state(ss, blk, loc, ctrl);
+          assertMessage(msList_len(blk->values), "block did not yield a value");
+          let src = &blk->values[msList_len(blk->values) - 1];
+          let dest = scope_find(ss, s, blk->start + 1);
+          *dest = *src;
           if (ctrl && *ctrl != int_ctrl_norm) return r;
         }),
-        (ir_dbg, dbg, {
-          let pv = scope_find_origional(ss, s, dbg.l);
-          let str = snprint(stdAlloc, "{*:typed_value}", pv);
-          fprintf(stderr, "[dbg %zu:%zu] %.*s\n", (size_t)dbg.line, (size_t)dbg.col, (int)str.len, str.ptr);
-        }),
+        (ir_deref, _, assertMessage(false, "encountered dereferance in interpreter")),
+        (ir_ref, _, assertMessage(false, "encountered referance in interpreter")),
     );
   return (typed_value){tu_of(r_void, {})};
 }
-typed_value interpret(superscope *ss, scope *s) {
+typed_value interpret(superscope *ss, scope *s, u8 *loc) {
   if (!s) return (typed_value){tu_of(r_void, {})};
-  return interpret_state(ss, s, nullptr);
+  return interpret_state(ss, s, loc, nullptr);
 }

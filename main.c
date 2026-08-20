@@ -117,8 +117,8 @@ cmd_main(
     let env = ss_init(allocator);
     lower(env, env->outermost, ast);
     print_wfO(sexplike, nullptr, "{scope}\n", *env->outermost);
-    interpret(env, env->outermost);
-    print_wfO(sexplike, nullptr, "{scope}\n", *env->outermost);
+    interpret(env, env->outermost, filectx->ptr);
+    // print_wfO(sexplike, nullptr, "{scope}\n", *env->outermost);
   }
 
   return 0;

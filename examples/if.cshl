@@ -6,19 +6,11 @@ a ~= 1;
 ast ~~ @ast();
 any ~~ @any();
 
-if ~~ @fn((a~ ast), ast, {
-  // ascessing inactive field of an ast gives you an empty ast, which is falsy
-  // for string literal ascess, it returns the node itself if the node is an operation, 
-  // where that operation is the thing in quotes
-  // every call is an operation with ()
+if ~~ @fn (a ~ast),ast,{
   call ~ast~ a."()";
   cond ~ast~ call.opleft;
   rest ~ast~ call.opright; // not putting ast in the expected type causes an evaluation of the ast argument
 
-  // `1 (2) else (3)` parses right-assoc as `1((2)(else(3)))`, so `rest` is
-  // an op `()` with left = then-branch, right = `else(3)` (op `()` with
-  // left = the `else` marker, right = the else-branch). Detect the else by
-  // checking that rest's right operand is an `else(...)` call.
   @if((rest."()".opright."()".opleft == "else"), {
     then ~ast~ rest.opleft;
     else ~ast~ rest.opright."()";
@@ -35,13 +27,21 @@ if ~~ @fn((a~ ast), ast, {
       @uqot(cond),
       @uqot(rest)
   );
-});
+};
 
 
 one ~= 1;
-@uqot if 1 
-  (one = 2) 
-  else
-  (one = 3);
 
+test ~ast~ if 1 (one = one + 1) else (one = 3);
 
+@uqot test;
+
+if (one == 2) {
+  one = 4;
+} else {
+  one = 0;
+};
+
+cnd ~~ @fn((a ~any,b ~any,c ~@typeof b),any,{
+  if (a) (return b) else (return c);
+});

@@ -1,5 +1,5 @@
 #pragma once
-// #define TV_EXPAND_VALUE 1
+#define TV_EXPAND_VALUE 1
 
 #include "ast.h"
 #include "wheels/macros.h"
@@ -97,6 +97,8 @@ static inline usize Type_ralig(Type t) {
   return tu_match_exp(
       t,
       (r_tag, tag, Type_ralig(*tag.t)),
+      (r_decor, dec, Type_ralig(*dec.t)),
+      (r_ctime, ct, Type_ralig(*ct)),
       (r_void, _, (usize)1),
       (r_uint, u, lineup(u, 8) / 8), // TODO
       (r_sint, u, lineup(u, 8) / 8), // TODO
@@ -123,6 +125,8 @@ static inline usize Type_rsize(Type t) {
   return tu_match_exp(
       t,
       (r_tag, tag, Type_rsize(*tag.t)),
+      (r_decor, dec, Type_rsize(*dec.t)),
+      (r_ctime, ct, Type_rsize(*ct)),
       (r_void, _, (usize)0),
       (r_uint, u, lineup(u, 8) / 8),
       (r_sint, u, lineup(u, 8) / 8),
@@ -449,7 +453,7 @@ typePrinter(Type) {
   typePrinterWorker(in, visited, _ctx);
 }
 
-static inline Type strip_decor(Type t) {
+static inline Type strip_decor(Type t) { // TODO unify with Type_peel
   let decorated = true;
   while (decorated) {
     tu_match_void(
@@ -499,7 +503,7 @@ typePrinter(typed_value) {
       (c_int, _, in.v.c_int ? USENAMEDPRINTER("bigint", in.v.c_int) : PUTS("??");),
       (c_ast, _, if (in.v.c_ast)
 #if defined TV_EXPAND_VALUE && TV_EXPAND_VALUE == 1
-                     USENAMEDPRINTER("ast", in.v.c_ast)
+                     USENAMEDPRINTER("ast", in.v.c_ast);
 #else
                      USENAMEDPRINTER("astTag", (in.v.c_ast->tag));
 #endif
