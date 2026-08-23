@@ -14,7 +14,8 @@
 #include <wheels/sList.h>
 
 typedef enum : u8 {
-  builtin_fn,       // fn((decl|type...) ,decl|type) c_func of this type,
+  builtin_fn,       // @fn((decl|type...) ,decl|type,body) c_func of this type,
+  builtin_closure,  // @closure((captures...),(decl|type...) ,decl|type,body) c_func of this type,
   builtin_if,       // @if(cnd , then ,)
   builtin_while,    // @while(cnd , then) //
   builtin_return,   // return x return
@@ -61,6 +62,7 @@ tu_def( // type
     (r_struct /*     */, mList(r_struct_item)),
     (r_bitfield /*   */, mList(r_bitf_item)),
     (r_func /*       */, mList(Type)),
+    (r_closure /*    */, struct { r_func captures, args; }),
     (r_ctime /*      */, Type *),
     (r_decor /*      */, struct {Type* t ; bool constant :1;bool valatile :1; }),
     // compile time
@@ -229,21 +231,26 @@ i8 Type_cmp_ex(Type a, Type b, mList(type_cmp_pair) followed) {
       (r_func, ai, {
         let bi = tu_catch(r_func, b);
         let la = mList_len(ai);
-        let lb = mList_len(bi);
-        if (la != lb) return icmp(la, lb);
-        foreach (let i, range(0, la)) {
-          let a = mList_arr(ai)[i];
-          let b = mList_arr(bi)[i];
-          let cmp = Type_cmp_ex(a, b, followed);
-          if (cmp) return cmp;
-        }
+        if_decl (let l, icmp(la, mList_len(bi))) return l;
+        foreach (let i, range(0, la))
+          if_decl (let cmp, Type_cmp_ex(mList_arr(ai)[i], mList_arr(bi)[i], followed))
+            return cmp;
+        return 0;
+      }),
+      (r_closure, ai, {
+        let bi = tu_catch(r_closure, b);
+        let ta = (Type[2]){tu_of(r_func, ai.args), tu_of(r_func, ai.captures)};
+        let tb = (Type[2]){tu_of(r_func, bi.args), tu_of(r_func, bi.captures)};
+        if_decl (let cmp, Type_cmp_ex(ta[0], tb[0], followed))
+          return cmp;
+        if_decl (let cmp, Type_cmp_ex(ta[1], tb[1], followed))
+          return cmp;
         return 0;
       }),
       (r_bitfield, ai, {
         let bi = tu_catch(r_bitfield, b);
         let la = mList_len(ai);
-        let lb = mList_len(bi);
-        if (la != lb) return icmp(la, lb);
+        if_decl (let l, icmp(la, mList_len(bi))) return l;
         foreach (let i, range(0, la)) {
           let a = mList_arr(ai)[i];
           let b = mList_arr(bi)[i];
@@ -299,6 +306,7 @@ bool Type_is_comptime(Type t) {
       (r_ctime, _, true),
 
       (r_func, _, false),
+      (r_closure, _, false),
       (r_struct, _, false),
       (r_bitfield, _, false),
       (r_void, _, false),
@@ -316,6 +324,7 @@ typePrinter(builtin_id) {
     case(builtin_if):PUTS("if");break;
     case(builtin__id):PUTS("id");break;
     case(builtin_fn):PUTS("fn");break;
+    case(builtin_closure):PUTS("closure");break;
     case(builtin_ast):PUTS("ast");break;
     case(builtin_arrof):PUTS("arrof");break;
     case(builtin_ptrof):PUTS("ptrof");break;
@@ -436,13 +445,20 @@ void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_co
       (r_func, fn, {
         typePrinterWorker_add(in, visitedmap);
         PUTS("(fn (");
-        foreach (let it, span(mList_arr(fn), (mList_len(fn) ?: 1) - 1)) {
-          if (it != mList_arr(fn)) PUTS(" ");
-          typePrinterWorker_recurse(*it, visitedmap, _ctx);
-        }
+        foreach (let it, mList_iter(fn))
+          typePrinterWorker_recurse(it, visitedmap, _ctx), PUTS(" ");
         PUTS(") ");
         if (mList_len(fn))
           typePrinterWorker_recurse(mList_last(fn), visitedmap, _ctx);
+        PUTS(")");
+      }),
+      (r_closure, fn, {
+        typePrinterWorker_add(in, visitedmap);
+        PUTS("(clos (");
+        foreach (let it, mList_iter(fn.captures))
+          typePrinterWorker_recurse(it, visitedmap, _ctx), PUTS(" ");
+        PUTS("),");
+        typePrinterWorker_recurse((Type)tu_of(r_func, fn.args), visitedmap, _ctx);
         PUTS(")");
       }),
   );
@@ -507,7 +523,7 @@ typePrinter(typed_value) {
 #else
                      USENAMEDPRINTER("astTag", (in.v.c_ast->tag));
 #endif
-                         else PUTS("??");),
+       else PUTS("??");),
       (c_type, _, in.v.c_type ? USETYPEPRINTER(Type, *in.v.c_type) : PUTS("??");),
       (default, {
         if (in.v.value)
