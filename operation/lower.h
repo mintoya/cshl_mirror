@@ -14,6 +14,8 @@ static slice(astptr) builtin_arg_list(ast **args) {
   return (slice(astptr)){1, args};
 }
 
+static u32 lower_builtin_construct(superscope *ss, scope *s, ast *args) { TODO(); }
+static u32 lower_builtin_destruct(superscope *ss, scope *s, ast *args) { TODO(); }
 static u32 lower_builtin_this(superscope *ss, scope *s, ast *args) {
   assertMessage(builtin_arg_list(&args).len == 0, "this takes no arguments");
   assertMessage(msList_len(ss->thisstack), "@this() used outside of a struct definition");
@@ -439,12 +441,14 @@ u32 lower_builtin(superscope *ss, scope *s, builtin_id builtin, ast *args) {
     case builtin_typeof:    return lower_builtin_typeof(ss, s, args);
     case builtin_arrof:     return lower_builtin_arrof(ss, s, args);
     case builtin_ptrof:     return lower_builtin_ptrof(ss, s, args);
+    case builtin_construct: return lower_builtin_construct(ss, s, args);
+    case builtin_destruct:  return lower_builtin_destruct(ss, s, args);
     case builtin_struct:    return lower_builtin_struct(ss, s, args);
     case builtin__this:     return lower_builtin_this(ss, s, args);
     case builtin_qot:       return lower_builtin_qot(ss, s, args);
     case builtin_uqot:      return lower_builtin_uqot(ss, s, args);
     case builtin_at:        return lower_builtin_at(ss, s, args);
-    case builtin_where:        return lower_builtin_where(ss, s, args);
+    case builtin_where:     return lower_builtin_where(ss, s, args);
       // clang-format on
   }
   assertMessage(false, "unhandled builtin");

@@ -4,7 +4,6 @@
 #include "wheels/macros.h"
 #include "wheels/print/print_pre.h"
 #include "wheels/sList.h"
-#include <stdio.h>
 #include <string.h>
 
 static bool Type_mutable(Type t) {

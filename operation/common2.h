@@ -604,16 +604,17 @@ static bool interp_tv_truthy(typed_value *tv) {
   assertMessage(false, "unhandled value");
 }
 
-//  TODO: remove exeptions
 static u32 function_trySpec(superscope *ss, scope *s, u8 *loc, function *fn, sentList_t(Type) typeList, slice(u32) args) {
-  bool macro = false;
-  foreach (let i, range(0, sentList_length(typeList, sizeof(Type))))
-    if (Type_is_comptime(strip_decor((*sentList_vla(typeList))[i]))) macro = true;
-  if (!macro)
+  bool requires_comptime = false;
+  foreach (let i, vlap(sentList_vla(typeList)))
+    requires_comptime |= (Type_is_comptime(strip_decor(i)));
+  if (!requires_comptime)
     if_decl (let m, moxmap_get(function_initSpecs(ss->alloc, fn), typeList)) return *m;
+
   let l = sentList_vla(typeList);
   let returnT = (Type)tu_of(c_any, {});
-  if (countof * l != fn->_.len - 2) error_print(loc, "function called with too many args");
+  if (countof * l != fn->_.len - 2)
+    error_print(loc, "function called with {} args instead of {}", countof * l, fn->_.len - 2);
   else {
     let tpe_evaluated = msList_init(ss->alloc, Type);
     defer { msList_deInit(ss->alloc, tpe_evaluated); };

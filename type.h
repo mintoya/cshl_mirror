@@ -14,35 +14,40 @@
 #include <wheels/sList.h>
 
 typedef enum : u8 {
-  builtin_fn,       // @fn((decl|type...) ,decl|type,body) c_func of this type,
-  builtin_closure,  // @closure((captures...),(decl|type...) ,decl|type,body) c_func of this type,
-  builtin_if,       // @if(cnd , then ,)
-  builtin_while,    // @while(cnd , then) //
-  builtin_return,   // return x return
-  builtin_break,    // @break()
-  builtin_continue, // @continue()
-                    //
-                    // then when called with expression, yields an r_func
-  builtin_ast,      // @ast() type of ast
-  builtin__id,      // @id(str) an id which corresponds to this string litteral
-  builtin_any,      // @any() type of any
-  builtin_void,     // @void() the void type
-  builtin_int,      // @int() compile time bigint
-  builtin_type,     // @type() the type of a type
-  builtin_const,    // @const(T) constant
-  builtin_volatile, // @volatile(T) volatile
-  builtin_sint,     // @sint(N) integer with N bits
-  builtin_uint,     // @uint(N) unsigned integer with N bits
-  builtin_typeof,   // @typeof(V) type of argument
-  builtin_arrof,    // @arrof(N,t) array of N t's
-  builtin_ptrof,    // @ptrof(t) pionter to t
-  builtin_struct,   // @struct{} struct of declarations
-                    //
-  builtin__this,    // @this() inside of struct, this is the result type
-  builtin_qot,      // @qot(arg) ast of arg
-  builtin_uqot,     // @unqot(arg) evaluate arg
-  builtin_at,       // @at(arg) dereference arg
-  builtin_where,    // @where(arg) referance to arg
+  builtin_fn,        // @fn((decl|type...) ,decl|type,body) c_func of this type,
+  builtin_closure,   // @closure((captures...),(decl|type...) ,decl|type,body) c_func of this type,
+  builtin_if,        // @if(cnd , then ,)
+  builtin_while,     // @while(cnd , then) //
+  builtin_return,    // return x return
+  builtin_break,     // @break()
+  builtin_continue,  // @continue()
+                     //
+                     // then when called with expression, yields an r_func
+  builtin__id,       // @id(str) an id which corresponds to this string litteral
+                     //
+  builtin_ast,       // @ast() type of ast
+  builtin_any,       // @any() type of any
+  builtin_void,      // @void() the void type
+  builtin_int,       // @int() compile time bigint
+  builtin_type,      // @type() the type of a type
+  builtin_const,     // @const(T) constant
+  builtin_volatile,  // @volatile(T) volatile
+  builtin_sint,      // @sint(N) integer with N bits
+  builtin_uint,      // @uint(N) unsigned integer with N bits
+  builtin_typeof,    // @typeof(V) type of argument
+  builtin_arrof,     // @arrof(N,t) array of N t's
+  builtin_ptrof,     // @ptrof(t) pionter to t
+                     //
+  builtin_struct,    // @struct{} struct of declarations
+  builtin_construct, // @construct(type,...) construct a type given a list of decls
+  builtin_destruct,  // @destruct(value,...) destruct a type given a list of ids
+  builtin__this,     // @this() inside of struct, this is the result type
+                     //
+  builtin_qot,       // @qot(arg) ast of arg
+  builtin_uqot,      // @unqot(arg) evaluate arg
+                     //
+  builtin_at,        // @at(arg) dereference arg
+  builtin_where,     // @where(arg) referance to arg
 } builtin_id;
 //{type
 typedef struct Type Type;
@@ -324,6 +329,8 @@ typePrinter(builtin_id) {
     case(builtin_if):PUTS("if");break;
     case(builtin__id):PUTS("id");break;
     case(builtin_fn):PUTS("fn");break;
+    case(builtin_construct):PUTS("construct");break;
+    case(builtin_destruct):PUTS("destruct");break;
     case(builtin_closure):PUTS("closure");break;
     case(builtin_ast):PUTS("ast");break;
     case(builtin_arrof):PUTS("arrof");break;

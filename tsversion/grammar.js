@@ -6,6 +6,7 @@ module.exports = grammar({
   ],
   conflicts: $ => [
     [$._expression, $.decl],
+    [$._any_expression, $.op],
     [$.nblock],
   ],
   precedences: $ => [
@@ -17,6 +18,7 @@ module.exports = grammar({
       'bit',
       'cmp',
       'nblock',      
+      'unquote-immediate',
       'call',        // loose call
       'unquote',
       'pipe',
@@ -48,9 +50,12 @@ module.exports = grammar({
     op: $ => choice(
       prec.left('block-call', seq(field('left', $._expression), field('right', $._block_immediate))),
       
+      prec.left('unquote-immediate', seq(field('left', $._expression), field('operator', "'"), field('right', $._block_immediate))),
+
+      prec.right('call', seq(field('left', $._expression), field('right', $._any_expression))), 
+
       prec.left('unquote', seq(field('left', $._expression), field('operator', "'"), field('right', $._expression))),
       
-      prec.right('call', seq(field('left', $._expression), field('right', $._any_expression))), 
       
       prec.left('access', seq(field('left', $._expression), field('operator', '.'), field('right', $._expression))),
       prec.left('access', seq(field('left', $._expression), field('operator', ':'), field('right', $._expression))),

@@ -111,6 +111,64 @@
         },
         {
           "type": "PREC_LEFT",
+          "value": "unquote-immediate",
+          "content": {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "FIELD",
+                "name": "left",
+                "content": {
+                  "type": "SYMBOL",
+                  "name": "_expression"
+                }
+              },
+              {
+                "type": "FIELD",
+                "name": "operator",
+                "content": {
+                  "type": "STRING",
+                  "value": "'"
+                }
+              },
+              {
+                "type": "FIELD",
+                "name": "right",
+                "content": {
+                  "type": "SYMBOL",
+                  "name": "_block_immediate"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "PREC_RIGHT",
+          "value": "call",
+          "content": {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "FIELD",
+                "name": "left",
+                "content": {
+                  "type": "SYMBOL",
+                  "name": "_expression"
+                }
+              },
+              {
+                "type": "FIELD",
+                "name": "right",
+                "content": {
+                  "type": "SYMBOL",
+                  "name": "_any_expression"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "PREC_LEFT",
           "value": "unquote",
           "content": {
             "type": "SEQ",
@@ -137,31 +195,6 @@
                 "content": {
                   "type": "SYMBOL",
                   "name": "_expression"
-                }
-              }
-            ]
-          }
-        },
-        {
-          "type": "PREC_RIGHT",
-          "value": "call",
-          "content": {
-            "type": "SEQ",
-            "members": [
-              {
-                "type": "FIELD",
-                "name": "left",
-                "content": {
-                  "type": "SYMBOL",
-                  "name": "_expression"
-                }
-              },
-              {
-                "type": "FIELD",
-                "name": "right",
-                "content": {
-                  "type": "SYMBOL",
-                  "name": "_any_expression"
                 }
               }
             ]
@@ -1062,6 +1095,10 @@
       "decl"
     ],
     [
+      "_any_expression",
+      "op"
+    ],
+    [
       "nblock"
     ]
   ],
@@ -1094,6 +1131,10 @@
       {
         "type": "STRING",
         "value": "nblock"
+      },
+      {
+        "type": "STRING",
+        "value": "unquote-immediate"
       },
       {
         "type": "STRING",

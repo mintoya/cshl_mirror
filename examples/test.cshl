@@ -1,0 +1,13 @@
+int ~~@int();
+ast ~~@ast();
+type  ~~@type();
+
+i8  ~~@sint(8);
+
+arr ~~ @fn (N ~ast),ast,{
+  @qot(@fn (T ~type),type,{ 
+    return @arr(@uqot(N) , T);
+  })|> return _;
+};
+
+hello ~arr'(5)i8~ "hello";
