@@ -31,6 +31,7 @@ typedef enum enum_op {
   enop_neq,
   enop_pipe,
   enop_set,
+  enop_iexpand,
 } enum_op;
 typePrinter(enum_op) {
   switch (in) {
@@ -94,6 +95,7 @@ enum_op op_as_enum(u32 opn) {
   if (opn == opNumbers.neq) return enop_neq;
   if (opn == opNumbers.pipe) return enop_pipe;
   if (opn == opNumbers.set) return enop_set;
+  if (opn == opNumbers.iexpand) return enop_iexpand;
   assertMessage(false, "Unknown operator %x", opn);
 }
 

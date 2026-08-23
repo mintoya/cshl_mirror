@@ -10,5 +10,8 @@
   "type": "commonjs",
   "devDependencies": {
     "tree-sitter-cli": "^0.26.12"
+  },
+  "allowScripts": {
+    "tree-sitter-cli@0.26.12": true
   }
 }

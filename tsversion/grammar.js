@@ -18,6 +18,7 @@ module.exports = grammar({
       'cmp',
       'nblock',      
       'call',        // loose call
+      'unquote',
       'pipe',
       'decl',
       'assign'
@@ -46,6 +47,8 @@ module.exports = grammar({
     ),
     op: $ => choice(
       prec.left('block-call', seq(field('left', $._expression), field('right', $._block_immediate))),
+      
+      prec.left('unquote', seq(field('left', $._expression), field('operator', "'"), field('right', $._expression))),
       
       prec.right('call', seq(field('left', $._expression), field('right', $._any_expression))), 
       

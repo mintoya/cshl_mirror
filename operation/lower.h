@@ -738,12 +738,16 @@ u32 lower_boolean_op(superscope *ss, scope *s, u32 left, enum_boolean_op bop, as
       "boolean/comparison operators currently only support integer operands"
   );
 
-  u32 dest = scope_add_rvalue(ss, s, (typed_value){(Type)tu_of(r_uint, (u16)1)});
+  // Comptime-known operands: evaluate eagerly and don't leave an ir_op (or an
+  // ir_if branching on it) behind for the interpreter. The eagerly computed
+  // result must be comptime-typed (c_int) as well, so that downstream code
+  // (e.g. @if picking a branch) treats it as comptime instead of leaving a
+  // runtime ir_if whose branches were both already applied at compile time.
+  bool comptime = left_tv->v.value && right_tv->v.value;
+  u32 dest = scope_add_rvalue(ss, s, (typed_value){comptime ? (Type)tu_of(c_int, {}) : (Type)tu_of(r_uint, (u16)1)});
 
   let op = (ir_op){.l = left, .r = right_val, .d = dest, .op = (u32)bop};
-  // Comptime-known operands: evaluate eagerly and don't leave an ir_op (or an
-  // ir_if branching on it) behind for the interpreter.
-  if (left_tv->v.value && right_tv->v.value)
+  if (comptime)
     interpret_op(ss, s, op);
   else
     scope_add_inst(ss, s, (ir)tu_of(ir_op, op));
@@ -775,6 +779,11 @@ u32 lower_op(superscope *ss, scope *s, u32 left, enum_op opn, ast *right) {
     default: assertMessage(false, "unhandled math operator");
     case enop_dot: return lower_dot(ss, s, left, right);
     case enop_colon: assertMessage(false, "colon without function call");
+    case enop_iexpand: {
+      let v = P$(lower_call(ss, s, left, 0, right),*scope_find(ss, s, $));
+      tu_catchr(c_ast, strip_decor(v.t),error_print(right, "expected ast"));
+      return lower(ss, s, v.v.c_ast);
+    };
     case enop_call: return lower_call(ss, s, left, 0, right);
       // clang-format on
 

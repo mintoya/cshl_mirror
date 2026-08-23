@@ -319,6 +319,7 @@ static struct { // opNumbers
       neq,
       pipe,
       colon,
+      iexpand,
       set;
 } opNumbers = {};
 

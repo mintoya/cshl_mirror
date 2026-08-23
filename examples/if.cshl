@@ -36,7 +36,7 @@ test ~ast~ if 1 (one = one + 1) else (one = 3);
 
 @uqot test;
 
-if (one == 2) {
+if'(one == 2) {
   one = 4;
 } else {
   one = 0;
