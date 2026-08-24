@@ -10,4 +10,4 @@ arr ~~ @fn (N ~ast),ast,{
   })|> return _;
 };
 
-hello ~arr'(5)i8~ "hello";
+hello ~arr'(5)i8~ "yello";

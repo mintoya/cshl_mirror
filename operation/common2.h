@@ -363,6 +363,8 @@ superscope *ss_init(allocfn allocator) {
       {"return", builtin_return},
       {"@if", builtin_if},
       {"@while", builtin_while},
+      {"@construct", builtin_construct},
+      {"@destruct", builtin_destruct},
   };
   foreach (let i, vla(builtins))
     scope_bind(
@@ -427,6 +429,7 @@ Type *ss_getType(superscope *b, Type t) {
         (r_struct, _, (peeling = 0, curr)),
         (r_bitfield, _, (peeling = 0, curr)),
         (r_func, _, (peeling = 0, curr)),
+        (r_closure, _, (peeling = 0, curr)),
         (r_void, _, (peeling = 0, curr)),
         (c_any, _, (peeling = 0, curr)),
         (c_ast, _, (peeling = 0, curr)),
@@ -465,6 +468,7 @@ Type *ss_getType(superscope *b, Type t) {
       //
       (r_struct, items, (Type)tu_of(r_struct, items)),
       (r_bitfield, items, (Type)tu_of(r_bitfield, items)),
+      (r_closure, params, (Type)tu_of(r_closure, params)),
       (r_func, params, (Type)tu_of(r_func, params)),
       //
       (r_void, v, (Type)tu_of(r_void, {})),

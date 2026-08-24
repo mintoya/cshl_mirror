@@ -14,7 +14,19 @@ static slice(astptr) builtin_arg_list(ast **args) {
   return (slice(astptr)){1, args};
 }
 
-static u32 lower_builtin_construct(superscope *ss, scope *s, ast *args) { TODO(); }
+static u32 lower_builtin_construct(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(&args);
+  if (list.len < 1) error_print(args, "@construct expects at least one arg");
+  let type = value_asType(temporary_interpret_ast(ss, s, list.ptr[0]));
+  let st = tu_match_exp(
+      type,
+      (r_struct, st, st),
+      (r_tag, tg, tu_catch(r_struct, *tg.t, error_print(args, "@construct expects a struct"))),
+      (default, (error_print(args, "@construct expects a struct"), (r_struct){})),
+  );
+  println("constructing {Type}", ((Type)tu_of(r_struct, st)));
+  TODO("");
+}
 static u32 lower_builtin_destruct(superscope *ss, scope *s, ast *args) { TODO(); }
 static u32 lower_builtin_this(superscope *ss, scope *s, ast *args) {
   assertMessage(builtin_arg_list(&args).len == 0, "this takes no arguments");
@@ -32,8 +44,17 @@ static fptr lower_struct_member_name(superscope *ss, scope *s, ast *name) {
 
 static u32 lower_builtin_struct(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
-  iflet_tu (let block, astBBlock, *args)
-    list = slice_stat(slice(astptr), *sentList_vla(block.stmts));
+  list = slice_stat(
+      slice(astptr),
+      *sentList_vla(
+          tu_catch(
+              astBBlock,
+              *args,
+              error_print(args, "@struct expects a list of decls")
+          )
+              .stmts
+      )
+  );
   let members = mList_init(ss->alloc, r_struct_item, 4);
   let data = mList_init(ss->alloc, value_store, 4);
   let decls = mList_init(ss->alloc, astptr, 4);
@@ -44,11 +65,9 @@ static u32 lower_builtin_struct(superscope *ss, scope *s, ast *args) {
   };
 
   let body = acreate(ss->alloc, Type);
-  let tag_text = snprint(ss->alloc, "$struct{}", ss->struct_count++);
-  let tag_name = (fptr){tag_text.len, (u8 *)tag_text.ptr};
   let self = acreate(ss->alloc, Type);
   *body = (Type)tu_of(r_struct, members);
-  *self = (Type)tu_of(r_tag, {.t = body, .name = tag_name});
+  *self = (Type)tu_of(r_tag, {.t = body, .name = fp(snprint(ss->alloc, "$struct{}", ss->struct_count++))});
 
   let struct_scope = scope_inferior(ss, s);
   msList_push(ss->alloc, ss->thisstack, self);
@@ -217,8 +236,8 @@ static u32 lower_builtin_return(superscope *ss, scope *s, ast *args) {
 
 static u32 lower_builtin_id(superscope *ss, scope *s, ast *args) {
   let str = temporary_interpret_ast(ss, s, args);
-  let arr = tu_catch(r_arr, str.t, error_print(args, "id takes an array of i8"));
-  if (tu_catch(r_sint, arr.t[0], error_print(args, "id takes an array of i8")) != 8)
+  let arr = tu_catchr(r_arr, strip_decor(str.t), error_print(args, "id takes an array of i8"));
+  if (tu_catchr(r_sint, strip_decor(arr.t[0]), error_print(args, "id takes an array of i8")) != 8)
     error_print(args, "id takes an array of i8");
   let copy = slice_clone(ss->alloc, ((fptr){arr.count, (u8 *)str.v.value}));
   return scope_add_rvalue(ss, s, (typed_value){tu_of(c_ast, {}), avalue(ss->alloc, (ast)tu_of(astId, copy))});
