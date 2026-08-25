@@ -1,5 +1,6 @@
 int ~~@int();
 ast ~~@ast();
+void  ~~@void();
 type  ~~@type();
 
 i8  ~~@sint(8);
@@ -11,3 +12,21 @@ arr ~~ @fn (N ~ast),ast,{
 };
 
 hello ~arr'(5)i8~ "yello";
+
+arr2 ~~ @fn (N ~ast),ast,{
+  (@closure (N),(T ~type),type,{ 
+    return @arr(N,T);
+  })|> return _;
+};
+hello2 ~arr2(5)i8~ "y2llo";
+
+ten ~~ (@fn (i ~int),int,{
+  (@closure (@ref(i)),(j ~int),void,{i = i+j;}) 
+    |> _(i);
+  return i;
+})(5);
+five ~~ (@fn (i ~int),int,{
+  (@closure (i),(j ~int),void,{i = i+j;}) 
+    |> _(i);
+  return i;
+})(5);

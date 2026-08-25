@@ -1,33 +1,30 @@
 type ~~ @type();
-i32 ~~ @sint(32);
+i ~~@sint;
+u ~~@uint;
 
 point ~type~ @struct{
-  scale ~~ 1;
   Self ~type~ @this();
-
-  x ~ i32;
-  y ~ i32;
-
-  @id("+") ~~ @fn((self~Self,other~Self),Self,
-    return @construct(Self,
-      x~~ self.x * scale + other.x,
-      y~~ self.y * scale + other.y
-    ));
-  // first arg is a type, so this is basically a static menber of the type
-  @id("()") ~~ @fn((type,x~i32,y~i32),Self,{
-    r~Self ;
-    r.x = x;
-    r.y = y;
+  x ~ i 32;
+  y ~ i 32;
+  @id("+") ~~ @fn (self~Self,other~Self),Self,{
+    r ~Self;
+    r.x = self.x+other.x;
+    r.y = self.y+other.y;
     return r;
-  });;
+  };
+  @id("/") ~~ @fn (self~Self,scale~i 32),Self,{
+    self.x = self.x / scale;
+    self.y = self.y / scale;
+    return self;
+  };
 };
 
 
-a~~ @construct(point,x~~1,y~~2);
-b~~ @construct(point,x~~3,y~~4);
-//  analogous
-c~point~ a."+"(a,b);
-// for functions, pointer can only use colon for call 
-d~point~ a:"+" b ;
-e~point~ a + b;
+// a~~ @construct(point,x~~1,y~~2);
+// b~~ @construct(point,x~~2,y~~1);
+ia ~i 32~1;
+ib ~i 32~2;
+a ~point;a.x=ia;a.y=ib;
+b ~point;b.x=ib;b.y=ia;
+c ~point~ ( a + b ) / 3;
 

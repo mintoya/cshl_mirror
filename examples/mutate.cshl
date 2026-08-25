@@ -5,6 +5,6 @@ increasing_array~~@fn((t~type),type,
   |> { asize = asize + _;} 
   |> return @arr _,t );
 
-a ~increasing_array @sint 8;
-b ~increasing_array @uint 8;
-c ~increasing_array @arr 2,@uint(8);
+a ~increasing_array @sint 8; // 2 i8's
+b ~increasing_array @uint 8; // 3 u8's
+c ~increasing_array @arr 2,@uint(8); // 4 arrays of 2 u8's
