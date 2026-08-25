@@ -37,6 +37,7 @@ typedef enum : u8 {
   builtin_typeof,    // @typeof(V) type of argument
   builtin_arrof,     // @arrof(N,t) array of N t's
   builtin_ptrof,     // @ptrof(t) pionter to t
+  builtin_reftype,   // @reftype(t) reference type: a pointer you treat as the pointee
                      //
   builtin_struct,    // @struct{} struct of declarations
   builtin_construct, // @construct(type,...) construct a type given a list of decls
@@ -63,6 +64,7 @@ tu_def( // type
     (r_sint /*       */, u16),
     (r_tag /*        */, struct { Type *t; fptr name; }),
     (r_ptr /*        */, Type *),
+    (r_ref /*        */, Type *),
     (r_arr /*        */, struct { Type *t; usize count; }),
     (r_struct /*     */, mList(r_struct_item)),
     (r_bitfield /*   */, mList(r_bitf_item)),
@@ -109,7 +111,8 @@ static inline usize Type_ralig(Type t) {
       (r_void, _, (usize)1),
       (r_uint, u, lineup(u, 8) / 8), // TODO
       (r_sint, u, lineup(u, 8) / 8), // TODO
-      (r_ptr, p, Type_ralig((Type)tu_of(r_uint, 64))),
+      (r_ptr, p, Type_ralig((Type)tu_of(r_uint, 64))),  //TODO not technically correct
+      (r_ref, p, Type_ralig((Type)tu_of(r_uint, 64))),  //TODO not technically correct
       (r_arr, a, (assertMessage(a.t), Type_ralig(a.t[0]))),
       (r_bitfield, b, ({
          usize s = 0;
@@ -138,6 +141,7 @@ static inline usize Type_rsize(Type t) {
       (r_uint, u, lineup(u, 8) / 8),
       (r_sint, u, lineup(u, 8) / 8),
       (r_ptr, p, Type_rsize((Type)tu_of(r_uint, 64))),
+      (r_ref, p, Type_rsize((Type)tu_of(r_uint, 64))),
       (r_arr, a, (assertMessage(a.t), Type_rsize(a.t[0]) * a.count)),
       (r_bitfield, b, ({
          usize s = 0;
@@ -217,6 +221,19 @@ i8 Type_cmp_ex(Type a, Type b, mList(type_cmp_pair) followed) {
       }),
       (r_ptr, ai, {
         let bi = tu_catch(r_ptr, b);
+        if (ai == bi) return 0;
+        if (!ai || !bi) return ai ? 1 : -1;
+
+        foreach (let p, mList_iter(followed))
+          if (p.a == ai && p.b == bi) return 0;
+
+        mList_push(followed, ((type_cmp_pair){.a = ai, .b = bi}));
+        i8 r = Type_cmp_ex(ai[0], bi[0], followed);
+        mList_rem(followed, mList_len(followed) - 1);
+        return r;
+      }),
+      (r_ref, ai, {
+        let bi = tu_catch(r_ref, b);
         if (ai == bi) return 0;
         if (!ai || !bi) return ai ? 1 : -1;
 
@@ -318,6 +335,7 @@ bool Type_is_comptime(Type t) {
       (r_uint, _, false),
       (r_sint, _, false),
       (r_ptr, _, false),
+      (r_ref, _, false),
       (r_arr, _, false),
   );
 }
@@ -335,6 +353,7 @@ typePrinter(builtin_id) {
     case(builtin_ast):PUTS("ast");break;
     case(builtin_arrof):PUTS("arrof");break;
     case(builtin_ptrof):PUTS("ptrof");break;
+    case(builtin_reftype):PUTS("reftype");break;
     case(builtin_at):PUTS("at");break;
     case(builtin_where):PUTS("where");break;
     case(builtin_any):PUTS("any");break;
@@ -394,6 +413,14 @@ void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_co
       (r_ptr, type, {
         // typePrinterWorker_add(in, visited, visitedmap);
         PUTS("(* ");
+        defer { PUTS(")"); };
+        if (type) typePrinterWorker_recurse(*type, visitedmap, _ctx);
+        else PUTS("!");
+      }),
+      // a reference: same representation as a pointer, but the compiler treats
+      // it as the pointee (auto-deref on read, store-through on write)
+      (r_ref, type, {
+        PUTS("(& ");
         defer { PUTS(")"); };
         if (type) typePrinterWorker_recurse(*type, visitedmap, _ctx);
         else PUTS("!");
@@ -509,6 +536,13 @@ static inline peeled_type Type_peel(Type t, bool deref_ptr) {
           continue;
         }),
         (r_ptr, pt, {
+          if (deref_ptr) {
+            r.t = *pt;
+            continue;
+          }
+          return r;
+        }),
+        (r_ref, pt, {
           if (deref_ptr) {
             r.t = *pt;
             continue;

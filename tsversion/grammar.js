@@ -90,7 +90,7 @@ module.exports = grammar({
     _block: $ => choice($.bblock, $.ablock, $.pblock),
     
     _comma_list: $ =>  seq($._expression, repeat(seq(',', $._expression)), optional(',')),
-    bblock: $ => prec(2,seq('{', repeat($._statement), '}')),
+    bblock: $ => prec(2,seq('{', repeat1($._statement), '}')),
     ablock: $ => prec(2,seq('[',optional($._comma_list),']')),
     pblock: $ => prec(2,seq('(',optional($._comma_list),')')),
     
@@ -109,7 +109,7 @@ module.exports = grammar({
     _bblock_immediate: $ => alias($.__bblock_immediate, $.bblock),
     _ablock_immediate: $ => alias($.__ablock_immediate, $.ablock),
     _pblock_immediate: $ => alias($.__pblock_immediate, $.pblock),
-    __bblock_immediate: $ => seq( token.immediate('{'), optional(repeat($._statement)), '}'),
+    __bblock_immediate: $ => seq( token.immediate('{'), repeat1($._statement), '}'),
     __ablock_immediate: $ => seq( token.immediate('['), optional($._comma_list),']'),
     __pblock_immediate: $ => seq( token.immediate('('), optional($._comma_list),')'),
 
