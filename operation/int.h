@@ -266,8 +266,8 @@ typed_value interpret_state(superscope *ss, scope *s, u8 *loc, interpret_ctrl *c
           *dest = *src;
           if (ctrl && *ctrl != int_ctrl_norm) return r;
         }),
-        (ir_deref, _, assertMessage(false, "encountered dereferance in interpreter")),
-        (ir_ref, _, assertMessage(false, "encountered referance in interpreter")),
+        (ir_putptr, _, assertMessage(false, "encountered dereferance in interpreter")),
+        (ir_getptr, _, assertMessage(false, "encountered referance in interpreter")),
     );
   return (typed_value){tu_of(r_void, {})};
 }

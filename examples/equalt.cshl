@@ -2,7 +2,7 @@ type ~~ @type();
 a ~  @sint(8);
 b ~= "h";
 
-two~~fn((t ~type,b ~t),type,
+two~~@fn((t ~type,b ~t),type,
   return @arr(2 , t));
 
 at ~two(@typeof(a),a);

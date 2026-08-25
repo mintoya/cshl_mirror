@@ -125,8 +125,10 @@ tu_def(
     (ir_while /*   */, struct { u32 cnd; typeof(scope *) c, t; }),
     (ir_block /*   */, scope *),
 
-    (ir_deref /*   */, struct { u32 d, s; }),
-    (ir_ref /*     */, struct { u32 d, s; }),
+    (ir_takeRef /*   */, struct { u32 d, s; }), // takes a referance to something
+
+    (ir_putptr /*      */, struct { u32 d, s; }),
+    (ir_getptr /*     */, struct { u32 d, s; }),
 );
 
 struct scope {
@@ -192,14 +194,19 @@ typePrinter(scope) {
         (ir_ret, _, PUTS("(ir_ret )")),
         (ir_break, _, PUTS("(ir_break )")),
         (ir_continue, _, PUTS("(ir_continue )")),
-        (ir_deref, iv, {
-          PUTS("(ir_deref ");
-          USETYPEPRINTER(u32, iv.d), USETYPEPRINTER(u32, iv.s);
+        (ir_putptr, iv, {
+          PUTS("(ir_putptr ");
+          USETYPEPRINTER(u32, iv.d), PUTS(" "), USETYPEPRINTER(u32, iv.s);
           PUTS(")");
         }),
-        (ir_ref, iv, {
-          PUTS("(ir_ref ");
-          USETYPEPRINTER(u32, iv.d), USETYPEPRINTER(u32, iv.s);
+        (ir_getptr, iv, {
+          PUTS("(ir_getptr ");
+          USETYPEPRINTER(u32, iv.d), PUTS(" "), USETYPEPRINTER(u32, iv.s);
+          PUTS(")");
+        }),
+        (ir_takeRef, irf, {
+          PUTS("(ir_takeRef ");
+          USETYPEPRINTER(u32, irf.d), PUTS(" "), USETYPEPRINTER(u32, irf.s);
           PUTS(")");
         }),
     );
@@ -409,41 +416,13 @@ Type *ss_getType(superscope *b, Type t) {
   let pt = acreate(allocator, Type);
   moxmap_set(b->types, t, pt);
 
-  bool is_ctime = 0;
-  bool is_const = 0;
-  bool is_valatile = 0;
-  Type curr = t;
-  bool peeling = 1;
+  let p = Type_peel(t, false);
+  if (p.is_comptime || p.is_const || p.is_volatile) {
+    Type *inner_pt = ss_getType(b, p.t);
 
-  while (peeling) {
-    curr = tu_match_exp(
-        curr,
-        (r_ctime, rct, (is_ctime = 1, *rct)),
-        (r_decor, dec, (is_const = is_const || dec.constant, is_valatile = is_valatile || dec.valatile, *dec.t)),
-        (builtin, _, (peeling = 0, curr)),
-        (r_uint, _, (peeling = 0, curr)),
-        (r_sint, _, (peeling = 0, curr)),
-        (r_ptr, _, (peeling = 0, curr)),
-        (r_tag, _, (peeling = 0, curr)),
-        (r_arr, _, (peeling = 0, curr)),
-        (r_struct, _, (peeling = 0, curr)),
-        (r_bitfield, _, (peeling = 0, curr)),
-        (r_func, _, (peeling = 0, curr)),
-        (r_closure, _, (peeling = 0, curr)),
-        (r_void, _, (peeling = 0, curr)),
-        (c_any, _, (peeling = 0, curr)),
-        (c_ast, _, (peeling = 0, curr)),
-        (c_int, _, (peeling = 0, curr)),
-        (c_type, _, (peeling = 0, curr))
-    );
-  }
-
-  if (is_ctime || is_const || is_valatile) {
-    Type *inner_pt = ss_getType(b, curr);
-
-    if (is_const || is_valatile) {
-      Type dec_type = (Type)tu_of(r_decor, {inner_pt, is_const, is_valatile});
-      if (is_ctime) {
+    if (p.is_const || p.is_volatile) {
+      Type dec_type = (Type)tu_of(r_decor, {inner_pt, p.is_const, p.is_volatile});
+      if (p.is_comptime) {
         Type *dec_pt = acreate(allocator, Type);
         *dec_pt = dec_type;
         *pt = (Type)tu_of(r_ctime, dec_pt);
@@ -454,13 +433,14 @@ Type *ss_getType(superscope *b, Type t) {
 
   // If there were no modifiers, fall through to process the base type as normal
   *pt = tu_match_exp(
-      curr,
+      p.t,
       (builtin, b, (Type)tu_of(builtin, b)),
       //
       (r_uint, u, (Type)tu_of(r_uint, u)),
       (r_sint, s, (Type)tu_of(r_sint, s)),
       //
       (r_ptr, p, (Type)tu_of(r_ptr, ss_getType(b, *p))),
+      (r_ref, p, (Type)tu_of(r_ptr, ss_getType(b, *p))),
       (r_ctime, rct, (Type)tu_of(r_ctime, ss_getType(b, *rct))),
       (r_tag, tag, (Type)tu_of(r_tag, {ss_getType(b, *tag.t), tag.name})),
       (r_arr, arr, (Type)tu_of(r_arr, {ss_getType(b, *arr.t), arr.count})),
@@ -485,34 +465,18 @@ bool Type_isint(Type t) {
       (c_int, _, true),
       (r_uint, _, true),
       (r_sint, _, true),
+      (r_ref, tg, Type_isint(*tg)),
       (r_tag, tg, Type_isint(*tg.t)),
       (r_decor, dec, Type_isint(*dec.t)),
       (r_ctime, ct, Type_isint(*ct)),
       (default, false),
   );
 }
-Type value_asType(typed_value t) { // TODO failable version?
-  Type current_type = strip_decor(t.t);
-  iflet_tu (let bt, builtin, current_type) {
-    switch (bt) {
-      // lets builtin without call be the type, works but might not be good idea
-      case builtin_ast:
-        return (Type)tu_of(c_ast, {});
-      case builtin_any:
-        return (Type)tu_of(c_any, {});
-      case builtin_void:
-        return (Type)tu_of(r_void, {});
-      case builtin_int:
-        return (Type)tu_of(c_int, {});
-      case builtin_type:
-        return (Type)tu_of(c_type, {});
-      default:
-        assertMessage(false, "builtin is not a type");
-    }
-  }
-  if (!tu_is(c_type, current_type)) error_print(nullptr, "tried to get type from {Type}", t.t);
-  assertMessage(t.v.c_type, "type is unknown");
-  return t.v.c_type[0];
+Type value_asType_loc(typed_value t, u8 *location) {
+  Type current_type = Type_peel(t.t, false).t;
+  if (!tu_is(c_type, current_type)) error_print(location, "tried to get type from {Type}", t.t);
+  if (!t.v.c_type) error_print(location, "unknown type");
+  return *t.v.c_type;
 }
 typed_value Type_asValue(superscope *s, Type t) { return (typed_value){tu_of(c_type, {}), ss_getType(s, t)}; }
 
@@ -646,7 +610,7 @@ static u32 function_trySpec(superscope *ss, scope *s, u8 *loc, function *fn, sen
 
     astptr ret_ast = *function_return(*fn);
     iflet_tu (let _, astDecl, *ret_ast) returnT = scope_find(ss, temp, lower(ss, temp, ret_ast))->t;
-    else returnT = value_asType(temporary_interpret_ast(ss, temp, ret_ast));
+    else returnT = value_asType_loc(temporary_interpret_ast(ss, temp, ret_ast), nullptr);
 
     msList_push(ss->alloc, tpe_evaluated, {});
     if (cmpstl_type(&tpe_evaluated, &typeList))
@@ -660,8 +624,6 @@ static u32 function_trySpec(superscope *ss, scope *s, u8 *loc, function *fn, sen
     astptr inner = fn->_.ptr[idx];
     u32 param_idx = lower(ss, real_body, inner);
     scope_find(ss, real_body, param_idx)->t = (*l)[idx];
-    // bind the argument value before lowering the body: macros quote/unquote
-    // their params at lower time, so they must already hold the actual values
     *scope_find(ss, real_body, param_idx) = *scope_find(ss, s, args.ptr[idx]);
   }
 
@@ -710,6 +672,15 @@ void bigint_into_int(superscope *ss, typed_value *t, bigint b) {
       (r_uint, si, {
         let allocated_len = Type_rsize(t->t);
         memcpy(t->v.value, b, allocated_len);
+      }),
+      (r_tag, tg, {
+        let temp = (typed_value){*tg.t, t->v};
+        return bigint_into_int(ss, &temp, b);
+      }),
+      (r_ref, tg, {
+        assertMessage(t->v.value);
+        let temp = (typed_value){*tg, (assertMessage(false, "what's a ref?"), t->v)};
+        return bigint_into_int(ss, &temp, b);
       }),
       (default, assertMessage(false, "should not be called with a non-int")),
   );

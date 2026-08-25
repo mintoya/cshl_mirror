@@ -10,15 +10,14 @@ arr ~~ @fn (N ~ast),ast,{
     return @arr(@uqot(N) , T);
   })|> return _;
 };
-
-hello ~arr'(5)i8~ "yello";
-
-arr2 ~~ @fn (N ~ast),ast,{
+arr2 ~~ @fn (N ~int),ast,{
   (@closure (N),(T ~type),type,{ 
     return @arr(N,T);
   })|> return _;
 };
-hello2 ~arr2(5)i8~ "y2llo";
+
+hello   ~arr'(5)i8~ "yello";
+hello2  ~arr2(5)i8~ "y2llo";
 
 ten ~~ (@fn (i ~int),int,{
   (@closure (@ref(i)),(j ~int),void,{i = i+j;}) 

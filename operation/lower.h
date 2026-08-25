@@ -17,7 +17,7 @@ static slice(astptr) builtin_arg_list(ast **args) {
 static u32 lower_builtin_construct(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
   if (list.len < 1) error_print(args, "@construct expects at least one arg");
-  let type = value_asType(temporary_interpret_ast(ss, s, list.ptr[0]));
+  let type = value_asType_loc(temporary_interpret_ast(ss, s, list.ptr[0]), ast_loc(**list.ptr));
   let st = tu_match_exp(
       type,
       (r_struct, st, st),
@@ -103,7 +103,7 @@ static u32 lower_builtin_struct(superscope *ss, scope *s, ast *args) {
     bool has_value = decl.value && !tu_is(astEmptyStatement, *decl.value);
 
     if (decl.type)
-      member_type = value_asType(temporary_interpret_ast(ss, struct_scope, decl.type));
+      member_type = value_asType_loc(temporary_interpret_ast(ss, struct_scope, decl.type), ast_loc(*args));
     if (has_value) {
       let value_idx = lower(ss, struct_scope, decl.value);
       value = *scope_find(ss, struct_scope, value_idx);
@@ -159,12 +159,12 @@ static u32 lower_builtin_fn(superscope *ss, scope *s, ast *args) {
   foreach (let did, vlap(sentList_vla(argdecls.stmts)))
     iflet_tu (let _, astDecl, *did)
       mList_push(fn_params, scope_find(ss, temp, lower(ss, temp, did))->t);
-    else mList_push(fn_params, value_asType(temporary_interpret_ast(ss, temp, did)));
+    else mList_push(fn_params, value_asType_loc(temporary_interpret_ast(ss, temp, did), ast_loc(*args)));
 
   Type ret_type = (Type)tu_of(c_any, {});
   iflet_tu (let _, astDecl, *list.ptr[1])
     ret_type = scope_find(ss, temp, lower(ss, temp, list.ptr[1]))->t;
-  else ret_type = value_asType(temporary_interpret_ast(ss, temp, list.ptr[1]));
+  else ret_type = value_asType_loc(temporary_interpret_ast(ss, temp, list.ptr[1]), ast_loc(*args));
 
   mList_push(fn_params, ret_type);
 
@@ -365,22 +365,22 @@ static u32 lower_builtin_at(superscope *ss, scope *s, ast *args) {
   iflet_tu (let pt, r_ptr, peeled.t) {
     target->v.value = nullptr; // the pointer is unknown now
     u32 dest = scope_add_rvalue(ss, s, (typed_value){*pt});
-    scope_add_inst(ss, s, (ir)tu_of(ir_deref, {.d = dest, .s = val}));
+    scope_add_inst(ss, s, (ir)tu_of(ir_putptr, {.d = dest, .s = val}));
     return dest;
   }
   error_print(args, "@at requires a pointer argument, got {Type}", target->t);
 }
 static u32 lower_builtin_where(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
-  if (list.len != 1) error_print(args, "@at(arg) takes exactly one argument");
-  let o = scope_find(ss, s, lower(ss, s, list.ptr[0]));
-  if (Type_is_comptime(o->t)) error_print(args, "taking address of comptime value");
+  if (list.len != 1) error_print(args, "@where(arg) takes one argument");
+  let src = lower(ss, s, list.ptr[0]);
+  let o = scope_find(ss, s, src);
+  let p = Type_peel(o->t, false);
+  if (p.is_comptime) error_print(args, "taking address of comptime value");
   o->v.value = nullptr;
-  return scope_add_rvalue(
-      ss,
-      s,
-      (typed_value){(Type)tu_of(r_ptr, &o->t)}
-  );
+  let res = scope_add_rvalue(ss, s, (typed_value){*ss_getType(ss, (Type)tu_of(r_ptr, &o->t))});
+  scope_add_inst(ss, s, (ir)tu_of(ir_getptr, {.d = res, .s = src}));
+  return res;
 }
 
 static u32 lower_builtin_bare_type(superscope *ss, scope *s, ast *args, Type t) {
@@ -392,7 +392,7 @@ static u32 lower_builtin_bare_type(superscope *ss, scope *s, ast *args, Type t) 
 static u32 lower_builtin_decor(superscope *ss, scope *s, ast *args, bool is_const, bool is_volatile) {
   let list = builtin_arg_list(&args);
   if (list.len != 1) error_print(args, "@const/volatile(T) takes exactly one argument");
-  Type inner = value_asType(temporary_interpret_ast(ss, s, list.ptr[0]));
+  Type inner = value_asType_loc(temporary_interpret_ast(ss, s, list.ptr[0]), ast_loc(*args));
   Type decorated = (Type)tu_of(r_decor, {.t = ss_getType(ss, inner), .constant = is_const, .valatile = is_volatile});
   return scope_add_rvalue(ss, s, Type_asValue(ss, *ss_getType(ss, decorated)));
 }
@@ -423,14 +423,14 @@ static u32 lower_builtin_arrof(superscope *ss, scope *s, ast *args) {
   defer { msList_deInit(ss->alloc, count_tv); };
   bigint_expand(ss->alloc, &count_tv, sizeof(usize) / sizeof(bigint_unit) + 1);
 
-  Type elem = value_asType(temporary_interpret_ast(ss, s, list.ptr[1]));
+  Type elem = value_asType_loc(temporary_interpret_ast(ss, s, list.ptr[1]), ast_loc(*args));
   Type arr = (Type)tu_of(r_arr, {ss_getType(ss, elem), *(usize *)count_tv});
   return scope_add_rvalue(ss, s, Type_asValue(ss, arr));
 }
 static u32 lower_builtin_ptrof(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
   if (list.len != 1) error_print(args, "@ptrof takes one argument");
-  Type inner = value_asType(temporary_interpret_ast(ss, s, list.ptr[0]));
+  Type inner = value_asType_loc(temporary_interpret_ast(ss, s, list.ptr[0]), ast_loc(*args));
   return scope_add_rvalue(ss, s, Type_asValue(ss, (Type)tu_of(r_ptr, ss_getType(ss, inner))));
 }
 
@@ -483,7 +483,7 @@ u32 lower_call_type(superscope *ss, scope *s, u32 callable, u32 optional_instanc
       (builtin, b, return lower_builtin(ss, s, b, args)),
 
       (c_type, _, {
-        let actual = value_asType(tv);
+        let actual = value_asType_loc(tv, ast_loc(*args));
         return lower_call_type(ss, s, callable, optional_instance, args, (typed_value){actual, tv.v});
       }),
       (r_struct, st, {
@@ -936,7 +936,7 @@ u32 lower(superscope *ss, scope *s, astptr ats) {
       (astDecl, decl, ({
          // println("parsing decl {ast}", ats);
          let t = decl.type
-                     ? value_asType(temporary_interpret_ast(ss, s, decl.type))
+                     ? value_asType_loc(temporary_interpret_ast(ss, s, decl.type), ast_loc(*ats))
                      : (Type)tu_of(c_any, {});
          // println("\ttype:{Type}", t);
          u32 val = decl.value && !tu_is(astEmptyStatement, *decl.value)
