@@ -47,6 +47,8 @@ typedef enum : u8 {
   builtin_qot,       // @qot(arg) ast of arg
   builtin_uqot,      // @unqot(arg) evaluate arg
                      //
+  builtin_ref,       // @ref(value) produces a referance to value
+  builtin_reft,      // @reft(value) produces the type of a referance to a value
   builtin_at,        // @at(arg) dereference arg
   builtin_where,     // @where(arg) referance to arg
 } builtin_id;
@@ -109,10 +111,12 @@ static inline usize Type_ralig(Type t) {
       (r_decor, dec, Type_ralig(*dec.t)),
       (r_ctime, ct, Type_ralig(*ct)),
       (r_void, _, (usize)1),
-      (r_uint, u, lineup(u, 8) / 8), // TODO
-      (r_sint, u, lineup(u, 8) / 8), // TODO
-      (r_ptr, p, Type_ralig((Type)tu_of(r_uint, 64))),  //TODO not technically correct
-      (r_ref, p, Type_ralig((Type)tu_of(r_uint, 64))),  //TODO not technically correct
+      // TODO: char_bit is more correct
+      (r_uint, u, lineup(u, 8) / 8),
+      (r_sint, u, lineup(u, 8) / 8),
+      (r_ptr, _, Type_ralig((Type)tu_of(r_uint, sizeof(void *) * 8))),
+      (r_ref, _, Type_ralig((Type)tu_of(r_uint, sizeof(void *) * 8))),
+
       (r_arr, a, (assertMessage(a.t), Type_ralig(a.t[0]))),
       (r_bitfield, b, ({
          usize s = 0;
@@ -140,8 +144,8 @@ static inline usize Type_rsize(Type t) {
       (r_void, _, (usize)0),
       (r_uint, u, lineup(u, 8) / 8),
       (r_sint, u, lineup(u, 8) / 8),
-      (r_ptr, p, Type_rsize((Type)tu_of(r_uint, 64))),
-      (r_ref, p, Type_rsize((Type)tu_of(r_uint, 64))),
+      (r_ptr, p, Type_rsize((Type)tu_of(r_uint, sizeof(void *) * 8))),
+      (r_ref, p, Type_rsize((Type)tu_of(r_uint, sizeof(void *) * 8))),
       (r_arr, a, (assertMessage(a.t), Type_rsize(a.t[0]) * a.count)),
       (r_bitfield, b, ({
          usize s = 0;
@@ -314,31 +318,6 @@ i8 Type_cmp(Type a, Type b) {
 
 i8 Type_cmp_hash(const void *a, const void *b) { return Type_cmp(*(Type *)a, *(Type *)b); }
 
-bool Type_is_comptime(Type t) {
-  return tu_match_exp(
-      t,
-      (r_tag, t, Type_is_comptime(*t.t)),
-      (r_decor, t, Type_is_comptime(*t.t)),
-
-      (builtin, _, true),
-      (c_ast, _, true),
-      (c_any, _, true),
-      (c_int, _, true),
-      (c_type, _, true),
-      (r_ctime, _, true),
-
-      (r_func, _, false),
-      (r_closure, _, false),
-      (r_struct, _, false),
-      (r_bitfield, _, false),
-      (r_void, _, false),
-      (r_uint, _, false),
-      (r_sint, _, false),
-      (r_ptr, _, false),
-      (r_ref, _, false),
-      (r_arr, _, false),
-  );
-}
 //}
 
 typePrinter(builtin_id) {
@@ -373,6 +352,8 @@ typePrinter(builtin_id) {
     case(builtin_continue):PUTS("break");break;
     case(builtin_qot):PUTS("qot");break;
     case(builtin_uqot):PUTS("uqot");break;
+    case(builtin_ref):PUTS("ref");break;
+    case(builtin_reft):PUTS("reft");break;
       // clang-format on
   }
 }
@@ -417,8 +398,6 @@ void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_co
         if (type) typePrinterWorker_recurse(*type, visitedmap, _ctx);
         else PUTS("!");
       }),
-      // a reference: same representation as a pointer, but the compiler treats
-      // it as the pointee (auto-deref on read, store-through on write)
       (r_ref, type, {
         PUTS("(& ");
         defer { PUTS(")"); };
@@ -429,6 +408,7 @@ void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_co
         PUTS("(comp ");
         defer { PUTS(")"); };
         if (type) typePrinterWorker_recurse(*type, visitedmap, _ctx);
+        else PUTS("!");
       }),
       (r_decor, decor, {
         PUTS("(");
@@ -504,30 +484,19 @@ typePrinter(Type) {
   typePrinterWorker(in, visited, _ctx);
 }
 
-static inline Type strip_decor(Type t) { // TODO unify with Type_peel
-  let decorated = true;
-  while (decorated) {
-    tu_match_void(
-        t,
-        (r_ctime, ct, t = *ct),
-        (r_decor, dec, t = *dec.t),
-        (default, decorated = false;)
-    );
-  }
-  return t;
-}
 typedef struct {
   Type t;
   bool is_comptime;
   bool is_const;
   bool is_volatile;
 } peeled_type;
-static inline peeled_type Type_peel(Type t, bool deref_ptr) {
-  peeled_type r = {.t = t};
+peeled_type Type_peel(Type t, bool deref_ptr) {
+  peeled_type r = {t};
   while (1)
     tu_match_void(
         r.t,
         (r_tag, tag, r.t = *tag.t; continue;),
+        (r_ref, rf, r.t = *rf; continue;),
         (r_ctime, ct, r.is_comptime = true, r.t = *ct; continue;),
         (r_decor, dec, {
           r.is_const |= dec.constant;
@@ -539,18 +508,15 @@ static inline peeled_type Type_peel(Type t, bool deref_ptr) {
           if (deref_ptr) {
             r.t = *pt;
             continue;
-          }
-          return r;
-        }),
-        (r_ref, pt, {
-          if (deref_ptr) {
-            r.t = *pt;
-            continue;
-          }
-          return r;
+          } else return r;
         }),
         (default, return r)
     );
+}
+static inline Type strip_decor(Type t) { return Type_peel(t, 0).t; }
+
+static inline bool Type_is_comptime(Type t) {
+  return Type_peel(t, false).is_comptime;
 }
 typePrinter(typed_value) {
   PUTS("(tv ");
