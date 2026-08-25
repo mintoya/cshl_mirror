@@ -148,7 +148,7 @@ typePrinter(scope) {
           USETYPEPRINTER(u32, call.l);
           PUTS("(");
           foreach (let c, span(call.args.ptr, call.args.len))
-            USETYPEPRINTER(u32, *c), PUTS(",");
+            USETYPEPRINTER(u32, *c), PUTS(" ");
           PUTS(")");
           USETYPEPRINTER(u32, call.d);
           PUTS(")");

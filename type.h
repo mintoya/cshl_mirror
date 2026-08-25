@@ -408,8 +408,9 @@ void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_co
         if (decor.constant) PUTS("const");
         if (decor.valatile) PUTS("-volatile");
         PUTS(",");
-        defer { PUTS(")"); };
         if (decor.t) typePrinterWorker_recurse(*decor.t, visitedmap, _ctx);
+        else PUTS("!");
+        PUTS(")");
       }),
       (r_arr, arr, {
         // typePrinterWorker_add(in, visited, visitedmap);
@@ -427,7 +428,7 @@ void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_co
         PUTS("(s ");
         defer { PUTS(")"); }
         foreach (let type, span(mList_arr(st), mList_len(st))) {
-          if (type != mList_arr(st)) PUTS(" ");
+          if (type != mList_arr(st)) PUTS(",");
           USETYPEPRINTER(id_str, (id_str){type->name});
           PUTS("@");
           USETYPEPRINTER(usize, type->offset);
@@ -440,7 +441,7 @@ void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_co
         PUTS("(bf ");
         defer { PUTS(")"); }
         foreach (let type, span(mList_arr(st), mList_len(st))) {
-          if (type != mList_arr(st)) PUTS(" ");
+          if (type != mList_arr(st)) PUTS(",");
 
           USETYPEPRINTER(id_str, (id_str){type->name});
           PUTS("|");
@@ -453,8 +454,8 @@ void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_co
         typePrinterWorker_add(in, visitedmap);
         PUTS("(fn (");
         foreach (let it, mList_iter(fn))
-          typePrinterWorker_recurse(it, visitedmap, _ctx), PUTS(" ");
-        PUTS(") ");
+          typePrinterWorker_recurse(it, visitedmap, _ctx), PUTS(",");
+        PUTS("),");
         if (mList_len(fn))
           typePrinterWorker_recurse(mList_last(fn), visitedmap, _ctx);
         PUTS(")");
