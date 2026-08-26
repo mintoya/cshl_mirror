@@ -29,16 +29,16 @@ static u32 lower_builtin_construct(superscope *ss, scope *s, ast *args) {
 }
 static u32 lower_builtin_destruct(superscope *ss, scope *s, ast *args) { TODO(); }
 static u32 lower_builtin_this(superscope *ss, scope *s, ast *args) {
-  assertMessage(builtin_arg_list(&args).len == 0, "this takes no arguments");
-  assertMessage(msList_len(ss->thisstack), "@this() used outside of a struct definition");
+  if (builtin_arg_list(&args).len) error_print(args, "this takes no arguments");
+  if (!msList_len(ss->thisstack)) error_print(args, "@this() used outside of a struct definition");
   return scope_add_value(ss, s, (typed_value){tu_of(c_type, {}), msList_last(ss->thisstack)});
 }
 
-static fptr lower_struct_member_name(superscope *ss, scope *s, ast *name) {
+static fptr id_from_ast(superscope *ss, scope *s, ast *name) {
   iflet_tu (let id, astId, *name) return id;
   let tv = temporary_interpret_ast(ss, s, name);
   if (!tu_is(c_ast, strip_decor(tv.t)) || !tv.v.c_ast || !tu_is(astId, *tv.v.c_ast))
-    error_print(name, "struct member name must be an identifier");
+    error_print(name, "expected ast identifier");
   return tu_catch(astId, *tv.v.c_ast);
 }
 
@@ -55,10 +55,10 @@ static u32 lower_builtin_struct(superscope *ss, scope *s, ast *args) {
               .stmts
       )
   );
-  let members = mList_init(ss->alloc, r_struct_item, 4);
-  let data = mList_init(ss->alloc, value_store, 4);
-  let decls = mList_init(ss->alloc, astptr, 4);
-  let slots = mList_init(ss->alloc, u32, 4);
+  let members = mList_init(ss->alloc, r_struct_item);
+  let data = mList_init(ss->alloc, value_store);
+  let decls = mList_init(ss->alloc, astptr);
+  let slots = mList_init(ss->alloc, u32);
   defer {
     mList_deinit(decls);
     mList_deinit(slots);
@@ -76,13 +76,12 @@ static u32 lower_builtin_struct(superscope *ss, scope *s, ast *args) {
     scope_destroy(ss, struct_scope);
   };
 
-  // First pass: reserve every member name so member types can refer to each other.
   foreach (let node, span(list.ptr, list.len)) {
     let member = *node;
     if (tu_is(astEmptyStatement, *member)) continue;
     if (!tu_is(astDecl, *member)) error_print(member, "struct members must be declarations");
     let decl = tu_catch(astDecl, *member);
-    let name = lower_struct_member_name(ss, struct_scope, decl.name);
+    let name = id_from_ast(ss, struct_scope, decl.name);
     u32 slot = scope_add_value(ss, struct_scope, (typed_value){tu_of(c_any, {})});
     if (fptr_eq(name, "Self"))
       *scope_find(ss, struct_scope, slot) = (typed_value){tu_of(c_type, {}), self};
@@ -108,9 +107,7 @@ static u32 lower_builtin_struct(superscope *ss, scope *s, ast *args) {
       let value_idx = lower(ss, struct_scope, decl.value);
       value = *scope_find(ss, struct_scope, value_idx);
       if (!decl.type) member_type = value.t;
-    } else if (!decl.type) {
-      error_print(member_decl, "struct member needs a type or value");
-    }
+    } else if (!decl.type) error_print(member_decl, "struct member needs a type or value");
 
     if (decl.is_const && !Type_is_comptime(member_type)) {
       let wrapped = acreate(ss->alloc, Type);
@@ -245,7 +242,7 @@ static u32 lower_builtin_id(superscope *ss, scope *s, ast *args) {
 
 // ---- @qot(arg) / @uqot(arg) ----
 static astptr qot_walk(superscope *ss, scope *s, astptr node) {
-  // as long as i keep asts immutable
+  // as long as asts are immutable
   if (!node) return avalue(ss->alloc, (ast)tu_of(astEmptyStatement, {}));
   let nd = *node;
 
@@ -391,7 +388,7 @@ static u32 lower_builtin_bare_type(superscope *ss, scope *s, ast *args, Type t) 
 
 static u32 lower_builtin_decor(superscope *ss, scope *s, ast *args, bool is_const, bool is_volatile) {
   let list = builtin_arg_list(&args);
-  if (list.len != 1) error_print(args, "@const/volatile(T) takes exactly one argument");
+  if (list.len != 1) error_print(args, "@const//volatile(T) takes exactly one argument");
   Type inner = value_asType_loc(temporary_interpret_ast(ss, s, list.ptr[0]), ast_loc(*args));
   Type decorated = (Type)tu_of(r_decor, {.t = ss_getType(ss, inner), .constant = is_const, .valatile = is_volatile});
   return scope_add_value(ss, s, Type_asValue(ss, *ss_getType(ss, decorated)));
@@ -399,7 +396,7 @@ static u32 lower_builtin_decor(superscope *ss, scope *s, ast *args, bool is_cons
 
 static u32 lower_builtin_intty(superscope *ss, scope *s, ast *args, bool is_signed) {
   let list = builtin_arg_list(&args);
-  if (list.len != 1) error_print(args, "@sint/uint(N) takes exactly one argument");
+  if (list.len != 1) error_print(args, "@sint//uint(N) takes exactly one argument");
   bigint largest_int = BInt.from.i64(ss->alloc, (u16)~0);
   defer { msList_deInit(ss->alloc, largest_int); };
   bigint bigbits = int_as_bigint(ss, temporary_interpret_ast(ss, s, list.ptr[0]));
@@ -444,7 +441,7 @@ u32 lower_builtin(superscope *ss, scope *s, builtin_id builtin, ast *args) {
     case builtin_return:    return lower_builtin_return(ss, s, args);
     case builtin_break:
     case builtin_continue:
-      if(builtin_arg_list(&args).len)error_print(args, "break/continue take no args");
+      if(builtin_arg_list(&args).len)error_print(args, "break//continue take no args");
       scope_add_inst(ss, s,builtin == builtin_break? (ir)tu_of(ir_break, {}):(ir)tu_of(ir_continue, {}));
       return scope_add_value(ss, s, (typed_value){tu_of(r_void, {})});
     case builtin_ast:       return lower_builtin_bare_type(ss, s, args, (Type)tu_of(c_ast, {}));
@@ -461,7 +458,6 @@ u32 lower_builtin(superscope *ss, scope *s, builtin_id builtin, ast *args) {
     case builtin_arrof:     return lower_builtin_arrof(ss, s, args);
     case builtin_ptrof:     return lower_builtin_ptrof(ss, s, args);
     case builtin_construct: return lower_builtin_construct(ss, s, args);
-    case builtin_destruct:  return lower_builtin_destruct(ss, s, args);
     case builtin_struct:    return lower_builtin_struct(ss, s, args);
     case builtin__this:     return lower_builtin_this(ss, s, args);
     case builtin_qot:       return lower_builtin_qot(ss, s, args);
@@ -750,7 +746,7 @@ u32 lower_boolean_op(superscope *ss, scope *s, u32 left, enum_boolean_op bop, as
   let right_tv = scope_find(ss, s, right_val);
 
   if (tu_is(c_ast, strip_decor(left_tv->t)) || tu_is(c_ast, strip_decor(right_tv->t))) {
-    if (!EQUAL_ANY(bop, bop_oand, bop_oor)) error_print(right, "only or/and for asts");
+    if (!EQUAL_ANY(bop, bop_oand, bop_oor)) error_print(right, "only or//and for asts");
     bool r = bop == bop_oand ? (interp_tv_truthy(left_tv) && interp_tv_truthy(right_tv))
                              : (interp_tv_truthy(left_tv) || interp_tv_truthy(right_tv));
     return scope_add_value(ss, s, (typed_value){tu_of(c_int, {}), BInt.from.i64(ss->alloc, r ? 1 : 0)});
@@ -758,7 +754,7 @@ u32 lower_boolean_op(superscope *ss, scope *s, u32 left, enum_boolean_op bop, as
 
   assertMessage(
       Type_isint(left_tv->t) && Type_isint(right_tv->t),
-      "boolean/comparison operators currently only support integer operands"
+      "boolean//comparison of non integer"
   );
 
   // Comptime-known operands: evaluate eagerly and don't leave an ir_op (or an
@@ -814,7 +810,6 @@ u32 lower_op(superscope *ss, scope *s, u32 left, enum_op opn, ast *right) {
       let pipscope = scope_inferior(ss, s);
       scope_bind(ss, pipscope, left, fp("_"));
       lower(ss, pipscope, right);
-      assertMessage(msList_len(pipscope->values), "pipeline block did not yield a value");
       u32 result = scope_add_value(ss, s, msList_last(pipscope->values));
       scope_add_inst(ss, s, (ir)tu_of(ir_block, pipscope));
       return result;
@@ -957,19 +952,7 @@ u32 lower(superscope *ss, scope *s, astptr ats) {
            assertMessage(!tu_is(c_any, resolved_val->t), "cannot apply const to anytype");
            resolved_val->t = (Type)tu_of(r_decor, {ss_getType(ss, resolved_val->t), true, false});
          }
-         if (decl.name) {
-           tu_match_void(
-               *decl.name,
-               (astId, id, scope_bind(ss, s, val, id)),
-               (default, {
-                 let res = temporary_interpret_ast(ss, s, decl.name);
-                 if (!tu_is(c_ast, res.t)) error_print(ats, "only ast identifiers can be names");
-                 assertMessage(res.v.c_ast);
-                 assertMessage(tu_is(astId, *res.v.c_ast));
-                 scope_bind(ss, s, val, tu_catch(astId, *res.v.c_ast));
-               }),
-           );
-         }
+         if (decl.name) scope_bind(ss, s, val, id_from_ast(ss, s, decl.name));
          let resolved_val = scope_find(ss, s, val);
          resolved_val->t = *ss_getType(ss, resolved_val->t);
          val;

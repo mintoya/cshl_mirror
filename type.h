@@ -24,7 +24,7 @@ typedef enum : u8 {
   builtin_continue,  // @continue()
                      //
                      // then when called with expression, yields an r_func
-  builtin__id,       // @id(str) an id which corresponds to this string litteral
+  builtin__id,       // @id(str) an id which corresponds to this string, **evaluates it**
                      //
   builtin_ast,       // @ast() type of ast
   builtin_any,       // @any() type of any
@@ -38,11 +38,9 @@ typedef enum : u8 {
   builtin_typeof,    // @typeof(V) type of argument
   builtin_arrof,     // @arrof(N,t) array of N t's
   builtin_ptrof,     // @ptrof(t) pionter to t
-  builtin_reftype,   // @reftype(t) reference type: a pointer you treat as the pointee
                      //
   builtin_struct,    // @struct{} struct of declarations
   builtin_construct, // @construct(type,...) construct a type given a list of decls
-  builtin_destruct,  // @destruct(value,...) destruct a type given a list of ids
   builtin__this,     // @this() inside of struct, this is the result type
                      //
   builtin_qot,       // @qot(arg) ast of arg
@@ -324,12 +322,10 @@ typePrinter(builtin_id) {
     case(builtin__id):PUTS("id");break;
     case(builtin_fn):PUTS("fn");break;
     case(builtin_construct):PUTS("construct");break;
-    case(builtin_destruct):PUTS("destruct");break;
     case(builtin_closure):PUTS("closure");break;
     case(builtin_ast):PUTS("ast");break;
     case(builtin_arrof):PUTS("arrof");break;
     case(builtin_ptrof):PUTS("ptrof");break;
-    case(builtin_reftype):PUTS("reftype");break;
     case(builtin_at):PUTS("at");break;
     case(builtin_where):PUTS("where");break;
     case(builtin_any):PUTS("any");break;

@@ -375,7 +375,6 @@ superscope *ss_init(allocfn allocator) {
       {"@if", builtin_if},
       {"@while", builtin_while},
       {"@construct", builtin_construct},
-      {"@destruct", builtin_destruct},
   };
   foreach (let i, vla(builtins))
     scope_bind(
