@@ -10,10 +10,6 @@
 #include <wheels/allocators/arenaAllocator.h>
 #include <wheels/allocators/debugallocator.h>
 #include <wheels/mytypes.h>
-// module like
-#include "operation/common2.h"
-#include "operation/int.h"
-#include "operation/lower.h"
 
 // { util
 [[gnu::constructor]] void initOpNumbers() {
@@ -115,11 +111,11 @@ cmd_main(
     print_wfO(sexplike, nullptr, "{ast}\n", ast);
 
   if (execute) {
-    let env = ss_init(allocator);
-    lower(env, env->outermost, ast);
-    print_wfO(sexplike, nullptr, "{scope}\n", *env->outermost);
-    interpret(env, env->outermost, filectx->ptr);
+    assertMessage(false, "not implemented");
+    // let env = ss_init(allocator);
+    // lower(env, env->outermost, ast);
     // print_wfO(sexplike, nullptr, "{scope}\n", *env->outermost);
+    // interpret(env, env->outermost, filectx->ptr);
   }
 
   return 0;
