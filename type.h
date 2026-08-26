@@ -1,4 +1,5 @@
 #pragma once
+#include <limits.h>
 #define TV_EXPAND_VALUE 1
 
 #include "ast.h"
@@ -105,19 +106,19 @@ typedef struct r_bitf_item {
   usize width;
 } r_bitf_item;
 static inline usize Type_ralig(Type t) {
+  ;
   return tu_match_exp(
       t,
       (r_tag, tag, Type_ralig(*tag.t)),
       (r_decor, dec, Type_ralig(*dec.t)),
       (r_ctime, ct, Type_ralig(*ct)),
       (r_void, _, (usize)1),
-      // TODO: char_bit is more correct
-      (r_uint, u, lineup(u, 8) / 8),
-      (r_sint, u, lineup(u, 8) / 8),
+      (r_uint, u, lineup(u, CHAR_BIT) / CHAR_BIT),
+      (r_sint, u, Type_ralig((Type)tu_of(r_uint, u))),
       (r_ptr, _, Type_ralig((Type)tu_of(r_uint, sizeof(void *) * 8))),
-      (r_ref, _, Type_ralig((Type)tu_of(r_uint, sizeof(void *) * 8))),
+      (r_ref, p, Type_ralig((Type)tu_of(r_ptr, p))),
 
-      (r_arr, a, (assertMessage(a.t), Type_ralig(a.t[0]))),
+      (r_arr, a, Type_ralig(a.t[0])),
       (r_bitfield, b, ({
          usize s = 0;
          foreach (let b, mList_iter(b))
@@ -142,11 +143,11 @@ static inline usize Type_rsize(Type t) {
       (r_decor, dec, Type_rsize(*dec.t)),
       (r_ctime, ct, Type_rsize(*ct)),
       (r_void, _, (usize)0),
-      (r_uint, u, lineup(u, 8) / 8),
-      (r_sint, u, lineup(u, 8) / 8),
+      (r_uint, u, lineup(u, CHAR_BIT) / CHAR_BIT),
+      (r_sint, u, Type_rsize((Type)tu_of(r_uint, u))),
       (r_ptr, p, Type_rsize((Type)tu_of(r_uint, sizeof(void *) * 8))),
-      (r_ref, p, Type_rsize((Type)tu_of(r_uint, sizeof(void *) * 8))),
-      (r_arr, a, (assertMessage(a.t), Type_rsize(a.t[0]) * a.count)),
+      (r_ref, p, Type_rsize((Type)tu_of(r_ptr, p))),
+      (r_arr, a, Type_rsize(a.t[0]) * a.count),
       (r_bitfield, b, ({
          usize s = 0;
          foreach (let b, mList_iter(b))
@@ -199,7 +200,6 @@ i8 Type_cmp_ex(Type a, Type b, mList(type_cmp_pair) followed) {
         if_decl (let dif, ai.valatile - bi.valatile)
           return dif;
         if (ai.t == bi.t) return 0;
-        if (!ai.t || !bi.t) return ai.t ? 1 : -1;
 
         foreach (let p, mList_iter(followed))
           if (p.a == ai.t && p.b == bi.t) return 0;
@@ -213,7 +213,6 @@ i8 Type_cmp_ex(Type a, Type b, mList(type_cmp_pair) followed) {
       (r_ctime, ai, {
         let bi = tu_catch(r_ctime, b);
         if (ai == bi) return 0;
-        if (!ai || !bi) return ai ? 1 : -1;
 
         foreach (let p, mList_iter(followed))
           if (p.a == ai && p.b == bi) return 0;
@@ -226,7 +225,6 @@ i8 Type_cmp_ex(Type a, Type b, mList(type_cmp_pair) followed) {
       (r_ptr, ai, {
         let bi = tu_catch(r_ptr, b);
         if (ai == bi) return 0;
-        if (!ai || !bi) return ai ? 1 : -1;
 
         foreach (let p, mList_iter(followed))
           if (p.a == ai && p.b == bi) return 0;
@@ -239,7 +237,6 @@ i8 Type_cmp_ex(Type a, Type b, mList(type_cmp_pair) followed) {
       (r_ref, ai, {
         let bi = tu_catch(r_ref, b);
         if (ai == bi) return 0;
-        if (!ai || !bi) return ai ? 1 : -1;
 
         foreach (let p, mList_iter(followed))
           if (p.a == ai && p.b == bi) return 0;
@@ -395,28 +392,24 @@ void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_co
         // typePrinterWorker_add(in, visited, visitedmap);
         PUTS("(* ");
         defer { PUTS(")"); };
-        if (type) typePrinterWorker_recurse(*type, visitedmap, _ctx);
-        else PUTS("!");
+        typePrinterWorker_recurse(*type, visitedmap, _ctx);
       }),
       (r_ref, type, {
         PUTS("(& ");
         defer { PUTS(")"); };
-        if (type) typePrinterWorker_recurse(*type, visitedmap, _ctx);
-        else PUTS("!");
+        typePrinterWorker_recurse(*type, visitedmap, _ctx);
       }),
       (r_ctime, type, {
         PUTS("(comp ");
         defer { PUTS(")"); };
-        if (type) typePrinterWorker_recurse(*type, visitedmap, _ctx);
-        else PUTS("!");
+        typePrinterWorker_recurse(*type, visitedmap, _ctx);
       }),
       (r_decor, decor, {
         PUTS("(");
         if (decor.constant) PUTS("const");
         if (decor.valatile) PUTS("-volatile");
         PUTS(",");
-        if (decor.t) typePrinterWorker_recurse(*decor.t, visitedmap, _ctx);
-        else PUTS("!");
+        typePrinterWorker_recurse(*decor.t, visitedmap, _ctx);
         PUTS(")");
       }),
       (r_arr, arr, {
@@ -426,8 +419,7 @@ void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_co
         PUTS("[");
         USETYPEPRINTER(usize, arr.count);
         PUTS("] ");
-        if (arr.t) typePrinterWorker_recurse(*arr.t, visitedmap, _ctx);
-        else PUTS("!");
+        typePrinterWorker_recurse(*arr.t, visitedmap, _ctx);
       }),
       // multiple types, push
       (r_struct, st, {
@@ -568,7 +560,7 @@ typePrinter(typed_value) {
                      USENAMEDPRINTER("astTag", (in.v.c_ast->tag));
 #endif
        else PUTS("??");),
-      (c_type, _, in.v.c_type ? USETYPEPRINTER(Type, *in.v.c_type) : PUTS("??");),
+      (c_type, _, USETYPEPRINTER(Type, *in.v.c_type);),
       (default, {
         if (in.v.value)
           USETYPEPRINTER(fptr, ((fptr){Type_rsize(in.t), in.v.value}));
