@@ -489,14 +489,15 @@ typedef struct {
   bool is_comptime;
   bool is_const;
   bool is_volatile;
+  bool is_ref;
+  int ptr_level;
 } peeled_type;
-peeled_type Type_peel(Type t, bool deref_ptr) {
+peeled_type Type_peel(Type t, bool deref_ptr, bool deref_ref) {
   peeled_type r = {t};
   while (1)
     tu_match_void(
         r.t,
         (r_tag, tag, r.t = *tag.t; continue;),
-        (r_ref, rf, r.t = *rf; continue;),
         (r_ctime, ct, r.is_comptime = true, r.t = *ct; continue;),
         (r_decor, dec, {
           r.is_const |= dec.constant;
@@ -506,6 +507,15 @@ peeled_type Type_peel(Type t, bool deref_ptr) {
         }),
         (r_ptr, pt, {
           if (deref_ptr) {
+            r.ptr_level++;
+            r.t = *pt;
+            continue;
+          } else return r;
+        }),
+        (r_ref, pt, {
+          if (deref_ref) {
+            r.is_ref = true;
+            deref_ref = false;
             r.t = *pt;
             continue;
           } else return r;
@@ -513,10 +523,36 @@ peeled_type Type_peel(Type t, bool deref_ptr) {
         (default, return r)
     );
 }
-static inline Type strip_decor(Type t) { return Type_peel(t, 0).t; }
+Type Type_unpeel(allocfn allocator, peeled_type p) {
+  Type r = p.t;
+  foreach (let _, range(0, p.ptr_level)) {
+    Type *inner = avalue(allocator, r);
+    r = (Type)tu_of(r_ptr, inner);
+  }
+  if (p.is_ref) {
+    Type *inner = avalue(allocator, r);
+    r = (Type)tu_of(r_ref, inner);
+  }
+  while (p.ptr_level) {
+    Type *inner = avalue(allocator, r);
+    r = (Type)tu_of(r_ptr, inner);
+    p.ptr_level--;
+  }
+
+  if (p.is_const || p.is_volatile) {
+    Type *inner = avalue(allocator, r);
+    r = (Type)tu_of(r_decor, {.t = inner, .constant = p.is_const, .valatile = p.is_volatile});
+  }
+  if (p.is_comptime) {
+    Type *inner = avalue(allocator, r);
+    r = (Type)tu_of(r_ctime, inner);
+  }
+  return r;
+}
+static inline Type strip_decor(Type t) { return Type_peel(t, 0, true).t; }
 
 static inline bool Type_is_comptime(Type t) {
-  return Type_peel(t, false).is_comptime;
+  return Type_peel(t, false, true).is_comptime;
 }
 typePrinter(typed_value) {
   PUTS("(tv ");

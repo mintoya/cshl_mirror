@@ -1,5 +1,6 @@
 #pragma once
 #include "../type.h"
+#define Typed_value(type, value) ((typed_value){(Type)type, value})
 #include "wheels/allocators/cballocator.h"
 #include "wheels/fptr.h"
 #include "wheels/macros.h"
@@ -308,7 +309,7 @@ void scope_destroy(superscope *b, scope *s) {
   adestroy(b->alloc, s);
 }
 
-u32 scope_add_rvalue(superscope *env, scope *s, typed_value v) {
+u32 scope_add_value(superscope *env, scope *s, typed_value v) {
   let res = msList_len(s->values) + s->start + 1;
   msList_push(env->alloc, s->values, v);
   return res;
@@ -346,6 +347,7 @@ superscope *ss_init(allocfn allocator) {
     builtin_id id;
   } builtins[] = {
       {"@fn", builtin_fn},
+      {"@closure", builtin_closure},
       {"@this", builtin__this},
       {"@struct", builtin_struct},
       {"@at", builtin_at},
@@ -361,6 +363,8 @@ superscope *ss_init(allocfn allocator) {
       {"@sint", builtin_sint},
       {"@uint", builtin_uint},
       {"@ptrof", builtin_ptrof},
+      {"@ref", builtin_ref},
+      {"@refT", builtin_reft},
       {"@volatile", builtin_volatile},
       {"@const", builtin_const},
       {"@typeof", builtin_typeof},
@@ -377,7 +381,7 @@ superscope *ss_init(allocfn allocator) {
     scope_bind(
         res,
         res->outermost,
-        scope_add_rvalue(res, res->outermost, (typed_value){tu_of(builtin, i.id)}),
+        scope_add_value(res, res->outermost, (typed_value){tu_of(builtin, i.id)}),
         fp(i.name)
     );
   return res;
@@ -397,18 +401,37 @@ void ss_deInit(superscope *ss) {
   adestroy(allocator, ss);
 }
 u32 ss_get_named(superscope *env, scope *s, fptr n) {
-  if_decl (let val, moxmap_get(s->named, n))
-    return *val;
-  let limit = s->start;
-  s = s->parent;
+  let limit = s->start + msList_len(s->values);
   while (s) {
     if_decl (let val, moxmap_get(s->named, n))
-      if (*val <= limit)
-        return *val;
+      if (*val <= limit) {
+        let vo = scope_find(env, s, *val);
+        return tu_match_exp(
+            vo->t,
+            (r_ref, ref, *val),
+            (default,
+             scope_add_value(
+                 env, s, Typed_value(tu_of(r_ref, &vo->t), avalue(env->alloc, vo->v))
+             ))
+        );
+      }
     limit = s->start;
     s = s->parent;
   }
   error_print(n.ptr, "unbound identifier {slice(c8)}", n);
+}
+typed_value *scope_find_orig(superscope *ss, scope *s, u32 u) {
+  let v = scope_find(ss, s, u);
+  let vt = Type_peel(v->t, false, true);
+
+  while (tu_is(r_ref, vt.t)) {
+    vt.t = *tu_catch(r_ref, vt.t);
+    assertMessage(v->v.value, "reference pointer is null");
+    v = (typed_value *)v->v.value;
+    vt = Type_peel(v->t, false, true);
+  }
+
+  return v;
 }
 Type *ss_getType(superscope *b, Type t) {
   if_decl (let t, moxmap_get(b->types, t)) return *t;
@@ -416,7 +439,7 @@ Type *ss_getType(superscope *b, Type t) {
   let pt = acreate(allocator, Type);
   moxmap_set(b->types, t, pt);
 
-  let p = Type_peel(t, false);
+  let p = Type_peel(t, false, true);
   if (p.is_comptime || p.is_const || p.is_volatile) {
     Type *inner_pt = ss_getType(b, p.t);
 
@@ -473,7 +496,7 @@ bool Type_isint(Type t) {
   );
 }
 Type value_asType_loc(typed_value t, u8 *location) {
-  Type current_type = Type_peel(t.t, false).t;
+  Type current_type = Type_peel(t.t, false, true).t;
   if (!tu_is(c_type, current_type)) error_print(location, "tried to get type from {Type}", t.t);
   if (!t.v.c_type) error_print(location, "unknown type");
   return *t.v.c_type;
@@ -487,7 +510,7 @@ u32 ss_compileInt(superscope *b, scope *s, fptr in) {
     result = BInt.from.fptr(b->alloc, fptr_eq(front, "0x") ? 16 : 2, slice_split(in, (2, -1))[0]);
   else result = BInt.from.fptr(b->alloc, 10, in);
   assertMessage(result);
-  return scope_add_rvalue(b, s, (typed_value){tu_of(c_int, {}), result});
+  return scope_add_value(b, s, (typed_value){tu_of(c_int, {}), result});
 }
 fptr string_escape(allocfn allocator, fptr in) {
   assertMessage(in.len > 1 && in.ptr[0] == '"' && in.ptr[in.len - 1] == '"');
@@ -530,7 +553,7 @@ fptr string_escape(allocfn allocator, fptr in) {
 u32 ss_compileString(superscope *b, scope *s, fptr in) {
   assertMessage(in.len > 1 && in.ptr[0] == '"' && in.ptr[in.len - 1] == '"');
   in = string_escape(b->alloc, in);
-  return scope_add_rvalue(
+  return scope_add_value(
       b,
       s,
       (typed_value){

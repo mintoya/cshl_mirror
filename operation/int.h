@@ -7,7 +7,7 @@
 #include <string.h>
 
 static bool Type_mutable(Type t) {
-  return !Type_peel(t, false).is_const;
+  return !Type_peel(t, false, true).is_const;
 }
 
 typedef enum {
