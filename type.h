@@ -1,3 +1,4 @@
+#pragma once
 #include "ast.h"
 #include <limits.h>
 #include <wheels/bigint.h>

@@ -1,21 +1,29 @@
+#pragma once
 #include <wheels/macros.h>
 #include <wheels/mytypes.h>
+
+sliceDef(u32);
+
 typedef struct scope scope;
+
+// clang-format off
 tu_def(
-    // l: left, r:right , d:destination
+    // l: left, r:right , d:destination , s:source
     (ir, u8),
-    (ir_putref, /**/ struct { u32 l, d; }),
-    (ir_getref, /**/ struct { u32 l, d; }),
-    // operations supported by c, no overloading and such
-    // o is same packed opnumber
-    (ir_rawop, /* */ struct { u32 l, r, d, o; }),
+    (ir_getref, /* */ struct { u32 l, d; }),                 // d = &l; // but a referance
+    (ir_getptr, /* */ struct { u32 l, d; }),                 // d = &l;
+    (ir_putptr, /* */ struct { u32 l, d; }),                 // d = *l;
+    (ir_rawop, /*  */ struct { u32 l, r, d, o; }),           // d = l (o) r;
+    (ir_call, /*   */ struct { u32 l, d; slice(u32) args; }),// d = l(...args)
 
     // control
-    (ir_if, /*    */ struct {u32 l;scope*r; }),
-    // fine since scopes return their last value
-    (ir_while, /* */ struct { scope *l, *r; }),
+    // The block evaluates to its child scope's last value.
+    (ir_block, /* */ scope *),
+
+    (ir_ret, /*   */ u32),
+    (ir_if, /*    */ struct { u32 cnd; scope *t, *f; }),
+    (ir_while, /* */ struct { scope *cnd, *body; }),
     (ir_break, /* */ struct {}),
     (ir_cont, /*  */ struct {}),
-    // return register n
-    (ir_ret, /*   */ u32),
 );
+// clang-format on
