@@ -1,16 +1,12 @@
 #pragma once
 #include "../type.h"
 #include "ir.h"
-#include "wheels/allocator.h"
-#include "wheels/allocators/cballocator.h"
-#include "wheels/fptr.h"
-#include "wheels/macros.h"
-#include "wheels/mytypes.h"
-#include "wheels/oxmap.h"
-#include "wheels/print/print_pre.h"
-#include "wheels/sList.h"
-#include "wheels/smap.h"
 #include <assert.h>
+#include <wheels/allocators/cballocator.h>
+#include <wheels/sList.h>
+#include <wheels/smap.h>
+#define T(...) ((Type){.t = __VA_ARGS__})
+#define TV(...) ((typed_value){__VA_ARGS__})
 
 typedef struct superscope superscope;
 
@@ -28,14 +24,8 @@ struct superscope {
   moxmap(void *, usize) pointers;
   moxmap(TypeTree, TypeTree *) typetrees;
   moxmap(Type, Type *) types;
-  moxmap(Type, msList(value_store)) tdata;
-  msList(struct {
-    sentList_t(Type) sig;
-    scope *body;
-  }) all_functions;
-  scope *outermost;
   msList(Type *) thisstack;
-  u32 struct_count;
+  scope *outermost;
 };
 
 // scope helpers
@@ -94,9 +84,8 @@ static inline u32 ss_get_named(superscope *env, scope *s, fptr n) {
       if (*val <= limit) {
         let vo = scope_find(env, s, *val);
         if (vo->t.isref) return *val;
-        let res = scope_add_value(env, s, (typed_value){Type_ref(vo->t)});
+        let res = scope_add_value(env, s, TV(Type_ref(vo->t)));
         scope_add_inst(env, s, (ir)tu_of(ir_getref, {.d = res, .l = *val}));
-        fprintf(stderr, "[dbg] ss_get_named(%.*s) -> %u (found @ %u, isref=%d)\n", (int)n.len, n.ptr, res, *val, vo->t.isref);
         return res;
       }
     limit = s->start;
@@ -152,9 +141,7 @@ static inline superscope *ss_init(allocfn allocator) {
     .pointers = moxmap_init(allocator, void*, usize),
     .typetrees = moxmap_init(allocator, TypeTree, TypeTree *,TypeTree_cmp_hash),
     .types = moxmap_init(allocator, Type, Type *,Type_cmp_hash),
-    .all_functions = msList_init(allocator, ptrstype(res->all_functions)),
     .thisstack = msList_init(allocator , Type*),
-    .tdata = moxmap_init(allocator, Type, msList(value_store),Type_cmp_hash)
   }));
   // clang-format on
   res->alloc = cba_init(allocator, nullptr, irb_cbb, res->pointers);
@@ -204,13 +191,9 @@ static inline superscope *ss_init(allocfn allocator) {
 
 static inline void ss_deInit(superscope *ss) {
   let allocator = ((struct cballocator *)ss->alloc)->allocator;
-  msList_deInit(allocator, ss->all_functions);
   msList_deInit(allocator, ss->thisstack);
-  foreach (let it, moxmap_iter(ss->tdata, Type, msList(value_store)))
-    msList_deInit(allocator, *it.val);
   foreach (let it, moxmap_iter(ss->pointers, void *, usize))
     adestroy(allocator, (u8(*)[*it.val])it.key);
-  moxmap_deinit(ss->tdata);
   moxmap_deinit(ss->pointers);
   moxmap_deinit(ss->typetrees);
   moxmap_deinit(ss->types);

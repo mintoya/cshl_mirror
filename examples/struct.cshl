@@ -1,4 +1,6 @@
-type ~~ @type();
+type  ~~ @type();
+void  ~~ @void();
+any ~~ @any();
 i ~~@sint;
 u ~~@uint;
 
@@ -17,14 +19,28 @@ point ~type~ @struct{
     self.y = self.y / scale;
     return self;
   };
+  /*
+  @id("=") ~~ @fn (self ~@ptr Self,other ~any),Self,{
+    @if (@typeof(other) == Self), {
+      return self:copy(other);
+    };
+    // zig style function overloading & such
+  };
+  copy ~~ @fn (self~@ptr Self , other~Self),Self,{
+    self.x = other.x;
+    self.y = other.y;
+    return @at self;
+  };
+  
+  @id("@init") ~~ @fn (type),void,{;};
+  @id("@deinit") ~~ @fn (type),void,{;};
+  */
 };
 
 
-// a~~ @construct(point,x~~1,y~~2);
-// b~~ @construct(point,x~~2,y~~1);
 ia ~i 32~1;
 ib ~i 32~2;
 a ~point;a.x=ia;a.y=ib;
 b ~point;b.x=ib;b.y=ia;
-c ~point~ ( a + b ) / 3;
+c ~point~ (a + b) / 3;
 

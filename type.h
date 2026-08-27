@@ -74,7 +74,7 @@ tu_def( // type
     // not have them take up any storage space
     (c_any /*        */, struct {}),
     (c_int /*        */, typeof(bigint[0])),
-    (c_type /*       */, typeof(TypeTree *[0])),
+    (c_type /*       */, typeof(Type*[0])),
     (c_ast /*        */, typeof(ast *[0])),
 );
 struct Type {

@@ -4,11 +4,11 @@
 
 static u32 lower_builtin_fn(superscope *ss, scope *s, ast *args) { TODO(); }
 static u32 lower_builtin_closure(superscope *ss, scope *s, ast *args) { TODO(); }
-
-//{@if / @while
 static u32 lower_builtin_if(superscope *ss, scope *s, ast *args) { TODO(); }
-
 static u32 lower_builtin_while(superscope *ss, scope *s, ast *args) { TODO(); }
+static u32 lower_builtin_at(superscope *ss, scope *s, ast *args) { TODO(); }
+static u32 lower_builtin_where(superscope *ss, scope *s, ast *args) { TODO(); }
+static u32 lower_builtin_ref(superscope *ss, scope *s, ast *args) { TODO(); }
 
 static u32 lower_builtin_return(superscope *ss, scope *s, ast *args) {
   // TODO enforce return type
@@ -20,7 +20,7 @@ static u32 lower_builtin_return(superscope *ss, scope *s, ast *args) {
 }
 
 static u32 lower_builtin_id(superscope *ss, scope *s, ast *args) {
-  let str = temporary_interpret_ast(ss, s, args);
+  let str = temporary_interpret(ss, s, args);
   let arr = tu_catchr(r_arr, str.t.t, error_print(args, "id takes an array of i8"));
   if (tu_catchr(r_sint, arr.t[0], error_print(args, "id takes an array of i8")) != 8)
     error_print(args, "id takes an array of i8");
@@ -39,7 +39,7 @@ static astptr qot_walk(superscope *ss, scope *s, astptr node) {
         let args = op.right;
         let list = builtin_arg_list(&args);
         assertMessage(list.len == 1, "@uqot takes exactly one argument");
-        let tv = temporary_interpret_ast(ss, s, list.ptr[0]);
+        let tv = temporary_interpret(ss, s, list.ptr[0]);
         if (!tu_is(c_ast, tv.t.t)) error_print(node, "tried to unquote a non-ast");
         if (!tv.v.c_ast) error_print(node, "@uqot got a null ast?");
         return tv.v.c_ast;
@@ -132,19 +132,16 @@ static u32 lower_builtin_qot(superscope *ss, scope *s, ast *args) {
 static u32 lower_builtin_uqot(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
   if (list.len != 1) error_print(args, "@uqot(arg) takes one argument");
-  let tv = temporary_interpret_ast(ss, s, list.ptr[0]);
+  let tv = temporary_interpret(ss, s, list.ptr[0]);
   if (!tu_is(c_ast, tv.t.t)) error_print(args, "tried to unquote a non-ast");
   assertMessage(tv.v.c_ast, "@uqot argument is null?");
   return lower(ss, s, tv.v.c_ast);
 }
 
-static u32 lower_builtin_at(superscope *ss, scope *s, ast *args) { TODO(); }
-static u32 lower_builtin_where(superscope *ss, scope *s, ast *args) { TODO(); }
-static u32 lower_builtin_ref(superscope *ss, scope *s, ast *args) { TODO(); }
 static u32 lower_builtin_reft(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
   if (list.len != 1) error_print(args, "@reft(arg) takes exactly one argument");
-  Type inner = value_asType_loc(temporary_interpret_ast(ss, s, list.ptr[0]), ast_loc(*args));
+  Type inner = value_asType_loc(temporary_interpret(ss, s, list.ptr[0]), ast_loc(*args));
   return scope_add_value(ss, s, Type_asValue(ss, Type_ref(inner)));
 }
 static u32 lower_builtin_bare_type(superscope *ss, scope *s, ast *args, Type t) {
@@ -155,7 +152,7 @@ static u32 lower_builtin_bare_type(superscope *ss, scope *s, ast *args, Type t) 
 static u32 lower_builtin_decor(superscope *ss, scope *s, ast *args, bool is_const, bool is_volatile) {
   let list = builtin_arg_list(&args);
   if (list.len != 1) error_print(args, "@const//volatile(T) takes exactly one argument");
-  Type inner = value_asType_loc(temporary_interpret_ast(ss, s, list.ptr[0]), ast_loc(*args));
+  Type inner = value_asType_loc(temporary_interpret(ss, s, list.ptr[0]), ast_loc(*args));
   inner.isconst |= is_const;
   inner.isvolatile |= is_volatile;
   return scope_add_value(ss, s, Type_asValue(ss, inner));
@@ -165,7 +162,7 @@ static u32 lower_builtin_intty(superscope *ss, scope *s, ast *args, bool is_sign
   if (list.len != 1) error_print(args, "@sint//uint(N) takes exactly one argument");
   bigint largest_int = BInt.from.i64(ss->alloc, (u16)~0);
   defer { msList_deInit(ss->alloc, largest_int); };
-  bigint bigbits = int_as_bigint(ss, temporary_interpret_ast(ss, s, list.ptr[0]));
+  bigint bigbits = int_as_bigint(ss, temporary_interpret(ss, s, list.ptr[0]));
   defer { msList_deInit(ss->alloc, bigbits); };
   if (bigint_cmp(bigbits, nullptr) <= 0) error_print(args, "integer width must be positive");
   if (bigint_cmp(bigbits, largest_int) > 0) error_print(args, "integer width too large");
@@ -175,117 +172,27 @@ static u32 lower_builtin_intty(superscope *ss, scope *s, ast *args, bool is_sign
   );
 }
 static u32 lower_builtin_typeof(superscope *ss, scope *s, ast *args) {
-  return scope_add_value(ss, s, Type_asValue(ss, temporary_interpret_ast(ss, s, args).t));
+  return scope_add_value(ss, s, Type_asValue(ss, temporary_interpret(ss, s, args).t));
 }
 static u32 lower_builtin_arrof(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
   assertMessage(list.len == 2, "@arrof(N, T) takes exactly two arguments");
-  let count_tv = int_as_bigint(ss, temporary_interpret_ast(ss, s, list.ptr[0]));
+  let count_tv = int_as_bigint(ss, temporary_interpret(ss, s, list.ptr[0]));
   defer { msList_deInit(ss->alloc, count_tv); };
   bigint_expand(ss->alloc, &count_tv, sizeof(usize) / sizeof(bigint_unit) + 1);
 
-  Type elem = value_asType_loc(temporary_interpret_ast(ss, s, list.ptr[1]), ast_loc(*args));
+  Type elem = value_asType_loc(temporary_interpret(ss, s, list.ptr[1]), ast_loc(*args));
   Type arr = T(tu_of(r_arr, {ss_getTypeTree(ss, elem.t), *(usize *)count_tv}));
   return scope_add_value(ss, s, Type_asValue(ss, arr));
 }
 static u32 lower_builtin_ptrof(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
   if (list.len != 1) error_print(args, "@ptrof takes one argument");
-  Type inner = value_asType_loc(temporary_interpret_ast(ss, s, list.ptr[0]), ast_loc(*args));
+  Type inner = value_asType_loc(temporary_interpret(ss, s, list.ptr[0]), ast_loc(*args));
   return scope_add_value(ss, s, Type_asValue(ss, Type_ptr(inner)));
 }
 
-static u32 lower_builtin_struct(superscope *ss, scope *s, ast *args) {
-  let list = builtin_arg_list(&args);
-  list = slice_stat(
-      slice(astptr),
-      *sentList_vla(
-          tu_catch(
-              astBBlock,
-              *args,
-              error_print(args, "@struct expects a list of decls")
-          )
-              .stmts
-      )
-  );
-  let members = mList_init(ss->alloc, r_struct_item);
-  let data = mList_init(ss->alloc, value_store);
-  let decls = mList_init(ss->alloc, astptr);
-  let slots = mList_init(ss->alloc, u32);
-  defer {
-    mList_deinit(decls);
-    mList_deinit(slots);
-  };
-
-  let body = acreate(ss->alloc, TypeTree);
-  let self = acreate(ss->alloc, Type);
-  *body = (TypeTree)tu_of(r_struct, members);
-  *self = T(tu_of(r_tag, {.t = body, .name = fp(snprint(ss->alloc, "$struct{}", ss->struct_count++))}));
-
-  let struct_scope = scope_inferior(ss, s);
-  msList_push(ss->alloc, ss->thisstack, self);
-  defer {
-    msList_pop(ss->thisstack);
-    scope_destroy(ss, struct_scope);
-  };
-
-  foreach (let node, span(list.ptr, list.len)) {
-    let member = *node;
-    if (tu_is(astEmptyStatement, *member)) continue;
-    if (!tu_is(astDecl, *member)) error_print(member, "struct members must be declarations");
-    let decl = tu_catch(astDecl, *member);
-    let name = id_from_ast(ss, struct_scope, decl.name);
-    u32 slot = scope_add_value(ss, struct_scope, (typed_value){T(tu_of(c_any, {}))});
-    if (fptr_eq(name, "Self"))
-      *scope_find(ss, struct_scope, slot) = (typed_value){T(tu_of(c_type, {})), self};
-    scope_bind(ss, struct_scope, slot, name);
-    mList_push(decls, member);
-    mList_push(slots, slot);
-    mList_push(members, ((r_struct_item){.name = name}));
-    mList_push(data, ((value_store){}));
-  }
-
-  usize offset = 0;
-  foreach (let i, range(0, mList_len(decls))) {
-    let member_decl = mList_arr(decls)[i];
-    let decl = tu_catch(astDecl, *member_decl);
-    let slot = mList_arr(slots)[i];
-    Type member_type = T(tu_of(c_any, {}));
-    typed_value value = {};
-    bool has_value = decl.value && !tu_is(astEmptyStatement, *decl.value);
-
-    if (decl.type)
-      member_type = value_asType_loc(temporary_interpret_ast(ss, struct_scope, decl.type), ast_loc(*args));
-    if (has_value) {
-      let value_idx = lower(ss, struct_scope, decl.value);
-      value = *scope_find(ss, struct_scope, value_idx);
-      if (!decl.type) member_type = value.t;
-    } else if (!decl.type) error_print(member_decl, "struct member needs a type or value");
-
-    if (decl.is_const && !Type_is_comptime(member_type)) {
-      member_type.isconst = true;
-    }
-
-    let member_info = &mList_arr(members)[i];
-    member_info->t = member_type;
-    if (!Type_is_comptime(member_type)) {
-      member_info->alignment = Type_alignof(member_type);
-      offset = lineup(offset, member_info->alignment);
-      member_info->offset = offset;
-      offset += Type_sizeof(member_type);
-    }
-
-    let member_slot = scope_find(ss, struct_scope, slot);
-    member_slot->t = member_type;
-    if (has_value) member_slot->v = value.v;
-    if (decl.is_const && has_value)
-      mList_arr(data)[i] = value.v;
-  }
-
-  moxmap_set(ss->tdata, *self, mList_toOwned(ss->alloc, data));
-  return scope_add_value(ss, s, (typed_value){T(tu_of(c_type, {})), self});
-}
-
+static u32 lower_builtin_struct(superscope *ss, scope *s, ast *args) { TODO(); }
 static u32 lower_builtin_this(superscope *ss, scope *s, ast *args) {
   if (builtin_arg_list(&args).len) error_print(args, "@this takes no arguments");
   if (!msList_len(ss->thisstack)) error_print(args, "@this() used outside of a struct definition");
@@ -302,38 +209,37 @@ static u32 lower_builtin_continue(superscope *ss, scope *s, ast *args) {
   return scope_add_value(ss, s, void_value);
 }
 
-//}
 static u32 lower_builtin(superscope *ss, scope *s, builtin_id builtin, ast *args) {
   return switch_exp(
       builtin,
-      (builtin_fn, lower_builtin_fn(ss, s, args)),
-      (builtin_closure, lower_builtin_closure(ss, s, args)),
-      (builtin_if, lower_builtin_if(ss, s, args)),
-      (builtin_while, lower_builtin_while(ss, s, args)),
-      (builtin_return, lower_builtin_return(ss, s, args)),
-      (builtin_break, lower_builtin_break(ss, s, args)),
-      (builtin_continue, lower_builtin_continue(ss, s, args)),
-      (builtin_ast, lower_builtin_bare_type(ss, s, args, T(tu_of(c_ast, {})))),
-      (builtin__id, lower_builtin_id(ss, s, args)),
-      (builtin_any, lower_builtin_bare_type(ss, s, args, T(tu_of(c_any, {})))),
-      (builtin_void, lower_builtin_bare_type(ss, s, args, T(tu_of(r_void, {})))),
-      (builtin_int, lower_builtin_bare_type(ss, s, args, T(tu_of(c_int, {})))),
-      (builtin_type, lower_builtin_bare_type(ss, s, args, T(tu_of(c_type, {})))),
-      (builtin_const, lower_builtin_decor(ss, s, args, true, false)),
-      (builtin_volatile, lower_builtin_decor(ss, s, args, false, true)),
-      (builtin_sint, lower_builtin_intty(ss, s, args, true)),
-      (builtin_uint, lower_builtin_intty(ss, s, args, false)),
-      (builtin_typeof, lower_builtin_typeof(ss, s, args)),
-      (builtin_arrof, lower_builtin_arrof(ss, s, args)),
-      (builtin_ptrof, lower_builtin_ptrof(ss, s, args)),
-      (builtin_struct, lower_builtin_struct(ss, s, args)),
-      (builtin__this, lower_builtin_this(ss, s, args)),
-      (builtin_qot, lower_builtin_qot(ss, s, args)),
-      (builtin_uqot, lower_builtin_uqot(ss, s, args)),
-      (builtin_at, lower_builtin_at(ss, s, args)),
-      (builtin_where, lower_builtin_where(ss, s, args)),
-      (builtin_ref, lower_builtin_ref(ss, s, args)),
-      (builtin_reft, lower_builtin_reft(ss, s, args)),
+      (builtin_fn, /*      */ lower_builtin_fn(ss, s, args)),
+      (builtin_closure, /* */ lower_builtin_closure(ss, s, args)),
+      (builtin_if, /*      */ lower_builtin_if(ss, s, args)),
+      (builtin_while, /*   */ lower_builtin_while(ss, s, args)),
+      (builtin_return, /*  */ lower_builtin_return(ss, s, args)),
+      (builtin_break, /*   */ lower_builtin_break(ss, s, args)),
+      (builtin_continue, /**/ lower_builtin_continue(ss, s, args)),
+      (builtin__id, /*     */ lower_builtin_id(ss, s, args)),
+      (builtin_ast, /*     */ lower_builtin_bare_type(ss, s, args, T(tu_of(c_ast, {})))),
+      (builtin_any, /*     */ lower_builtin_bare_type(ss, s, args, T(tu_of(c_any, {})))),
+      (builtin_void, /*    */ lower_builtin_bare_type(ss, s, args, T(tu_of(r_void, {})))),
+      (builtin_int, /*     */ lower_builtin_bare_type(ss, s, args, T(tu_of(c_int, {})))),
+      (builtin_type, /*    */ lower_builtin_bare_type(ss, s, args, T(tu_of(c_type, {})))),
+      (builtin_const, /*   */ lower_builtin_decor(ss, s, args, true, false)),
+      (builtin_volatile, /**/ lower_builtin_decor(ss, s, args, false, true)),
+      (builtin_sint, /*    */ lower_builtin_intty(ss, s, args, true)),
+      (builtin_uint, /*    */ lower_builtin_intty(ss, s, args, false)),
+      (builtin_typeof, /*  */ lower_builtin_typeof(ss, s, args)),
+      (builtin_arrof, /*   */ lower_builtin_arrof(ss, s, args)),
+      (builtin_ptrof, /*   */ lower_builtin_ptrof(ss, s, args)),
+      (builtin_struct, /*  */ lower_builtin_struct(ss, s, args)),
+      (builtin__this, /*   */ lower_builtin_this(ss, s, args)),
+      (builtin_qot, /*     */ lower_builtin_qot(ss, s, args)),
+      (builtin_uqot, /*    */ lower_builtin_uqot(ss, s, args)),
+      (builtin_at, /*      */ lower_builtin_at(ss, s, args)),
+      (builtin_where, /*   */ lower_builtin_where(ss, s, args)),
+      (builtin_ref, /*     */ lower_builtin_ref(ss, s, args)),
+      (builtin_reft, /*    */ lower_builtin_reft(ss, s, args)),
   );
-  assertMessage(false, "unhandled builtin");
+  assertMessage(false, "unhandled builtin %u", builtin);
 }
