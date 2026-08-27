@@ -59,10 +59,13 @@ tu_def( // type
     (r_void /*       */, struct {}),
     (r_uint /*       */, u16),
     (r_sint /*       */, u16),
-    (r_tag /*        */, struct { TypeTree *t; fptr name; }),
+
+    (r_tag /*        */, struct { TypeTree *t/*maybe nullable in the future, like extern*/; fptr name; }),
     (r_arr /*        */, struct { TypeTree *t; usize count; }),
+
     (r_struct /*     */, mList(r_struct_item)),
     (r_bitfield /*   */, mList(r_bitf_item)),
+
     (r_func /*       */, mList(TypeTree)),
     (r_closure /*    */, struct { r_func captures, args; }),
     // compile time
@@ -78,7 +81,7 @@ struct Type {
   u32 ptr_level : 32;
   bool isref : 1;
   bool isconst : 1;
-  bool iscomptime : 1; // meaningless for any,int,type,ast
+  bool iscomptime : 1; // meaningless for int,type,ast
   bool isvolatile : 1;
 };
 typedef union {
@@ -188,33 +191,28 @@ typedef struct {
   TypeTree *b;
 } type_cmp_pair;
 
-i8 TypeTree_cmp_ex(TypeTree a, TypeTree b, mList(type_cmp_pair) followed);
+i8 TypeTree_cmp(TypeTree a, TypeTree b);
 
-i8 Type_cmp_ex(Type a, Type b, mList(type_cmp_pair) followed) {
-  if (a.ptr_level != b.ptr_level) return a.ptr_level < b.ptr_level ? -1 : 1;
-
-  if (a.isref != b.isref) return a.isref < b.isref ? -1 : 1;
-  if (a.isconst != b.isconst) return a.isconst < b.isconst ? -1 : 1;
-  if (a.isvolatile != b.isvolatile) return a.isvolatile < b.isvolatile ? -1 : 1;
-  if (a.iscomptime != b.iscomptime) return a.iscomptime < b.iscomptime ? -1 : 1;
-
-  return TypeTree_cmp_ex(a.t, b.t, followed);
+i8 Type_cmp(Type a, Type b) {
+  if_decl (let cmp, icmp(a.ptr_level, b.ptr_level)) return cmp;
+  if_decl (let cmp, icmp(a.isref, b.isref)) return cmp;
+  if_decl (let cmp, icmp(a.isconst, b.isconst)) return cmp;
+  if_decl (let cmp, icmp(a.isvolatile, b.isvolatile)) return cmp;
+  if_decl (let cmp, icmp(a.iscomptime, b.iscomptime)) return cmp;
+  return TypeTree_cmp(a.t, b.t);
 }
 
-i8 TypeTree_cmp_ex(TypeTree a, TypeTree b, mList(type_cmp_pair) followed) {
+i8 TypeTree_cmp(TypeTree a, TypeTree b) {
   if (!mcmp(a, b)) return 0;
-  else if (a.tag < b.tag) return -1;
-  else if (a.tag > b.tag) return 1;
+  if (a.tag != b.tag) return a.tag < b.tag ? -1 : 1;
 
   tu_match_void(
       a,
-      (builtin, id, return icmp(id, tu_catch(builtin, b))),
+      (builtin, ai, return icmp(ai, tu_catch(builtin, b))),
       (r_uint, ai, return icmp(ai, tu_catch(r_uint, b))),
       (r_sint, ai, return icmp(ai, tu_catch(r_sint, b))),
-
-      // nominal
       (r_tag, ai, return fptr_cmp(ai.name, tu_catch(r_tag, b).name)),
-      // all the same type
+
       (r_void, _, return 0),
       (c_int, _, return 0),
       (c_any, _, return 0),
@@ -224,103 +222,67 @@ i8 TypeTree_cmp_ex(TypeTree a, TypeTree b, mList(type_cmp_pair) followed) {
       (r_arr, ai, {
         let bi = tu_catch(r_arr, b);
         if_decl (let cmp, icmp(ai.count, bi.count)) return cmp;
-
-        if (ai.t == bi.t) return 0;
-
-        foreach (let p, mList_iter(followed))
-          if (p.a == ai.t && p.b == bi.t) return 0;
-
-        mList_push(followed, ((type_cmp_pair){.a = ai.t, .b = bi.t}));
-        i8 r = TypeTree_cmp_ex(*ai.t, *bi.t, followed);
-        mList_rem(followed, mList_len(followed) - 1);
-        return r;
+        return TypeTree_cmp(*ai.t, *bi.t);
       }),
 
       (r_func, ai, {
         let bi = tu_catch(r_func, b);
-        let la = mList_len(ai);
-        let lb = mList_len(bi);
-        if (la != lb) return icmp(la, lb);
+        if_decl (let cmp, icmp(mList_len(ai), mList_len(bi))) return cmp;
 
-        foreach (let i, range(0, la))
-          if_decl (let cmp, TypeTree_cmp_ex(mList_arr(ai)[i], mList_arr(bi)[i], followed))
+        foreach (let i, range(0, mList_len(ai)))
+          if_decl (let cmp, TypeTree_cmp(mList_arr(ai)[i], mList_arr(bi)[i]))
             return cmp;
-
         return 0;
       }),
 
       (r_closure, ai, {
         let bi = tu_catch(r_closure, b);
+        if_decl (let cmp, icmp(mList_len(ai.captures), mList_len(bi.captures))) return cmp;
+        if_decl (let cmp, icmp(mList_len(ai.args), mList_len(bi.args))) return cmp;
 
-        let la_cap = mList_len(ai.captures);
-        let lb_cap = mList_len(bi.captures);
-        if (la_cap != lb_cap) return icmp(la_cap, lb_cap);
-
-        let la_args = mList_len(ai.args);
-        let lb_args = mList_len(bi.args);
-        if (la_args != lb_args) return icmp(la_args, lb_args);
-
-        foreach (let i, range(0, la_cap))
-          if_decl (let cmp, TypeTree_cmp_ex(mList_arr(ai.captures)[i], mList_arr(bi.captures)[i], followed))
+        foreach (let i, range(0, mList_len(ai.captures)))
+          if_decl (let cmp, TypeTree_cmp(mList_arr(ai.captures)[i], mList_arr(bi.captures)[i]))
             return cmp;
 
-        foreach (let i, range(0, la_args))
-          if_decl (let cmp, TypeTree_cmp_ex(mList_arr(ai.args)[i], mList_arr(bi.args)[i], followed))
+        foreach (let i, range(0, mList_len(ai.args)))
+          if_decl (let cmp, TypeTree_cmp(mList_arr(ai.args)[i], mList_arr(bi.args)[i]))
             return cmp;
-
         return 0;
       }),
 
       (r_struct, ai, {
         let bi = tu_catch(r_struct, b);
-        let la = mList_len(ai);
-        let lb = mList_len(bi);
-        if (la != lb) return icmp(la, lb);
+        if_decl (let cmp, icmp(mList_len(ai), mList_len(bi))) return cmp;
 
-        foreach (let i, range(0, la)) {
-          let a_item = mList_arr(ai)[i];
-          let b_item = mList_arr(bi)[i];
-
-          if_decl (let cmp, fptr_cmp(a_item.name, b_item.name)) return cmp;
-          if_decl (let cmp, icmp(a_item.offset, b_item.offset)) return cmp;
-          if_decl (let cmp, icmp(a_item.alignment, b_item.alignment)) return cmp;
-
-          if_decl (let cmp, Type_cmp_ex(a_item.t, b_item.t, followed)) return cmp;
+        foreach (let i, range(0, mList_len(ai))) {
+          let a_i = mList_arr(ai)[i], b_i = mList_arr(bi)[i];
+          if_decl (let cmp, fptr_cmp(a_i.name, b_i.name)) return cmp;
+          if_decl (let cmp, icmp(a_i.offset, b_i.offset)) return cmp;
+          if_decl (let cmp, icmp(a_i.alignment, b_i.alignment)) return cmp;
+          if_decl (let cmp, Type_cmp(a_i.t, b_i.t)) return cmp;
         }
         return 0;
       }),
 
       (r_bitfield, ai, {
         let bi = tu_catch(r_bitfield, b);
-        let la = mList_len(ai);
-        let lb = mList_len(bi);
-        if (la != lb) return icmp(la, lb);
+        if_decl (let cmp, icmp(mList_len(ai), mList_len(bi))) return cmp;
 
-        foreach (let i, range(0, la)) {
-          let a_item = mList_arr(ai)[i];
-          let b_item = mList_arr(bi)[i];
-
-          if_decl (let cmp, fptr_cmp(a_item.name, b_item.name)) return cmp;
-          if_decl (let cmp, icmp(a_item.width, b_item.width)) return cmp;
-
-          if_decl (let cmp, Type_cmp_ex(a_item.t, b_item.t, followed)) return cmp;
+        foreach (let i, range(0, mList_len(ai))) {
+          let a_i = mList_arr(ai)[i], b_i = mList_arr(bi)[i];
+          if_decl (let cmp, fptr_cmp(a_i.name, b_i.name)) return cmp;
+          if_decl (let cmp, icmp(a_i.width, b_i.width)) return cmp;
+          if_decl (let cmp, Type_cmp(a_i.t, b_i.t)) return cmp;
         }
         return 0;
       })
   );
 }
 
-i8 Type_cmp(Type a, Type b) {
-  let f = mList_init(stdAlloc, type_cmp_pair);
-  defer { mList_deinit(f); };
-  return Type_cmp_ex(a, b, f);
+i8 TypeTree_cmp_hash(const void *a, const void *b) {
+  return TypeTree_cmp(*(TypeTree *)a, *(TypeTree *)b);
 }
 
-i8 TypeTree_cmp_hash(const void *a, const void *b) {
-  let f = mList_init(stdAlloc, type_cmp_pair);
-  defer { mList_deinit(f); };
-  return TypeTree_cmp_ex(*(TypeTree *)a, *(TypeTree *)b, f);
-}
 i8 Type_cmp_hash(const void *a, const void *b) {
   return Type_cmp(*(Type *)a, *(Type *)b);
 }
@@ -469,4 +431,96 @@ typePrinter(Type) {
 
   USETYPEPRINTER(TypeTree, in.t);
   if (has_env) PUTS(")");
+}
+// test
+test_fn(type_env_qualifiers) {
+  let u32t = (TypeTree)tu_of(r_uint, (u16)32);
+  let t1 = (Type){.t = u32t, .isconst = false};
+  let t2 = (Type){.t = u32t, .isconst = true};
+  test_assert(Type_cmp(t1, t2));
+
+  let t3 = (Type){.t = u32t, .ptr_level = 1};
+  let t4 = (Type){.t = u32t, .ptr_level = 2};
+  test_assert(Type_cmp(t3, t4));
+
+  let t5 = (Type){.t = u32t, .ptr_level = 2, .isconst = true};
+  let t6 = (Type){.t = u32t, .ptr_level = 2, .isconst = true};
+  test_assert(!Type_cmp(t5, t6));
+}
+
+test_fn(type_tag_nominal_equality) {
+  let u32t = (TypeTree)tu_of(r_uint, (u16)32);
+  let u64t = (TypeTree)tu_of(r_uint, (u16)64);
+  let a = (TypeTree)tu_of(r_tag, {.name = fp("Node"), .t = &u32t});
+  let b = (TypeTree)tu_of(r_tag, {.name = fp("Node"), .t = &u64t});
+  test_assert(!TypeTree_cmp(a, b));
+
+  let c = (TypeTree)tu_of(r_tag, {.name = fp("Edge"), .t = &u32t});
+  test_assert(TypeTree_cmp(a, c));
+}
+
+test_fn(type_struct_equality) {
+  let st1 = mList_init(allocator, r_struct_item);
+  let st2 = mList_init(allocator, r_struct_item);
+  defer {
+    mList_deinit(st1);
+    mList_deinit(st2);
+  };
+
+  let field_t = (Type){.t = tu_of(r_uint, (u16)32), .isconst = true};
+
+  mList_push(st1, ((r_struct_item){.alignment = 4, .name = fp("x"), .offset = 0, .t = field_t}));
+  mList_push(st2, ((r_struct_item){.alignment = 4, .name = fp("x"), .offset = 0, .t = field_t}));
+
+  let t1 = (Type){.t = tu_of(r_struct, st1)};
+  let t2 = (Type){.t = tu_of(r_struct, st2)};
+  test_assert(!Type_cmp(t1, t2));
+
+  mList_arr(st2)[0].t.isconst = false;
+  test_assert(Type_cmp(t1, t2));
+}
+
+test_fn(type_arr_equality) {
+  let u32t = (TypeTree)tu_of(r_uint, (u16)32);
+  let a = (TypeTree)tu_of(r_arr, {.t = &u32t, .count = 10});
+  let b = (TypeTree)tu_of(r_arr, {.t = &u32t, .count = 10});
+  let c = (TypeTree)tu_of(r_arr, {.t = &u32t, .count = 11});
+
+  test_assert(!TypeTree_cmp(a, b));
+  test_assert(TypeTree_cmp(a, c));
+}
+
+test_fn(type_printer_complex_sanity) {
+  let u32t = (TypeTree)tu_of(r_uint, (u16)32);
+  let arr = (TypeTree)tu_of(r_arr, {.t = &u32t, .count = 5});
+
+  let complex_t = (Type){
+      .t = arr,
+      .ptr_level = 2,
+      .isconst = true,
+      .isvolatile = true,
+      .isref = true
+  };
+
+  println("{TypeTree}", u32t);
+  println("{TypeTree}", u32t);
+}
+
+test_fn(type_linked_list) {
+  let u32t = (TypeTree)tu_of(r_uint, (u16)32);
+
+  TypeTree node_struct;
+  let node_tag = (TypeTree)tu_of(r_tag, {.name = fp("Node"), .t = &node_struct});
+
+  let st = mList_init(allocator, r_struct_item);
+  defer { mList_deinit(st); };
+
+  mList_push(st, ((r_struct_item){.alignment = 4, .offset = 0, .name = fp("val"), .t = (Type){.t = u32t}}));
+  mList_push(st, ((r_struct_item){.alignment = 8, .offset = 8, .name = fp("next"), .t = (Type){.t = node_tag, .ptr_level = 1}}));
+
+  node_struct = (TypeTree)tu_of(r_struct, st);
+
+  test_assert(!TypeTree_cmp(node_struct, node_struct));
+
+  println("{TypeTree}", node_struct);
 }

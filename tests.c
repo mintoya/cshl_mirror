@@ -1,5 +1,6 @@
 #define MY_TEST_FRAMEWORK_C (1)
 #include <wheels/tests.h>
+#include "type.h"
 
 // #include "operations.h"
 fptr *filectx = nullptr;
