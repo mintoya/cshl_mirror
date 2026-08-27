@@ -13,6 +13,7 @@ tu_def(
     (ir_getref, /* */ struct { u32 l, d; }),                 // d = &l; // but a referance
     (ir_getptr, /* */ struct { u32 l, d; }),                 // d = &l;
     (ir_putptr, /* */ struct { u32 l, d; }),                 // d = *l;
+    (ir_field, /*  */ struct { u32 base, member, d; }),      // d = &base.member; // ref to a member
     (ir_rawop, /*  */ struct { u32 l, r, d, o; }),           // d = l (o) r;
     (ir_call, /*   */ struct { u32 l, d; slice(u32) args; }),// d = l(...args)
 

@@ -29,20 +29,24 @@ struct superscope {
   moxmap(TypeTree, TypeTree *) typetrees;
   moxmap(Type, Type *) types;
   moxmap(Type, msList(value_store)) tdata;
+  msList(struct {
+    sentList_t(Type) sig;
+    scope *body;
+  }) all_functions;
   scope *outermost;
   msList(Type *) thisstack;
   u32 struct_count;
 };
 
 // scope helpers
-typed_value *scope_find(superscope *env, scope *s, u32 idx) {
+static inline typed_value *scope_find(superscope *env, scope *s, u32 idx) {
   while (s)
     if (idx > s->start && idx <= s->start + msList_len(s->values))
       return &s->values[idx - s->start - 1];
     else s = s->parent;
   assertMessage(false, "value %u not found in scope", idx);
 }
-scope *scope_inferior(superscope *b, scope *s) {
+static inline scope *scope_inferior(superscope *b, scope *s) {
   return avalue(
       b->alloc,
       ((scope){
@@ -54,36 +58,36 @@ scope *scope_inferior(superscope *b, scope *s) {
       })
   );
 }
-void scope_destroy(superscope *b, scope *s) {
+static inline void scope_destroy(superscope *b, scope *s) {
   msList_deInit(b->alloc, s->values);
   msList_deInit(b->alloc, s->instructions);
   moxmap_deinit(s->named);
   adestroy(b->alloc, s);
 }
-u32 scope_add_value(superscope *env, scope *s, typed_value v) {
-  Type *ss_getType(superscope * ss, Type t);
+static inline Type *ss_getType(superscope *ss, Type t);
+static inline u32 scope_add_value(superscope *env, scope *s, typed_value v) {
   msList_push(env->alloc, s->values, (typed_value){*ss_getType(env, v.t), v.v});
   return msList_len(s->values) + s->start;
 }
-void scope_add_inst(superscope *env, scope *s, ir i) { msList_push(env->alloc, s->instructions, i); }
-void scope_bind(superscope *env, scope *s, u32 idx, fptr name) {
+static inline void scope_add_inst(superscope *env, scope *s, ir i) { msList_push(env->alloc, s->instructions, i); }
+static inline void scope_bind(superscope *env, scope *s, u32 idx, fptr name) {
   if (moxmap_get(s->named, name)) error_print(name.ptr, "already bound {slice(c8)}", name);
   assertMessage(idx <= msList_len(s->values) + s->start, "%zu <= %zu + %zu", idx, msList_len(s->values), s->start);
   moxmap_set(s->named, name, idx);
 }
 
-Type Type_ptr(Type t) {
+static inline Type Type_ptr(Type t) {
   t.ptr_level++;
   return t;
 }
-Type Type_ref(Type t) {
+static inline Type Type_ref(Type t) {
   assertMessage(!t.isref, "no referance to referance");
   t.isref = true;
   return t;
 }
 
 // superscope helpers
-u32 ss_get_named(superscope *env, scope *s, fptr n) {
+static inline u32 ss_get_named(superscope *env, scope *s, fptr n) {
   let limit = s->start + msList_len(s->values);
   while (s) {
     if_decl (let val, moxmap_get(s->named, n))
@@ -92,6 +96,7 @@ u32 ss_get_named(superscope *env, scope *s, fptr n) {
         if (vo->t.isref) return *val;
         let res = scope_add_value(env, s, (typed_value){Type_ref(vo->t)});
         scope_add_inst(env, s, (ir)tu_of(ir_getref, {.d = res, .l = *val}));
+        fprintf(stderr, "[dbg] ss_get_named(%.*s) -> %u (found @ %u, isref=%d)\n", (int)n.len, n.ptr, res, *val, vo->t.isref);
         return res;
       }
     limit = s->start;
@@ -100,7 +105,7 @@ u32 ss_get_named(superscope *env, scope *s, fptr n) {
   error_print(n.ptr, "unbound identifier {slice(c8)}", n);
 }
 
-TypeTree *ss_getTypeTree(superscope *ss, TypeTree t) {
+static inline TypeTree *ss_getTypeTree(superscope *ss, TypeTree t) {
   if_decl (let t, moxmap_get(ss->typetrees, t)) return *t;
   let pt = acreate(ss->alloc, TypeTree);
   moxmap_set(ss->typetrees, t, pt);
@@ -127,13 +132,13 @@ TypeTree *ss_getTypeTree(superscope *ss, TypeTree t) {
   );
   return *moxmap_set(ss->typetrees, *pt, pt);
 }
-Type *ss_getType(superscope *ss, Type t) {
+static inline Type *ss_getType(superscope *ss, Type t) {
   t.t = *ss_getTypeTree(ss, t.t);
   if_decl (let t, moxmap_get(ss->types, t)) return *t;
   return *moxmap_set(ss->types, t, avalue(ss->alloc, t));
 }
 
-void irb_cbb(const callbackallocatorhandle *h, void *p) {
+static inline void irb_cbb(const callbackallocatorhandle *h, void *p) {
   let _map = (itypeof(superscope, pointers))h->cbself->udata;
   if (p == h->inptr)
     return (void)moxmap_set(_map, p, h->outsize);
@@ -141,12 +146,13 @@ void irb_cbb(const callbackallocatorhandle *h, void *p) {
   if (p) moxmap_set(_map, p, h->outsize);
 }
 
-superscope *ss_init(allocfn allocator) {
+static inline superscope *ss_init(allocfn allocator) {
   // clang-format off
   superscope* res = avalue(allocator, ((superscope){
     .pointers = moxmap_init(allocator, void*, usize),
     .typetrees = moxmap_init(allocator, TypeTree, TypeTree *,TypeTree_cmp_hash),
     .types = moxmap_init(allocator, Type, Type *,Type_cmp_hash),
+    .all_functions = msList_init(allocator, ptrstype(res->all_functions)),
     .thisstack = msList_init(allocator , Type*),
     .tdata = moxmap_init(allocator, Type, msList(value_store),Type_cmp_hash)
   }));
@@ -196,8 +202,9 @@ superscope *ss_init(allocfn allocator) {
   return res;
 }
 
-void ss_deInit(superscope *ss) {
+static inline void ss_deInit(superscope *ss) {
   let allocator = ((struct cballocator *)ss->alloc)->allocator;
+  msList_deInit(allocator, ss->all_functions);
   msList_deInit(allocator, ss->thisstack);
   foreach (let it, moxmap_iter(ss->tdata, Type, msList(value_store)))
     msList_deInit(allocator, *it.val);
@@ -206,6 +213,7 @@ void ss_deInit(superscope *ss) {
   moxmap_deinit(ss->tdata);
   moxmap_deinit(ss->pointers);
   moxmap_deinit(ss->typetrees);
+  moxmap_deinit(ss->types);
   cba_deinit(ss->alloc);
   adestroy(allocator, ss);
 }

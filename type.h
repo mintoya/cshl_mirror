@@ -67,7 +67,7 @@ tu_def( // type
     (r_struct /*     */, mList(r_struct_item)),
     (r_bitfield /*   */, mList(r_bitf_item)),
 
-    (r_func /*       */, mList(TypeTree)),
+    (r_func /*       */, mList(Type)),
     (r_closure /*    */, struct { r_func captures, args; }),
     // compile time
     // they could all be nothing_t's, i'd rather show here what they a re but also
@@ -231,7 +231,7 @@ i8 TypeTree_cmp(TypeTree a, TypeTree b) {
         if_decl (let cmp, icmp(mList_len(ai), mList_len(bi))) return cmp;
 
         foreach (let i, range(0, mList_len(ai)))
-          if_decl (let cmp, TypeTree_cmp(mList_arr(ai)[i], mList_arr(bi)[i]))
+          if_decl (let cmp, Type_cmp(mList_arr(ai)[i], mList_arr(bi)[i]))
             return cmp;
         return 0;
       }),
@@ -242,11 +242,11 @@ i8 TypeTree_cmp(TypeTree a, TypeTree b) {
         if_decl (let cmp, icmp(mList_len(ai.args), mList_len(bi.args))) return cmp;
 
         foreach (let i, range(0, mList_len(ai.captures)))
-          if_decl (let cmp, TypeTree_cmp(mList_arr(ai.captures)[i], mList_arr(bi.captures)[i]))
+          if_decl (let cmp, Type_cmp(mList_arr(ai.captures)[i], mList_arr(bi.captures)[i]))
             return cmp;
 
         foreach (let i, range(0, mList_len(ai.args)))
-          if_decl (let cmp, TypeTree_cmp(mList_arr(ai.args)[i], mList_arr(bi.args)[i]))
+          if_decl (let cmp, Type_cmp(mList_arr(ai.args)[i], mList_arr(bi.args)[i]))
             return cmp;
         return 0;
       }),
@@ -393,21 +393,22 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printe
         typeTreePrinterWorker_add(in, visitedmap);
         PUTS("(fn (");
         foreach (let it, mList_iter(fn)) {
-          USENAMEDPRINTER("TypeTree", it);
+          USENAMEDPRINTER("Type", it);
           PUTS(",");
         }
         PUTS("),");
-        if (mList_len(fn)) USENAMEDPRINTER("TypeTree", mList_last(fn));
+        if (mList_len(fn)) USENAMEDPRINTER("Type", mList_last(fn));
         PUTS(")");
       }),
       (r_closure, fn, {
         typeTreePrinterWorker_add(in, visitedmap);
         PUTS("(clos (");
         foreach (let it, mList_iter(fn.captures))
-          USENAMEDPRINTER("TypeTree", it), PUTS(" ");
-        PUTS("),");
-        USENAMEDPRINTER("TypeTree", ((TypeTree)tu_of(r_func, fn.args)));
-        PUTS(")");
+          USENAMEDPRINTER("Type", it), PUTS(" ");
+        PUTS("),(");
+        foreach (let it, mList_iter(fn.args))
+          USENAMEDPRINTER("Type", it), PUTS(" ");
+        PUTS("))");
       })
   );
 }
