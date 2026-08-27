@@ -1,86 +1,86 @@
-#pragma once
-#include <limits.h>
-#define TV_EXPAND_VALUE 1
-
 #include "ast.h"
-#include "wheels/macros.h"
-#include "wheels/oxmap.h"
-#include "wheels/print/print_pre.h"
+#include <limits.h>
 #include <wheels/bigint.h>
 #include <wheels/fptr.h>
 #include <wheels/hxmap.h>
 #include <wheels/macros.h>
 #include <wheels/mylist.h>
 #include <wheels/mytypes.h>
+#include <wheels/oxmap.h>
+#include <wheels/print/print_pre.h>
 #include <wheels/sList.h>
 
 typedef enum : u8 {
-  builtin_fn,        // @fn((decl|type...) ,decl|type,body) c_func of this type,
-  builtin_closure,   // @closure((captures...),(decl|type...) ,decl|type,body) c_func of this type,
-  builtin_if,        // @if(cnd , then ,)
-  builtin_while,     // @while(cnd , then) //
-  builtin_return,    // return x return
-  builtin_break,     // @break()
-  builtin_continue,  // @continue()
-                     //
-                     // then when called with expression, yields an r_func
-  builtin__id,       // @id(str) an id which corresponds to this string, **evaluates it**
-                     //
-  builtin_ast,       // @ast() type of ast
-  builtin_any,       // @any() type of any
-  builtin_void,      // @void() the void type
-  builtin_int,       // @int() compile time bigint
-  builtin_type,      // @type() the type of a type
-  builtin_const,     // @const(T) constant
-  builtin_volatile,  // @volatile(T) volatile
-  builtin_sint,      // @sint(N) integer with N bits
-  builtin_uint,      // @uint(N) unsigned integer with N bits
-  builtin_typeof,    // @typeof(V) type of argument
-  builtin_arrof,     // @arrof(N,t) array of N t's
-  builtin_ptrof,     // @ptrof(t) pionter to t
-                     //
-  builtin_struct,    // @struct{} struct of declarations
-  builtin_construct, // @construct(type,...) construct a type given a list of decls
-  builtin__this,     // @this() inside of struct, this is the result type
-                     //
-  builtin_qot,       // @qot(arg) ast of arg
-  builtin_uqot,      // @unqot(arg) evaluate arg
-                     //
-  builtin_ref,       // @ref(value) produces a referance to value
-  builtin_reft,      // @reft(value) produces the type of a referance to a value
-  builtin_at,        // @at(arg) dereference arg
-  builtin_where,     // @where(arg) referance to arg
+  builtin_fn,       // @fn((decl|type...) ,decl|type,body) c_func of this type,
+  builtin_closure,  // @closure((captures...),(decl|type...) ,decl|type,body) c_func of this type,
+  builtin_if,       // @if(cnd , then ,)
+  builtin_while,    // @while(cnd , then) //
+  builtin_return,   // return x return
+  builtin_break,    // @break()
+  builtin_continue, // @continue()
+                    //
+                    // then when called with expression, yields an r_func
+  builtin__id,      // @id(str) an id which corresponds to this string, **evaluates it**
+                    //
+  builtin_ast,      // @ast() type of ast
+  builtin_any,      // @any() type of any
+  builtin_void,     // @void() the void type
+  builtin_int,      // @int() compile time bigint
+  builtin_type,     // @type() the type of a type
+  builtin_const,    // @const(T) constant
+  builtin_volatile, // @volatile(T) volatile
+  builtin_sint,     // @sint(N) integer with N bits
+  builtin_uint,     // @uint(N) unsigned integer with N bits
+  builtin_typeof,   // @typeof(V) type of argument
+  builtin_arrof,    // @arrof(N,t) array of N t's
+  builtin_ptrof,    // @ptrof(t) pionter to t
+                    //
+  builtin_struct,   // @struct{} struct of declarations
+  builtin__this,    // @this() inside of struct, this is the result type
+                    //
+  builtin_qot,      // @qot(arg) ast of arg
+  builtin_uqot,     // @unqot(arg) evaluate arg
+                    //
+  builtin_ref,      // @ref(value) produces a referance to value
+  builtin_reft,     // @reft(value) produces the type of a referance to a value
+  builtin_at,       // @at(arg) dereference arg
+  builtin_where,    // @where(arg) referance to arg
 } builtin_id;
 //{type
 typedef struct Type Type;
-struct typed_value *init;
+typedef struct TypeTree TypeTree;
 typedef struct r_struct_item r_struct_item;
 typedef struct r_bitf_item r_bitf_item;
+
 tu_def( // type
-    (Type, u8),
+    (TypeTree, u8),
     (builtin /*      */, builtin_id),
     // runtime
     (r_void /*       */, struct {}),
     (r_uint /*       */, u16),
     (r_sint /*       */, u16),
-    (r_tag /*        */, struct { Type *t; fptr name; }),
-    (r_ptr /*        */, Type *),
-    (r_ref /*        */, Type *),
-    (r_arr /*        */, struct { Type *t; usize count; }),
+    (r_tag /*        */, struct { TypeTree *t; fptr name; }),
+    (r_arr /*        */, struct { TypeTree *t; usize count; }),
     (r_struct /*     */, mList(r_struct_item)),
     (r_bitfield /*   */, mList(r_bitf_item)),
-    (r_func /*       */, mList(Type)),
+    (r_func /*       */, mList(TypeTree)),
     (r_closure /*    */, struct { r_func captures, args; }),
-    (r_ctime /*      */, Type *),
-    (r_decor /*      */, struct {Type* t ; bool constant :1;bool valatile :1; }),
     // compile time
     // they could all be nothing_t's, i'd rather show here what they a re but also
     // not have them take up any storage space
     (c_any /*        */, struct {}),
     (c_int /*        */, typeof(bigint[0])),
-    (c_type /*       */, typeof(Type *[0])),
+    (c_type /*       */, typeof(TypeTree *[0])),
     (c_ast /*        */, typeof(ast *[0])),
 );
+struct Type {
+  TypeTree t;
+  u32 ptr_level : 32;
+  bool isref : 1;
+  bool isconst : 1;
+  bool iscomptime : 1; // meaningless for any,int,type,ast
+  bool isvolatile : 1;
+};
 typedef union {
   void *value;
 
@@ -103,217 +103,234 @@ typedef struct r_bitf_item {
   fptr name;
   usize width;
 } r_bitf_item;
-static inline usize Type_ralig(Type t) {
-  ;
+
+// size/alignment
+
+static inline usize TypeTree_alignof(TypeTree t);
+static inline usize Type_alignof(Type t);
+static inline usize TypeTree_sizeof(TypeTree t);
+static inline usize Type_sizeof(Type t);
+
+static inline usize TypeTree_alignof(TypeTree t) {
   return tu_match_exp(
       t,
-      (r_tag, tag, Type_ralig(*tag.t)),
-      (r_decor, dec, Type_ralig(*dec.t)),
-      (r_ctime, ct, Type_ralig(*ct)),
+      (r_tag, tag, TypeTree_alignof(*tag.t)),
       (r_void, _, (usize)1),
       (r_uint, u, lineup(u, CHAR_BIT) / CHAR_BIT),
-      (r_sint, u, Type_ralig((Type)tu_of(r_uint, u))),
-      (r_ptr, _, Type_ralig((Type)tu_of(r_uint, sizeof(void *) * 8))),
-      (r_ref, p, Type_ralig((Type)tu_of(r_ptr, p))),
-
-      (r_arr, a, Type_ralig(a.t[0])),
+      (r_sint, u, TypeTree_alignof((TypeTree)tu_of(r_uint, u))),
+      (r_arr, a, TypeTree_alignof(*a.t)),
       (r_bitfield, b, ({
          usize s = 0;
          foreach (let b, mList_iter(b))
            s += b.width;
-         Type_ralig((Type)tu_of(r_uint, s));
+         TypeTree_alignof((TypeTree)tu_of(r_uint, s));
        })),
       (r_struct, s, ({
          usize a = 1;
-         foreach (let i, mList_iter(s))
+         foreach (let i, mList_iter(s)) {
+           // Skip comptime fields: they don't affect runtime alignment
+           if (i.t.iscomptime) continue;
            a = MAX$(i.alignment, a);
+         }
          a;
        })),
       (r_func, _, (usize)1),
+      (r_closure, _, (usize)1),
       (default, (usize)0)
   );
 }
 
-static inline usize Type_rsize(Type t) {
+static inline usize Type_alignof(Type t) {
+  if (t.iscomptime) return 1;
+  if (t.isref || t.ptr_level)
+    return TypeTree_alignof((TypeTree)tu_of(r_uint, sizeof(void *) * 8));
+  return TypeTree_alignof(t.t);
+}
+
+static inline usize TypeTree_sizeof(TypeTree t) {
   return tu_match_exp(
       t,
-      (r_tag, tag, Type_rsize(*tag.t)),
-      (r_decor, dec, Type_rsize(*dec.t)),
-      (r_ctime, ct, Type_rsize(*ct)),
+      (r_tag, tag, TypeTree_sizeof(*tag.t)),
       (r_void, _, (usize)0),
       (r_uint, u, lineup(u, CHAR_BIT) / CHAR_BIT),
-      (r_sint, u, Type_rsize((Type)tu_of(r_uint, u))),
-      (r_ptr, p, Type_rsize((Type)tu_of(r_uint, sizeof(void *) * 8))),
-      (r_ref, p, Type_rsize((Type)tu_of(r_ptr, p))),
-      (r_arr, a, Type_rsize(a.t[0]) * a.count),
+      (r_sint, u, TypeTree_sizeof((TypeTree)tu_of(r_uint, u))),
+      (r_arr, a, TypeTree_sizeof(*a.t) * a.count),
       (r_bitfield, b, ({
          usize s = 0;
          foreach (let b, mList_iter(b))
            s += b.width;
-         Type_rsize((Type)tu_of(r_uint, s));
+         TypeTree_sizeof((TypeTree)tu_of(r_uint, s));
        })),
       (r_struct, s, ({
          usize sz = 0;
          foreach (let i, mList_iter(s))
-           sz = MAX$(i.offset + Type_rsize(i.t), sz);
-         lineup(sz, Type_ralig(t));
+           sz = MAX$(!i.t.iscomptime * (i.offset + Type_sizeof(i.t)), sz);
+         lineup(sz, TypeTree_alignof(t));
        })),
       (r_func, _, (usize)0),
+      (r_closure, _, (usize)0),
       (default, (usize)0)
   );
 }
-typedef struct {
-  Type *a;
-  Type *b;
-} type_cmp_pair;
+
+static inline usize Type_sizeof(Type t) {
+  if (t.iscomptime) return 0;
+  if (t.isref || t.ptr_level)
+    return sizeof(void *);
+  return TypeTree_sizeof(t.t);
+}
+
+// comparison
 
 i8 icmp(isize a, isize b) { return a - b; }
+typedef struct {
+  TypeTree *a;
+  TypeTree *b;
+} type_cmp_pair;
+
+i8 TypeTree_cmp_ex(TypeTree a, TypeTree b, mList(type_cmp_pair) followed);
+
 i8 Type_cmp_ex(Type a, Type b, mList(type_cmp_pair) followed) {
+  if (a.ptr_level != b.ptr_level) return a.ptr_level < b.ptr_level ? -1 : 1;
+
+  if (a.isref != b.isref) return a.isref < b.isref ? -1 : 1;
+  if (a.isconst != b.isconst) return a.isconst < b.isconst ? -1 : 1;
+  if (a.isvolatile != b.isvolatile) return a.isvolatile < b.isvolatile ? -1 : 1;
+  if (a.iscomptime != b.iscomptime) return a.iscomptime < b.iscomptime ? -1 : 1;
+
+  return TypeTree_cmp_ex(a.t, b.t, followed);
+}
+
+i8 TypeTree_cmp_ex(TypeTree a, TypeTree b, mList(type_cmp_pair) followed) {
   if (!mcmp(a, b)) return 0;
   else if (a.tag < b.tag) return -1;
   else if (a.tag > b.tag) return 1;
+
   tu_match_void(
       a,
-      (builtin, id, {
-        let id2 = tu_catch(builtin, b);
-        if (id < id2) return -1;
-        if (id > id2) return 1;
-        return 0;
-      }),
+      (builtin, id, return icmp(id, tu_catch(builtin, b))),
+      (r_uint, ai, return icmp(ai, tu_catch(r_uint, b))),
+      (r_sint, ai, return icmp(ai, tu_catch(r_sint, b))),
 
-      (r_void, _, return 0;),
-      (c_int, _, return 0;),
-      (c_any, _, return 0;),
-      (c_ast, _, return 0;),
-      (c_type, _, return 0;),
+      // nominal
+      (r_tag, ai, return fptr_cmp(ai.name, tu_catch(r_tag, b).name)),
+      // all the same type
+      (r_void, _, return 0),
+      (c_int, _, return 0),
+      (c_any, _, return 0),
+      (c_ast, _, return 0),
+      (c_type, _, return 0),
 
-      (r_tag, ai, return fptr_cmp(ai.name, tu_catch(r_tag, b).name);),
-      (r_uint, ai, return icmp(ai, tu_catch(r_uint, b));),
-      (r_sint, ai, return icmp(ai, tu_catch(r_sint, b));),
+      (r_arr, ai, {
+        let bi = tu_catch(r_arr, b);
+        if_decl (let cmp, icmp(ai.count, bi.count)) return cmp;
 
-      (r_decor, ai, {
-        let bi = tu_catch(r_decor, b);
-        if_decl (let dif, ai.constant - bi.constant)
-          return dif;
-        if_decl (let dif, ai.valatile - bi.valatile)
-          return dif;
         if (ai.t == bi.t) return 0;
 
         foreach (let p, mList_iter(followed))
           if (p.a == ai.t && p.b == bi.t) return 0;
 
         mList_push(followed, ((type_cmp_pair){.a = ai.t, .b = bi.t}));
-        i8 r = Type_cmp_ex(*ai.t, *bi.t, followed);
+        i8 r = TypeTree_cmp_ex(*ai.t, *bi.t, followed);
         mList_rem(followed, mList_len(followed) - 1);
         return r;
       }),
 
-      (r_ctime, ai, {
-        let bi = tu_catch(r_ctime, b);
-        if (ai == bi) return 0;
-
-        foreach (let p, mList_iter(followed))
-          if (p.a == ai && p.b == bi) return 0;
-
-        mList_push(followed, ((type_cmp_pair){.a = ai, .b = bi}));
-        i8 r = Type_cmp_ex(ai[0], bi[0], followed);
-        mList_rem(followed, mList_len(followed) - 1);
-        return r;
-      }),
-      (r_ptr, ai, {
-        let bi = tu_catch(r_ptr, b);
-        if (ai == bi) return 0;
-
-        foreach (let p, mList_iter(followed))
-          if (p.a == ai && p.b == bi) return 0;
-
-        mList_push(followed, ((type_cmp_pair){.a = ai, .b = bi}));
-        i8 r = Type_cmp_ex(ai[0], bi[0], followed);
-        mList_rem(followed, mList_len(followed) - 1);
-        return r;
-      }),
-      (r_ref, ai, {
-        let bi = tu_catch(r_ref, b);
-        if (ai == bi) return 0;
-
-        foreach (let p, mList_iter(followed))
-          if (p.a == ai && p.b == bi) return 0;
-
-        mList_push(followed, ((type_cmp_pair){.a = ai, .b = bi}));
-        i8 r = Type_cmp_ex(ai[0], bi[0], followed);
-        mList_rem(followed, mList_len(followed) - 1);
-        return r;
-      }),
-      (r_arr, ai, {
-        let bi = tu_catch(r_arr, b);
-        return Type_cmp_ex(ai.t[0], bi.t[0], followed)
-                   ?: icmp(ai.count, bi.count);
-      }),
       (r_func, ai, {
         let bi = tu_catch(r_func, b);
         let la = mList_len(ai);
-        if_decl (let l, icmp(la, mList_len(bi))) return l;
+        let lb = mList_len(bi);
+        if (la != lb) return icmp(la, lb);
+
         foreach (let i, range(0, la))
-          if_decl (let cmp, Type_cmp_ex(mList_arr(ai)[i], mList_arr(bi)[i], followed))
+          if_decl (let cmp, TypeTree_cmp_ex(mList_arr(ai)[i], mList_arr(bi)[i], followed))
             return cmp;
+
         return 0;
       }),
+
       (r_closure, ai, {
         let bi = tu_catch(r_closure, b);
-        let ta = (Type[2]){tu_of(r_func, ai.args), tu_of(r_func, ai.captures)};
-        let tb = (Type[2]){tu_of(r_func, bi.args), tu_of(r_func, bi.captures)};
-        if_decl (let cmp, Type_cmp_ex(ta[0], tb[0], followed))
-          return cmp;
-        if_decl (let cmp, Type_cmp_ex(ta[1], tb[1], followed))
-          return cmp;
+
+        let la_cap = mList_len(ai.captures);
+        let lb_cap = mList_len(bi.captures);
+        if (la_cap != lb_cap) return icmp(la_cap, lb_cap);
+
+        let la_args = mList_len(ai.args);
+        let lb_args = mList_len(bi.args);
+        if (la_args != lb_args) return icmp(la_args, lb_args);
+
+        foreach (let i, range(0, la_cap))
+          if_decl (let cmp, TypeTree_cmp_ex(mList_arr(ai.captures)[i], mList_arr(bi.captures)[i], followed))
+            return cmp;
+
+        foreach (let i, range(0, la_args))
+          if_decl (let cmp, TypeTree_cmp_ex(mList_arr(ai.args)[i], mList_arr(bi.args)[i], followed))
+            return cmp;
+
         return 0;
       }),
-      (r_bitfield, ai, {
-        let bi = tu_catch(r_bitfield, b);
-        let la = mList_len(ai);
-        if_decl (let l, icmp(la, mList_len(bi))) return l;
-        foreach (let i, range(0, la)) {
-          let a = mList_arr(ai)[i];
-          let b = mList_arr(bi)[i];
-          if_decl (let cmp, Type_cmp_ex(a.t, b.t, followed))
-            return cmp;
-          if_decl (let cmp, fptr_cmp(a.name, b.name))
-            return cmp;
-          if_decl (let cmp, icmp(a.width, b.width))
-            return cmp;
-        }
-        return 0;
-      }),
+
       (r_struct, ai, {
         let bi = tu_catch(r_struct, b);
         let la = mList_len(ai);
         let lb = mList_len(bi);
         if (la != lb) return icmp(la, lb);
+
         foreach (let i, range(0, la)) {
-          let a = mList_arr(ai)[i];
-          let b = mList_arr(bi)[i];
-          if_decl (let cmp, Type_cmp_ex(a.t, b.t, followed))
-            return cmp;
-          if_decl (let cmp, fptr_cmp(a.name, b.name))
-            return cmp;
-          if_decl (let cmp, icmp(a.alignment, b.alignment))
-            return cmp;
-          if_decl (let cmp, icmp(a.offset, b.offset))
-            return cmp;
+          let a_item = mList_arr(ai)[i];
+          let b_item = mList_arr(bi)[i];
+
+          if_decl (let cmp, fptr_cmp(a_item.name, b_item.name)) return cmp;
+          if_decl (let cmp, icmp(a_item.offset, b_item.offset)) return cmp;
+          if_decl (let cmp, icmp(a_item.alignment, b_item.alignment)) return cmp;
+
+          if_decl (let cmp, Type_cmp_ex(a_item.t, b_item.t, followed)) return cmp;
         }
         return 0;
       }),
+
+      (r_bitfield, ai, {
+        let bi = tu_catch(r_bitfield, b);
+        let la = mList_len(ai);
+        let lb = mList_len(bi);
+        if (la != lb) return icmp(la, lb);
+
+        foreach (let i, range(0, la)) {
+          let a_item = mList_arr(ai)[i];
+          let b_item = mList_arr(bi)[i];
+
+          if_decl (let cmp, fptr_cmp(a_item.name, b_item.name)) return cmp;
+          if_decl (let cmp, icmp(a_item.width, b_item.width)) return cmp;
+
+          if_decl (let cmp, Type_cmp_ex(a_item.t, b_item.t, followed)) return cmp;
+        }
+        return 0;
+      })
   );
 }
+
 i8 Type_cmp(Type a, Type b) {
   let f = mList_init(stdAlloc, type_cmp_pair);
   defer { mList_deinit(f); };
   return Type_cmp_ex(a, b, f);
 }
 
-i8 Type_cmp_hash(const void *a, const void *b) { return Type_cmp(*(Type *)a, *(Type *)b); }
+i8 TypeTree_cmp_hash(const void *a, const void *b) {
+  let f = mList_init(stdAlloc, type_cmp_pair);
+  defer { mList_deinit(f); };
+  return TypeTree_cmp_ex(*(TypeTree *)a, *(TypeTree *)b, f);
+}
+i8 Type_cmp_hash(const void *a, const void *b) {
+  return Type_cmp(*(Type *)a, *(Type *)b);
+}
 
-//}
+// printer
+void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printerfunction_context _ctx);
+
+static inline void typeTreePrinterWorker_add(TypeTree t, moxmap(TypeTree, u32) visitedmap) {
+  moxmap_set(visitedmap, t, ((u32)((oxmap *)visitedmap)->keys->length));
+}
 
 typePrinter(builtin_id) {
   switch (in) {
@@ -321,7 +338,6 @@ typePrinter(builtin_id) {
     case(builtin_if):PUTS("if");break;
     case(builtin__id):PUTS("id");break;
     case(builtin_fn):PUTS("fn");break;
-    case(builtin_construct):PUTS("construct");break;
     case(builtin_closure):PUTS("closure");break;
     case(builtin_ast):PUTS("ast");break;
     case(builtin_arrof):PUTS("arrof");break;
@@ -350,20 +366,14 @@ typePrinter(builtin_id) {
       // clang-format on
   }
 }
-
-void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_context _ctx);
-static inline void typePrinterWorker_add(Type in, moxmap(Type, u32) visitedmap) {
-  moxmap_set(visitedmap, in, ((u32)((oxmap *)visitedmap)->keys->length));
-}
-static inline void typePrinterWorker_recurse(Type in, moxmap(Type, u32) visitedmap, printerfunction_context _ctx) {
-  if_decl (let idx, moxmap_get(visitedmap, in))
+void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printerfunction_context _ctx) {
+  if_decl (let idx, moxmap_get(visitedmap, in)) {
     USETYPEPRINTER(usize, *idx);
-  else typePrinterWorker(in, visitedmap, _ctx);
-}
-void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_context _ctx) {
+    return;
+  }
+
   tu_match_void(
       in,
-      // trivial, are themselves
       (builtin, builtin, {
         PUTS("(b ");
         USETYPEPRINTER(builtin_id, builtin);
@@ -376,296 +386,87 @@ void typePrinterWorker(Type in, moxmap(Type, u32) visitedmap, printerfunction_co
       (r_void, _, PUTS("void")),
       (r_tag, t, {
         PUTS("(id ");
-        USETYPEPRINTER(id_str, (id_str){t.name});
+        USETYPEPRINTER(id_str, t.name);
         PUTS(")");
       }),
       (r_uint, bits, PUTS("u"); USETYPEPRINTER(usize, bits);),
       (r_sint, bits, PUTS("s"); USETYPEPRINTER(usize, bits);),
-      // complex, require other types
 
-      // only one type, no push
-      (r_ptr, type, {
-        // typePrinterWorker_add(in, visited, visitedmap);
-        PUTS("(* ");
-        defer { PUTS(")"); };
-        typePrinterWorker_recurse(*type, visitedmap, _ctx);
-      }),
-      (r_ref, type, {
-        PUTS("(& ");
-        defer { PUTS(")"); };
-        typePrinterWorker_recurse(*type, visitedmap, _ctx);
-      }),
-      (r_ctime, type, {
-        PUTS("(comp ");
-        defer { PUTS(")"); };
-        typePrinterWorker_recurse(*type, visitedmap, _ctx);
-      }),
-      (r_decor, decor, {
-        PUTS("(");
-        if (decor.constant) PUTS("const");
-        if (decor.valatile) PUTS("-volatile");
-        PUTS(",");
-        typePrinterWorker_recurse(*decor.t, visitedmap, _ctx);
-        PUTS(")");
-      }),
+      // Complex, require recursion
       (r_arr, arr, {
-        // typePrinterWorker_add(in, visited, visitedmap);
+        typeTreePrinterWorker_add(in, visitedmap);
         PUTS("(a ");
         defer { PUTS(")"); };
-        PUTS("[");
-        USETYPEPRINTER(usize, arr.count);
-        PUTS("] ");
-        typePrinterWorker_recurse(*arr.t, visitedmap, _ctx);
+        PUTS("["), USETYPEPRINTER(usize, arr.count), PUTS("] ");
+        USENAMEDPRINTER("TypeTree", *arr.t);
       }),
-      // multiple types, push
       (r_struct, st, {
-        typePrinterWorker_add(in, visitedmap);
+        typeTreePrinterWorker_add(in, visitedmap);
         PUTS("(s ");
         defer { PUTS(")"); }
         foreach (let type, span(mList_arr(st), mList_len(st))) {
           if (type != mList_arr(st)) PUTS(",");
-          USETYPEPRINTER(id_str, (id_str){type->name});
+          USETYPEPRINTER(id_str, type->name);
           PUTS("@");
           USETYPEPRINTER(usize, type->offset);
-          PUTS(":");
-          typePrinterWorker_recurse(type->t, visitedmap, _ctx);
+          PUTS("~");
+          USENAMEDPRINTER("Type", type->t);
         }
       }),
       (r_bitfield, st, {
-        typePrinterWorker_add(in, visitedmap);
+        typeTreePrinterWorker_add(in, visitedmap);
         PUTS("(bf ");
         defer { PUTS(")"); }
         foreach (let type, span(mList_arr(st), mList_len(st))) {
           if (type != mList_arr(st)) PUTS(",");
-
-          USETYPEPRINTER(id_str, (id_str){type->name});
-          PUTS("|");
-          USETYPEPRINTER(usize, type->width);
+          USETYPEPRINTER(id_str, type->name);
           PUTS(":");
-          typePrinterWorker_recurse(type->t, visitedmap, _ctx);
+          USETYPEPRINTER(usize, type->width);
+          PUTS("~");
+          USENAMEDPRINTER("Type", type->t);
         }
       }),
       (r_func, fn, {
-        typePrinterWorker_add(in, visitedmap);
+        typeTreePrinterWorker_add(in, visitedmap);
         PUTS("(fn (");
-        foreach (let it, mList_iter(fn))
-          typePrinterWorker_recurse(it, visitedmap, _ctx), PUTS(",");
+        foreach (let it, mList_iter(fn)) {
+          USENAMEDPRINTER("TypeTree", it);
+          PUTS(",");
+        }
         PUTS("),");
-        if (mList_len(fn))
-          typePrinterWorker_recurse(mList_last(fn), visitedmap, _ctx);
+        if (mList_len(fn)) USENAMEDPRINTER("TypeTree", mList_last(fn));
         PUTS(")");
       }),
       (r_closure, fn, {
-        typePrinterWorker_add(in, visitedmap);
+        typeTreePrinterWorker_add(in, visitedmap);
         PUTS("(clos (");
         foreach (let it, mList_iter(fn.captures))
-          typePrinterWorker_recurse(it, visitedmap, _ctx), PUTS(" ");
+          USENAMEDPRINTER("TypeTree", it), PUTS(" ");
         PUTS("),");
-        typePrinterWorker_recurse((Type)tu_of(r_func, fn.args), visitedmap, _ctx);
+        USENAMEDPRINTER("TypeTree", ((TypeTree)tu_of(r_func, fn.args)));
         PUTS(")");
-      }),
-  );
-}
-typePrinter(Type) {
-  let visited = moxmap_init(PRINTARGS_ALLOCATOR(), Type, u32, Type_cmp_hash);
-  defer { moxmap_deinit(visited); };
-  typePrinterWorker(in, visited, _ctx);
-}
-
-typedef struct {
-  Type t;
-  bool is_comptime;
-  bool is_const;
-  bool is_volatile;
-  bool is_ref;
-  int ptr_level;
-} peeled_type;
-peeled_type Type_peel(Type t, bool deref_ptr, bool deref_ref) {
-  peeled_type r = {t};
-  while (1)
-    tu_match_void(
-        r.t,
-        (r_tag, tag, r.t = *tag.t; continue;),
-        (r_ctime, ct, r.is_comptime = true, r.t = *ct; continue;),
-        (r_decor, dec, {
-          r.is_const |= dec.constant;
-          r.is_volatile |= dec.valatile;
-          r.t = *dec.t;
-          continue;
-        }),
-        (r_ptr, pt, {
-          if (deref_ptr) {
-            r.ptr_level++;
-            r.t = *pt;
-            continue;
-          } else return r;
-        }),
-        (r_ref, pt, {
-          if (deref_ref) {
-            r.is_ref = true;
-            deref_ref = false;
-            r.t = *pt;
-            continue;
-          } else return r;
-        }),
-        (default, return r)
-    );
-}
-Type Type_unpeel(allocfn allocator, peeled_type p) {
-  Type r = p.t;
-  foreach (let _, range(0, p.ptr_level)) {
-    Type *inner = avalue(allocator, r);
-    r = (Type)tu_of(r_ptr, inner);
-  }
-  if (p.is_ref) {
-    Type *inner = avalue(allocator, r);
-    r = (Type)tu_of(r_ref, inner);
-  }
-  while (p.ptr_level) {
-    Type *inner = avalue(allocator, r);
-    r = (Type)tu_of(r_ptr, inner);
-    p.ptr_level--;
-  }
-
-  if (p.is_const || p.is_volatile) {
-    Type *inner = avalue(allocator, r);
-    r = (Type)tu_of(r_decor, {.t = inner, .constant = p.is_const, .valatile = p.is_volatile});
-  }
-  if (p.is_comptime) {
-    Type *inner = avalue(allocator, r);
-    r = (Type)tu_of(r_ctime, inner);
-  }
-  return r;
-}
-static inline Type strip_decor(Type t) { return Type_peel(t, 0, true).t; }
-
-static inline bool Type_is_comptime(Type t) {
-  return Type_peel(t, false, true).is_comptime;
-}
-typePrinter(typed_value) {
-  PUTS("(tv ");
-  USETYPEPRINTER(Type, in.t);
-  PUTS(",");
-  tu_match_void(
-      strip_decor(in.t),
-      (c_int, _, in.v.c_int ? USENAMEDPRINTER("bigint", in.v.c_int) : PUTS("??");),
-      (c_ast, _, if (in.v.c_ast)
-#if defined TV_EXPAND_VALUE && TV_EXPAND_VALUE == 1
-                     USENAMEDPRINTER("ast", in.v.c_ast);
-#else
-                     USENAMEDPRINTER("astTag", (in.v.c_ast->tag));
-#endif
-       else PUTS("??");),
-      (c_type, _, USETYPEPRINTER(Type, *in.v.c_type);),
-      (default, {
-        if (in.v.value)
-          USETYPEPRINTER(fptr, ((fptr){Type_rsize(in.t), in.v.value}));
-        else PUTS("(nil)");
       })
   );
-  PUTS(")");
 }
 
-// { test functions
-test_fn(type_ptr_equality) {
-  let v = (Type)tu_of(
-      r_struct,
-      mList_init(allocator, r_struct_item)
-  );
-  defer { mList_deinit(tu_catch(r_struct, v)); };
-  mList_push(
-      tu_catch(r_struct, v),
-      {
-          .alignment = 8,
-          .name = fp("self"),
-          .offset = 0,
-          .t = tu_of(r_ptr, &v),
-      }
-  );
-  test_assert(!Type_cmp(v, v));
+typePrinter(TypeTree) {
+  let visited = moxmap_init(PRINTARGS_ALLOCATOR(), TypeTree, u32, TypeTree_cmp_hash);
+  defer { moxmap_deinit(visited); };
+  typeTreePrinterWorker(in, visited, _ctx);
 }
-test_fn(type_tag_nominal_equality) {
-  let u32t = (Type)tu_of(r_uint, (u16)32);
-  let u64t = (Type)tu_of(r_uint, (u16)64);
-  let a = (Type)tu_of(r_tag, {.name = fp("Meters"), .t = &u32t});
-  let b = (Type)tu_of(r_tag, {.name = fp("Meters"), .t = &u64t});
-  test_assert(!Type_cmp(a, b));
-}
-test_fn(type_tag_distinct_names) {
-  let u32t = (Type)tu_of(r_uint, (u16)32);
-  let a = (Type)tu_of(r_tag, {.name = fp("Meters"), .t = &u32t});
-  let b = (Type)tu_of(r_tag, {.name = fp("Seconds"), .t = &u32t});
-  test_assert(Type_cmp(a, b));
-}
-test_fn(type_ptr_structural_inequality) {
-  let ta = (Type)tu_of(r_uint, (u16)32);
-  let tb = (Type)tu_of(r_uint, (u16)64);
-  let pa = (Type)tu_of(r_ptr, &ta);
-  let pb = (Type)tu_of(r_ptr, &tb);
-  test_assert(Type_cmp(pa, pb));
-}
-test_fn(type_struct_hash_consistency) {
-  let a = (Type)tu_of(r_struct, mList_init(allocator, r_struct_item));
-  let b = (Type)tu_of(r_struct, mList_init(allocator, r_struct_item));
-  defer {
-    mList_deinit(tu_catch(r_struct, a));
-    mList_deinit(tu_catch(r_struct, b));
-  };
-  let u32t = (Type)tu_of(r_uint, (u16)32);
-  mList_push(
-      tu_catch(r_struct, a),
-      {
-          .alignment = 4,
-          .name = fp("x"),
-          .offset = 0,
-          .t = u32t,
-      }
-  );
-  mList_push(
-      tu_catch(r_struct, b),
-      {
-          .alignment = 4,
-          .name = fp("x"),
-          .offset = 0,
-          .t = u32t,
-      }
-  );
-  test_assert(!Type_cmp(a, b));
-}
-test_fn(type_struct_field_order_matters) {
-  let a = (Type)tu_of(r_struct, mList_init(allocator, r_struct_item));
-  let b = (Type)tu_of(r_struct, mList_init(allocator, r_struct_item));
-  defer {
-    mList_deinit(tu_catch(r_struct, a));
-    mList_deinit(tu_catch(r_struct, b));
-  };
-  let u32t = (Type)tu_of(r_uint, (u16)32);
-  let u8t = (Type)tu_of(r_uint, (u16)8);
-  mList_push(tu_catch(r_struct, a), {.alignment = 4, .name = fp("x"), .offset = 0, .t = u32t});
-  mList_push(tu_catch(r_struct, a), {.alignment = 1, .name = fp("y"), .offset = 4, .t = u8t});
-  mList_push(tu_catch(r_struct, b), {.alignment = 1, .name = fp("y"), .offset = 4, .t = u8t});
-  mList_push(tu_catch(r_struct, b), {.alignment = 4, .name = fp("x"), .offset = 0, .t = u32t});
-  test_assert(Type_cmp(a, b));
-}
-test_fn(type_func_equality) {
-  let p1 = mList_init(allocator, Type);
-  let p2 = mList_init(allocator, Type);
-  defer {
-    mList_deinit(p1);
-    mList_deinit(p2);
-  };
-  mList_push(p1, tu_of(r_uint, 32));
-  mList_push(p1, tu_of(r_void, {}));
-  mList_pushArr(p2, *mList_vla(p1));
 
-  let fa = (Type)tu_of(r_func, p1);
-  let fb = (Type)tu_of(r_func, p2);
-  test_assert(!Type_cmp(fa, fb));
+typePrinter(Type) {
+  bool has_env = in.iscomptime || in.ptr_level || in.isref || in.isconst || in.isvolatile;
 
-  let p3 = mList_init(allocator, Type);
-  defer { mList_deinit(p3); };
-  mList_push(p3, (Type)tu_of(r_uint, (u16)32));
-  let fc = (Type)tu_of(r_func, p3);
-  test_assert(Type_cmp(fa, fc));
+  if (has_env) {
+    PUTS("(");
+    if (in.ptr_level > 0) PUTS("*"), USETYPEPRINTER(u32, in.ptr_level), PUTS(",");
+    if (in.isref) PUTS("&,");
+    if (in.isconst) PUTS("const,");
+    if (in.isvolatile) PUTS("volatile,");
+    if (in.iscomptime) PUTS("comptime,");
+  }
+
+  USETYPEPRINTER(TypeTree, in.t);
+  if (has_env) PUTS(")");
 }
-// }
