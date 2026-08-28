@@ -5,6 +5,9 @@
 #include "wheels/macros.h"
 #include "wheels/mytypes.h"
 #include "wheels/sList.h"
+u32 lower_call_extra(superscope *ss, scope *s, u32 left, u32 first, ast *args){
+  TODO();
+}
 u32 lower_call(superscope *ss, scope *s, u32 left, ast *args) {
   iflet_tu (let builtin, builtin, scope_find(ss, s, left)->t.t)
     return lower_builtin(ss, s, builtin, args);
@@ -17,7 +20,7 @@ static u32 lower_overload_possible(superscope *ss, scope *s, u32 left, ast *righ
       t.t,
       (default, (u32)0),
       (r_struct, _, ({
-         TODO();
+         TODO("opwerator overloading");
          (u32)0;
        })),
   );
