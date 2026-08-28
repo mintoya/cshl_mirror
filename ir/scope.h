@@ -25,6 +25,7 @@ struct superscope {
   moxmap(TypeTree, TypeTree *) typetrees;
   moxmap(Type, Type *) types;
   msList(Type *) thisstack;
+  r_func fnctx;
   scope *outermost;
 };
 

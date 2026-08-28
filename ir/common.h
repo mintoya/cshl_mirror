@@ -1,12 +1,9 @@
 #pragma once
 #include "scope.h"
-#include "wheels/macros.h"
-#include "wheels/print/print_pre.h"
 #include <string.h>
 #include <wheels/bigint.h>
-
-typedef ast *astptr;
-sliceDef(astptr);
+#include <wheels/macros.h>
+#include <wheels/print/print_pre.h>
 
 #define T(...) ((Type){.t = __VA_ARGS__})
 #define TV(...) ((typed_value){__VA_ARGS__})
@@ -306,13 +303,16 @@ typePrinter(scope) {
         }),
         (ir_rawop, op, {
           PUTS("(rawop ");
-          USETYPEPRINTER(u32, op.l);
-          PUTS(",");
-          USETYPEPRINTER(enum_op, op_as_enum(op.o));
-          PUTS(",");
+          USETYPEPRINTER(u32, op.l), PUTS(",");
+          USETYPEPRINTER(enum_op, op_as_enum(op.o)), PUTS(",");
           USETYPEPRINTER(u32, op.r);
-          PUTS(" -> ");
-          USETYPEPRINTER(u32, op.d);
+          PUTS(" -> "), USETYPEPRINTER(u32, op.d);
+          PUTS(")");
+        }),
+        (ir_farg, op, {
+          PUTS("(rawop ");
+          USETYPEPRINTER(u32, op.l), PUTS(",");
+          PUTS(" -> "), USETYPEPRINTER(u32, op.d);
           PUTS(")");
         }),
         (ir_getref, iv, {

@@ -16,18 +16,21 @@ tu_def(
     (ir_getptr, /* */ struct { u32 l, d; }),                 // d = &l;
     (ir_putptr, /* */ struct { u32 l, d; }),                 // d = *l;
     (ir_rawop, /*  */ struct { u32 l, r, d, o; }),           // d = l (o) r;
+
     (ir_call, /*   */ struct { u32 l, d; slice(u32) args; }),// d = l(...args)
+    (ir_farg ,/*   */ struct { u32 l, d; }),
 
     // control
     // The block evaluates to its child scope's last value.
-    (ir_block, /* */ scopeptr),
+    (ir_block, /*  */ scopeptr),
 
-    (ir_ret, /*   */ u32),
-    (ir_if, /*    */ struct { scopeptr cnd,t, f; }),
-    (ir_while, /* */ struct { scopeptr cnd, body; }),
+    (ir_ret, /*    */ u32),
+    (ir_if, /*     */ struct { scopeptr cnd,t, f; }),
+    (ir_while, /*  */ struct { scopeptr cnd, body; }),
     // switches maybe never, unlike the rest must inline value
-    (ir_break, /* */ struct {}),
-    (ir_cont, /*  */ struct {}),
+    (ir_break, /*  */ struct {}),
+    (ir_cont, /*   */ struct {}),
+    // functoin
 );
 // clang-format on
 /*
