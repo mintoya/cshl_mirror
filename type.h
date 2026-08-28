@@ -15,6 +15,7 @@ typedef enum : u8 {
   builtin_fn,       // @fn((decl|type...) ,decl|type,body) c_func of this type,
   builtin_closure,  // @closure((captures...),(decl|type...) ,decl|type,body) c_func of this type,
   builtin_if,       // @if(cnd , then ,)
+  builtin_cif,      // @cif same as if, comptime, produces only one branch
   builtin_while,    // @while(cnd , then) //
   builtin_return,   // return x return
   builtin_break,    // @break()
@@ -74,7 +75,7 @@ tu_def( // type
     // not have them take up any storage space
     (c_any /*        */, struct {}),
     (c_int /*        */, typeof(bigint[0])),
-    (c_type /*       */, typeof(Type*[0])),
+    (c_type /*       */, typeof(Type *[0])),
     (c_ast /*        */, typeof(ast *[0])),
 );
 struct Type {
@@ -299,6 +300,7 @@ typePrinter(builtin_id) {
   switch (in) {
       // clang-format off
     case(builtin_if):PUTS("if");break;
+    case(builtin_cif):PUTS("cif");break;
     case(builtin__id):PUTS("id");break;
     case(builtin_fn):PUTS("fn");break;
     case(builtin_closure):PUTS("closure");break;

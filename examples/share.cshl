@@ -1,29 +1,53 @@
-type  ~~ @type();
-void  ~~ @void();
-any ~~ @any();
-i ~~@sint;
-u ~~@uint;
-p ~~@ptr;
+type ~~ @type();
+void ~~ @void();
+any  ~~ @any();
+u64  ~~ @uint(64);
+p    ~~ @ptr;
 
-shared ~~ @fn (t ~type, destroy ~any), type, {
+shared ~~ @fn (T ~type, allocator ~any), type, {
   return @struct {
     Self ~type~ @this();
-    ptr ~ p t;
-    count ~ u 64;
+    
+    ControlBlock ~type~ @struct {
+      value ~ T;
+      count ~ u64;
+    };
+    block ~ p ControlBlock;
 
-    @id("@init") ~~ @fn (self ~(p Self), value ~(@refT t)), void, {
-      self.ptr = @where(value);
-      self.count = 1;
+    @id("@init") ~~ @fn (self ~(p Self), init_val ~T), void, {
+      self.block = allocator.alloc(ControlBlock);
+      @at(self.block).value = init_val;
+      @at(self.block).count = 1;
     };
-    @id("=") ~~ @fn (self ~(p Self), other ~Self), void, {
-      self.ptr = other.ptr;
-      self.count = other.count + 1;
-    };
+    
     @id("@deinit") ~~ @fn (self ~(p Self)), void, {
-      self.count = self.count - 1;
-      @if(self.count == 0, {
-        destroy(@at(self.ptr));
+      @if(self.block, {
+        @at(self.block).count = @at(self.block).count - 1;
+        
+        @if(@at(self.block).count == 0, {
+          allocator.free(self.block);
+        });
+        
+        self.block = 0; 
       });
+    };
+
+    @id("=") ~~ @fn (self ~(p Self), other ~any), void, {
+      @cif(@typeof(other) == Self, {
+        self."@deinit"(); 
+        self.block = other.block;
+        @if(self.block, {
+            @at(self.block).count = @at(self.block).count + 1;
+        });
+      });
+      @cif(@typeof(other) == T, {
+        self."@deinit"();
+        self."@init"(other);
+      });
+    };
+
+    get ~~ @fn (self ~(p Self)), p(T), {
+      return @where(@at(self.block).value);
     };
   };
 };

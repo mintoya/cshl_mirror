@@ -1,6 +1,7 @@
 #pragma once
 #include "../type.h"
 #include "ir.h"
+#include "wheels/macros.h"
 #include <assert.h>
 #include <wheels/allocators/cballocator.h>
 #include <wheels/sList.h>
@@ -37,8 +38,10 @@ static inline typed_value *scope_find(superscope *env, scope *s, u32 idx) {
     else s = s->parent;
   assertMessage(false, "value %u not found in scope", idx);
 }
+
+static inline u32 scope_add_value(superscope *env, scope *s, typed_value v);
 static inline scope *scope_inferior(superscope *b, scope *s) {
-  return avalue(
+  let res = avalue(
       b->alloc,
       ((scope){
           .parent = s,
@@ -48,6 +51,8 @@ static inline scope *scope_inferior(superscope *b, scope *s) {
           .start = s ? s->start + msList_len(s->values) : 0,
       })
   );
+  scope_add_value(b, s, TV(T(tu_of(r_void, {}))));
+  return res;
 }
 static inline void scope_destroy(superscope *b, scope *s) {
   msList_deInit(b->alloc, s->values);
@@ -66,7 +71,13 @@ static inline void scope_bind(superscope *env, scope *s, u32 idx, fptr name) {
   assertMessage(idx <= msList_len(s->values) + s->start, "%zu <= %zu + %zu", idx, msList_len(s->values), s->start);
   moxmap_set(s->named, name, idx);
 }
-static inline void scope_yield(superscope *ss, scope *s, u32 result) { TODO(); }
+static inline void scope_yield(superscope *ss, scope *s, u32 result) {
+  assertMessage(result <= s->start);
+  let v = scope_find(ss, s, result);
+  assertMessage(tu_is(c_any, v->t.t));
+  v->t = msList_last(s->values).t;
+  scope_add_inst(ss, s, (ir)tu_of(ir_set, {.l = s->start + msList_len(s->values), .d = result})); // TODO operator stuff
+}
 
 static inline Type Type_ptr(Type t) {
   t.ptr_level++;
@@ -178,6 +189,8 @@ static inline superscope *ss_init(allocfn allocator) {
       {"break", builtin_break},
       {"continue", builtin_continue},
       {"return", builtin_return},
+      {"@cif", builtin_cif},
+      {"@comptime_if", builtin_cif},
       {"@if", builtin_if},
       {"@while", builtin_while},
   };
@@ -185,7 +198,7 @@ static inline superscope *ss_init(allocfn allocator) {
     scope_bind(
         res,
         res->outermost,
-        scope_add_value(res, res->outermost, (typed_value){(Type){.t = tu_of(builtin, i.id)}}),
+        scope_add_value(res, res->outermost, TV(T(tu_of(builtin, i.id)))),
         fp(i.name)
     );
   return res;

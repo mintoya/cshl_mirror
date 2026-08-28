@@ -1,6 +1,7 @@
 #pragma once
 #include "wheels/mytypes.h"
 #include "wheels/print/print_pre.h"
+#include <assert.h>
 #include <stdio.h>
 #include <string.h>
 #include <wheels/allocator.h>
@@ -133,6 +134,7 @@ tu_def(
     // always comma-separated
     (astABlock, struct {u8* loc ; sentList_t(ast *) items; }),
 );
+static_assert(sizeof(ast));
 
 typedef ast *astptr;
 sliceDef(astptr);

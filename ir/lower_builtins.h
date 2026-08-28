@@ -5,6 +5,7 @@
 static u32 lower_builtin_fn(superscope *ss, scope *s, ast *args) { TODO(); }
 static u32 lower_builtin_closure(superscope *ss, scope *s, ast *args) { TODO(); }
 static u32 lower_builtin_if(superscope *ss, scope *s, ast *args) { TODO(); }
+static u32 lower_builtin_cif(superscope *ss, scope *s, ast *args) { TODO(); }
 static u32 lower_builtin_while(superscope *ss, scope *s, ast *args) { TODO(); }
 static u32 lower_builtin_at(superscope *ss, scope *s, ast *args) { TODO(); }
 static u32 lower_builtin_where(superscope *ss, scope *s, ast *args) { TODO(); }
@@ -215,6 +216,7 @@ static u32 lower_builtin(superscope *ss, scope *s, builtin_id builtin, ast *args
       (builtin_fn, /*      */ lower_builtin_fn(ss, s, args)),
       (builtin_closure, /* */ lower_builtin_closure(ss, s, args)),
       (builtin_if, /*      */ lower_builtin_if(ss, s, args)),
+      (builtin_cif, /*     */ lower_builtin_cif(ss, s, args)),
       (builtin_while, /*   */ lower_builtin_while(ss, s, args)),
       (builtin_return, /*  */ lower_builtin_return(ss, s, args)),
       (builtin_break, /*   */ lower_builtin_break(ss, s, args)),
