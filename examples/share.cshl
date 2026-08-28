@@ -1,0 +1,29 @@
+type  ~~ @type();
+void  ~~ @void();
+any ~~ @any();
+i ~~@sint;
+u ~~@uint;
+p ~~@ptr;
+
+shared ~~ @fn (t ~type, destroy ~any), type, {
+  return @struct {
+    Self ~type~ @this();
+    ptr ~ p t;
+    count ~ u 64;
+
+    @id("@init") ~~ @fn (self ~(p Self), value ~(@refT t)), void, {
+      self.ptr = @where(value);
+      self.count = 1;
+    };
+    @id("=") ~~ @fn (self ~(p Self), other ~Self), void, {
+      self.ptr = other.ptr;
+      self.count = other.count + 1;
+    };
+    @id("@deinit") ~~ @fn (self ~(p Self)), void, {
+      self.count = self.count - 1;
+      @if(self.count == 0, {
+        destroy(@at(self.ptr));
+      });
+    };
+  };
+};
