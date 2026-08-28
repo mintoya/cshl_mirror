@@ -19,6 +19,7 @@ tu_def(
 
     (ir_call, /*   */ struct { u32 l, d; slice(u32) args; }),// d = l(...args)
     (ir_farg ,/*   */ struct { u32 l, d; }),
+    (ir_set ,/*    */ struct { u32 l, d; }), // same as set without a d
 
     // control
     // The block evaluates to its child scope's last value.
