@@ -4,7 +4,8 @@
     "-x","c",
     "-std=c2y",
     "-fdefer-ts",
-    "-I",("deps" | path expand)
+    "-I",("deps" | path expand),
+    "-D","CLANGD_EDITING"
   ],
   Compiler : "clang"
   },

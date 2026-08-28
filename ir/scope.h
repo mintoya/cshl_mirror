@@ -66,6 +66,7 @@ static inline void scope_bind(superscope *env, scope *s, u32 idx, fptr name) {
   assertMessage(idx <= msList_len(s->values) + s->start, "%zu <= %zu + %zu", idx, msList_len(s->values), s->start);
   moxmap_set(s->named, name, idx);
 }
+static inline void scope_yield(superscope *ss, scope *s, u32 result) { TODO(); }
 
 static inline Type Type_ptr(Type t) {
   t.ptr_level++;
@@ -167,7 +168,7 @@ static inline superscope *ss_init(allocfn allocator) {
       {"@int", builtin_int},
       {"@sint", builtin_sint},
       {"@uint", builtin_uint},
-      {"@ptrof", builtin_ptrof},
+      {"@ptr", builtin_ptrof},
       {"@ref", builtin_ref},
       {"@refT", builtin_reft},
       {"@volatile", builtin_volatile},

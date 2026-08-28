@@ -1,3 +1,4 @@
+#pragma once
 #include "../ast.h"
 #include "scope.h"
 #include <wheels/fptr.h>

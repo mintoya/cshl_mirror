@@ -21,8 +21,6 @@ tu_def(
     (ir_farg ,/*   */ struct { u32 l, d; }),
     (ir_set ,/*    */ struct { u32 l, d; }), // same as set without a d
 
-    // control
-    // The block evaluates to its child scope's last value.
     (ir_block, /*  */ scopeptr),
 
     (ir_ret, /*    */ u32),
