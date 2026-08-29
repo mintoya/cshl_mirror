@@ -304,8 +304,8 @@ typePrinter(scope) {
         }),
         (ir_rawop, op, {
           PUTS("(rawop ");
-          USETYPEPRINTER(u32, op.l), PUTS(",");
-          USETYPEPRINTER(enum_op, op_as_enum(op.o)), PUTS(",");
+          USETYPEPRINTER(u32, op.l), PUTS(" ");
+          USETYPEPRINTER(enum_op, op_as_enum(op.o)), PUTS(" ");
           USETYPEPRINTER(u32, op.r);
           PUTS(" -> "), USETYPEPRINTER(u32, op.d);
           PUTS(")");
@@ -334,6 +334,11 @@ typePrinter(scope) {
         (ir_cast, cv, {
           PUTS("(cast ");
           USETYPEPRINTER(u32, cv.l), PUTS(" -> "), USETYPEPRINTER(u32, cv.d);
+          PUTS(")");
+        }),
+        (ir_set, sv, {
+          PUTS("(set ");
+          USETYPEPRINTER(u32, sv.l), PUTS(" -> "), USETYPEPRINTER(u32, sv.d);
           PUTS(")");
         }),
         (ir_if, ifv, {

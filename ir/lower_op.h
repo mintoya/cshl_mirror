@@ -2,11 +2,13 @@
 #include "common.h"
 #include "lower_builtins.h"
 #include "scope.h"
+#include "wheels/fptr.h"
 #include "wheels/macros.h"
 #include "wheels/mytypes.h"
 #include "wheels/sList.h"
+u32 lower_call_inner(superscope *ss, scope *s, r_func f, slice(u32) args) { TODO("actually decide what an r_func is"); }
 u32 lower_call_extra(superscope *ss, scope *s, u32 left, u32 first, ast *args) {
-  TODO();
+  TODO("just a call with an extra member");
 }
 u32 lower_call(superscope *ss, scope *s, u32 left, ast *args) {
   let l = scope_find(ss, s, left);
@@ -15,9 +17,24 @@ u32 lower_call(superscope *ss, scope *s, u32 left, ast *args) {
 
   error_print(args, "unsupported call on {*:typed_value}", l);
 }
+tu_def(
+    (astLit, u8),
+    (astIdLit, astId),
+    (astStrLit, astString),
+    (astNumLit, astNumber),
+);
+r_struct find_inner_struct(TypeTree t) {
+  return tu_match_exp(
+      t,
+      (r_struct, r, r),
+      (r_tag, r, find_inner_struct(*r.t)),
+      (default, (r_struct) nullptr)
+  );
+}
 u32 lower_overload_possible(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
   let t = scope_find(ss, s, left)->t;
   if (t.ptr_level > 1) return 0;
+  if_decl (let is, find_inner_struct(t.t)) t = T(tu_of(r_struct, {}));
   return tu_match_exp(
       t.t,
       (default, (u32)0),
@@ -25,16 +42,55 @@ u32 lower_overload_possible(superscope *ss, scope *s, u32 left, ast *right, u32 
          TODO("opwerator overloading");
          (u32)0;
        })),
+      (r_arr, _, TODO("a[...] is a call to a with an ablock"); (u32)0),
+      (c_ast, _, ({
+         TODO(
+             "opwerator overloading \
+             dot :\
+             strings : opwerators go through a similar process to opNumbers, then if the ast is an opNumber and it's the matching operation, return the operatoin itself. otherwise return the empty ast, which is falsy \
+             literals : lower case versoin of ast is available, also leave unchanged. so .bblock,.ablock,.op... erturn the ast itself if it's that thing\
+             in addition, opleft and opright supported for checking operation members\
+             call :\
+             array acess is a macro call with an ablock, so act accordingly for the block types"
+         );
+         (u32)0;
+       })),
   );
 }
 
-tu_def(
-    (astLit, u8),
-    (astIdLit, astId),
-    (astStrLit, astString),
-    (astNumLit, astNumber),
-);
-u32 lower_dot(superscope *ss, scope *s, u32 left, astLit) { TODO(); }
+fptr astLit_str(astLit l) { return tu_match_exp(l, (astIdLit, l, l), (astStrLit, l, l), (astNumLit, l, l)); }
+r_bitfield find_inner_bitfield(TypeTree t) {
+  return tu_match_exp(
+      t,
+      (r_bitfield, r, r),
+      (r_tag, r, find_inner_bitfield(*r.t)),
+      (default, (r_bitfield) nullptr)
+  );
+}
+u32 lower_dot(superscope *ss, scope *s, u32 left, astLit lit) {
+  // structs and bitfields
+  let l = scope_find(ss, s, left);
+  let str = astLit_str(lit);
+  let loc = str.ptr;
+  if (l->t.ptr_level > 1) error_print(loc, "{Type} does not support dot", l->t);
+
+  bool isStr = tu_is(astStrLit, lit);
+  if (isStr) str = string_escape(ss->alloc, str);
+  defer if (isStr) slice_free(ss->alloc, str);
+
+  let st = find_inner_struct(l->t.t);
+  let bf = st ? 0 : find_inner_bitfield(l->t.t);
+  if (st) {
+    foreach (let item, mList_iter(st))
+      if (fptr_eq(item.name, str))
+        TODO("implement dot operator");
+  } else if (bf) {
+    foreach (let item, mList_iter(bf))
+      if (fptr_eq(item.name, str))
+        TODO("implement dot operator");
+  } else error_print(loc, "{Type} does not support dot", l->t);
+  error_print(loc, "{*:typed_value} has no member {slice(c8)}", l, str);
+}
 typedef enum {
   math_mul,
   math_div,
@@ -56,7 +112,7 @@ typedef enum {
   math_neq,
   math_eq,
 } math_operation;
-u32 lower_math(superscope *ss, scope *s, u32 left, u32 right, math_operation op) {
+u32 lower_math(superscope *ss, scope *s, u32 left, u32 right, u32 opNumber, math_operation op) {
   let lt = scope_find(ss, s, left)->t;
   Type rt;
   switch (op) {
@@ -72,13 +128,15 @@ u32 lower_math(superscope *ss, scope *s, u32 left, u32 right, math_operation op)
       break;
     default:
       rt = lt;
+      rt.isref = false;
+      rt.isconst = false;
+      rt.isvolatile = false;
       break;
   }
   let d = scope_add_value(ss, s, TV(rt));
-  scope_add_inst(ss, s, (ir)tu_of(ir_rawop, {.r = left, .l = right, .d = d, .o = (u32)op}));
+  scope_add_inst(ss, s, (ir)tu_of(ir_rawop, {.r = left, .l = right, .d = d, .o = opNumber}));
   return d;
 }
-
 u32 lower_op(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
   // these are not overloadable
   // dot probably coming soon
@@ -102,7 +160,6 @@ u32 lower_op(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
   switch_tuple(
       op_as_enum(opNumber),
       (enop_set, {
-        TODO("should have it's own lower function, to make sure comptime values and const values and such work");
         scope_add_inst(ss, s, (ir)tu_of(ir_set, {.d = left, .l = lower(ss, s, right)}));
         return left;
       }),
@@ -127,22 +184,22 @@ u32 lower_op(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
             lower_dot(ss, s, left, $));
        })),
       // operators are handled, so it should just be math now
-      (enop_mul, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_mul)),
-      (enop_div, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_div)),
-      (enop_mod, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_mod)),
-      (enop_plus, /*    */ lower_math(ss, s, left, lower(ss, s, right), math_add)),
-      (enop_minus, /*   */ lower_math(ss, s, left, lower(ss, s, right), math_sub)),
-      (enop_shr, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_shr)),
-      (enop_shl, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_shl)),
-      (enop_oand, /*    */ lower_math(ss, s, left, lower(ss, s, right), math_and)),
-      (enop_oor, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_or)),
-      (enop_oband, /*   */ lower_math(ss, s, left, lower(ss, s, right), math_band)),
-      (enop_obor, /*    */ lower_math(ss, s, left, lower(ss, s, right), math_bor)),
-      (enop_les, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_les)),
-      (enop_mor, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_mor)),
-      (enop_moq, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_moq)),
-      (enop_eq, /*      */ lower_math(ss, s, left, lower(ss, s, right), math_eq)),
-      (enop_neq, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_neq)),
-      (enop_leq, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_leq)),
+      (enop_mul, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_mul)),
+      (enop_div, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_div)),
+      (enop_mod, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_mod)),
+      (enop_plus, /*    */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_add)),
+      (enop_minus, /*   */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_sub)),
+      (enop_shr, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_shr)),
+      (enop_shl, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_shl)),
+      (enop_oand, /*    */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_and)),
+      (enop_oor, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_or)),
+      (enop_oband, /*   */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_band)),
+      (enop_obor, /*    */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_bor)),
+      (enop_les, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_les)),
+      (enop_mor, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_mor)),
+      (enop_moq, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_moq)),
+      (enop_eq, /*      */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_eq)),
+      (enop_neq, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_neq)),
+      (enop_leq, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_leq)),
   );
 }

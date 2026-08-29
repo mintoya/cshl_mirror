@@ -32,19 +32,20 @@ u32 lower(superscope *ss, scope *s, ast *a) {
       (astString, f, ss_compileString(ss, s, f)),
       (astPBlock, pb, ({
          if (countof(*sentList_vla(pb.stmts)) != 1) error_print(a, "no tuples");
+         let res = scope_add_value(ss, s, TV(T(tu_of(c_any, {}))));
          let sc = scope_inferior(ss, s);
-         let l = lower(ss, sc, pb.stmts[0]);
-         let res = scope_add_value(ss, s, *scope_find(ss, sc, l));
-         scope_add_inst(ss, sc, (ir)tu_of(ir_rawop, {.d = res, .r = res, .l = l, .o = opNumbers.set}));
+         scope_add_inst(ss, s, (ir)tu_of(ir_block, sc));
+         lower(ss, sc, pb.stmts[0]);
+         scope_yield(ss, sc, res);
          res;
        })),
       (astBBlock, bb, ({
+         let res = scope_add_value(ss, s, TV(T(tu_of(c_any, {}))));
          let sc = scope_inferior(ss, s);
-         u32 l = 0;
+         scope_add_inst(ss, s, (ir)tu_of(ir_block, sc));
          foreach (let s, vlap(sentList_vla(bb.stmts)))
-           l = lower(ss, sc, s);
-         let res = scope_add_value(ss, s, *scope_find(ss, sc, l));
-         scope_add_inst(ss, sc, (ir)tu_of(ir_set, {.d = res, .l = l}));
+           lower(ss, sc, s);
+         scope_yield(ss, sc, res);
          res;
        })),
       (astABlock, _, (error_print(a, "lone []"), (u32)0)),
