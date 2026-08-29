@@ -1,6 +1,8 @@
 #pragma once
 #include "common.h"
 #include "scope.h"
+#include "wheels/macros.h"
+#include "wheels/sList.h"
 
 static u32 lower_builtin_fn(superscope *ss, scope *s, ast *args) { TODO(); }
 static u32 lower_builtin_closure(superscope *ss, scope *s, ast *args) { TODO(); }
@@ -193,11 +195,31 @@ static u32 lower_builtin_ptrof(superscope *ss, scope *s, ast *args) {
   return scope_add_value(ss, s, Type_asValue(ss, Type_ptr(inner)));
 }
 
-static u32 lower_builtin_struct(superscope *ss, scope *s, ast *args) { TODO(); }
+fptr unique_type_name(superscope *ss) {
+  static usize count = 0;
+  count++;
+  return fp(snprint(ss->alloc, "struct{}", count));
+}
+static u32 lower_builtin_struct(superscope *ss, scope *s, ast *args) {
+  let _struct = mList_init(ss->alloc, r_struct_item);
+  // clang-format off
+  let _this = ss_getTypeTree(ss,(TypeTree)tu_of(r_tag,{
+    avalue(ss->alloc, (TypeTree)tu_of(r_struct, _struct)),
+    unique_type_name(ss),
+  }));
+  // clang-format on
+  msList_push(ss->alloc, ss->thisstack, {});
+  defer msList_pop(ss->thisstack);
+  let working_scope = scope_inferior(ss, ss->outermost); // ?
+  //
+  TODO();
+  //
+  return scope_add_value(ss, s, TV_type(ss_getType(ss, T(*_this))));
+}
 static u32 lower_builtin_this(superscope *ss, scope *s, ast *args) {
   if (builtin_arg_list(&args).len) error_print(args, "@this takes no arguments");
   if (!msList_len(ss->thisstack)) error_print(args, "@this() used outside of a struct definition");
-  return scope_add_value(ss, s, (typed_value){T(tu_of(c_type, {})), msList_last(ss->thisstack)});
+  return scope_add_value(ss, s, (typed_value){T(tu_of(c_type, {})), msList_last(ss->thisstack).t});
 }
 static u32 lower_builtin_break(superscope *ss, scope *s, ast *args) {
   if (builtin_arg_list(&args).len) error_print(args, "break takes no args");

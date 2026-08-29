@@ -118,7 +118,6 @@ static inline enum_op op_as_enum(u32 opn) {
                                     : (assertMessage(false, "Unknown operator %x", opn), 0);
 }
 
-static inline bool Type_is_comptime(Type t) { return t.iscomptime || tu_is(c_int, t.t) || tu_is(c_type, t.t) || tu_is(c_ast, t.t); }
 
 static inline bool Type_isint(Type t) {
   return !t.ptr_level &&

@@ -113,7 +113,7 @@ module.exports = grammar({
     __ablock_immediate: $ => seq( token.immediate('['), optional($._comma_list),']'),
     __pblock_immediate: $ => seq( token.immediate('('), optional($._comma_list),')'),
 
-    id: $ => /@?[a-zA-Z_][a-zA-Z0-9_]*/,
+    id: $ => /@?[a-zA-Z_\$\?\!\#][a-zA-Z0-9_\$\?\!\#]*/,
     string: $ => /"([^"\\]|\\.)*"/,
     number: $ => choice(
       /-[0-9]+/,

@@ -25,7 +25,11 @@ struct superscope {
   moxmap(void *, usize) pointers;
   moxmap(TypeTree, TypeTree *) typetrees;
   moxmap(Type, Type *) types;
-  msList(Type *) thisstack;
+  msList(struct {
+    Type *t;
+    scope *s;
+  }) thisstack;
+  moxmap(fptr, scope *) type_info;
   r_func fnctx;
   scope *outermost;
 };
@@ -155,7 +159,8 @@ static inline superscope *ss_init(allocfn allocator) {
     .pointers = moxmap_init(allocator, void*, usize),
     .typetrees = moxmap_init(allocator, TypeTree, TypeTree *,TypeTree_cmp_hash),
     .types = moxmap_init(allocator, Type, Type *,Type_cmp_hash),
-    .thisstack = msList_init(allocator , Type*),
+    .type_info = moxmap_init(allocator, fptr, moxmap_vt(res->type_info),Type_cmp_hash),
+    .thisstack = msList_init(allocator , ptrstype(res->thisstack)),
   }));
   // clang-format on
   res->alloc = cba_init(allocator, nullptr, irb_cbb, res->pointers);

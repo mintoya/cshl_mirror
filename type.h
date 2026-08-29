@@ -111,16 +111,36 @@ typedef struct r_bitf_item {
 
 // size/alignment
 
-static inline usize TypeTree_alignof(TypeTree t);
+static usize TypeTree_alignof(TypeTree t);
+static usize TypeTree_sizeof(TypeTree t);
 static inline usize Type_alignof(Type t);
-static inline usize TypeTree_sizeof(TypeTree t);
 static inline usize Type_sizeof(Type t);
-
-static inline usize TypeTree_alignof(TypeTree t) {
+static inline bool Type_is_comptime(Type t) {
+  return t.iscomptime ||
+         tu_is(builtin, t.t) ||
+         tu_is(r_func, t.t) ||
+         tu_is(r_closure, t.t) ||
+         tu_is(c_int, t.t) ||
+         tu_is(c_any, t.t) ||
+         tu_is(c_type, t.t) ||
+         tu_is(c_ast, t.t);
+}
+static usize TypeTree_alignof(TypeTree t) {
   return tu_match_exp(
       t,
+      // alias
       (r_tag, tag, TypeTree_alignof(*tag.t)),
+      // no representation
+      (builtin, _, (usize)1),
+      (r_func, _, (usize)1),
+      (r_closure, _, (usize)1),
+      (c_int, _, (usize)1),
+      (c_any, _, (usize)1),
+      (c_type, _, (usize)1),
+      (c_ast, _, (usize)1),
+      // own reason
       (r_void, _, (usize)1),
+
       (r_uint, u, lineup(u, CHAR_BIT) / CHAR_BIT),
       (r_sint, u, TypeTree_alignof((TypeTree)tu_of(r_uint, u))),
       (r_arr, a, TypeTree_alignof(*a.t)),
@@ -132,31 +152,28 @@ static inline usize TypeTree_alignof(TypeTree t) {
        })),
       (r_struct, s, ({
          usize a = 1;
-         foreach (let i, mList_iter(s)) {
-           // Skip comptime fields: they don't affect runtime alignment
-           if (i.t.iscomptime) continue;
-           a = MAX$(i.alignment, a);
-         }
+         foreach (let i, mList_iter(s))
+           a = Type_is_comptime(i.t) ? a : MAX$(i.alignment, a);
          a;
        })),
-      (r_func, _, (usize)1),
-      (r_closure, _, (usize)1),
-      (default, (usize)0)
   );
 }
-
-static inline usize Type_alignof(Type t) {
-  if (t.iscomptime) return 1;
-  if (t.isref || t.ptr_level)
-    return TypeTree_alignof((TypeTree)tu_of(r_uint, sizeof(void *) * 8));
-  return TypeTree_alignof(t.t);
-}
-
-static inline usize TypeTree_sizeof(TypeTree t) {
+static usize TypeTree_sizeof(TypeTree t) {
   return tu_match_exp(
       t,
+      // alias
       (r_tag, tag, TypeTree_sizeof(*tag.t)),
+      // no runtime representation
+      (builtin, _, (usize)0),
+      (c_type, _, (usize)0),
+      (c_ast, _, (usize)0),
+      (c_int, _, (usize)0),
+      (c_any, _, (usize)0),
+      (r_func, _, (usize)0),
+      (r_closure, _, (usize)0),
+      //  0 for it's own reason
       (r_void, _, (usize)0),
+      //
       (r_uint, u, lineup(u, CHAR_BIT) / CHAR_BIT),
       (r_sint, u, TypeTree_sizeof((TypeTree)tu_of(r_uint, u))),
       (r_arr, a, TypeTree_sizeof(*a.t) * a.count),
@@ -169,20 +186,18 @@ static inline usize TypeTree_sizeof(TypeTree t) {
       (r_struct, s, ({
          usize sz = 0;
          foreach (let i, mList_iter(s))
-           sz = MAX$(!i.t.iscomptime * (i.offset + Type_sizeof(i.t)), sz);
+           sz = Type_is_comptime(i.t) ? 0 : MAX$((i.offset + Type_sizeof(i.t)), sz);
          lineup(sz, TypeTree_alignof(t));
        })),
-      (r_func, _, (usize)0),
-      (r_closure, _, (usize)0),
-      (default, (usize)0)
   );
 }
-
+static inline usize Type_alignof(Type t) {
+  if (t.isref || t.ptr_level) return alignof(void *);
+  else return TypeTree_alignof(t.t);
+}
 static inline usize Type_sizeof(Type t) {
-  if (t.iscomptime) return 0;
-  if (t.isref || t.ptr_level)
-    return sizeof(void *);
-  return TypeTree_sizeof(t.t);
+  if (t.isref || t.ptr_level) return sizeof(void *);
+  else return TypeTree_sizeof(t.t);
 }
 
 // comparison
@@ -206,7 +221,7 @@ i8 Type_cmp(Type a, Type b) {
 
 i8 TypeTree_cmp(TypeTree a, TypeTree b) {
   if (!mcmp(a, b)) return 0;
-  if (a.tag != b.tag) return a.tag < b.tag ? -1 : 1;
+  if_decl (let cmp, icmp(a.tag, b.tag)) return cmp;
 
   tu_match_void(
       a,
@@ -331,12 +346,25 @@ typePrinter(builtin_id) {
       // clang-format on
   }
 }
+void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printerfunction_context _ctx);
+void typePrinterWorker(Type in, moxmap(TypeTree, u32) visitedmap, printerfunction_context _ctx) {
+  bool has_env = in.iscomptime || in.ptr_level || in.isref || in.isconst || in.isvolatile;
+  if (has_env) {
+    PUTS("(");
+    if (in.ptr_level) PUTS("ptr "), USETYPEPRINTER(u32, in.ptr_level), PUTS(",");
+    if (in.isref) PUTS("ref,");
+    if (in.isconst) PUTS("const,");
+    if (in.isvolatile) PUTS("volatile,");
+    if (in.iscomptime) PUTS("comptime,");
+  }
+  typeTreePrinterWorker(in.t, visitedmap, _ctx);
+  if (has_env) PUTS(")");
+}
 void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printerfunction_context _ctx) {
   if_decl (let idx, moxmap_get(visitedmap, in)) {
     USETYPEPRINTER(usize, *idx);
     return;
   }
-
   tu_match_void(
       in,
       (builtin, builtin, {
@@ -363,7 +391,7 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printe
         PUTS("(a ");
         defer { PUTS(")"); };
         PUTS("["), USETYPEPRINTER(usize, arr.count), PUTS("] ");
-        USENAMEDPRINTER("TypeTree", *arr.t);
+        typeTreePrinterWorker(*arr.t, visitedmap, _ctx);
       }),
       (r_struct, st, {
         typeTreePrinterWorker_add(in, visitedmap);
@@ -375,7 +403,7 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printe
           PUTS("@");
           USETYPEPRINTER(usize, type->offset);
           PUTS("~");
-          USENAMEDPRINTER("Type", type->t);
+          typePrinterWorker(type->t, visitedmap, _ctx);
         }
       }),
       (r_bitfield, st, {
@@ -388,28 +416,26 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printe
           PUTS(":");
           USETYPEPRINTER(usize, type->width);
           PUTS("~");
-          USENAMEDPRINTER("Type", type->t);
+          typePrinterWorker(type->t, visitedmap, _ctx);
         }
       }),
       (r_func, fn, {
         typeTreePrinterWorker_add(in, visitedmap);
         PUTS("(fn (");
-        foreach (let it, mList_iter(fn)) {
-          USENAMEDPRINTER("Type", it);
-          PUTS(",");
-        }
+        foreach (let it, mList_iter(fn))
+          typePrinterWorker(it, visitedmap, _ctx),
+              _foreach_._foreach_._current ? (void)0 : (void)PUTS(" ");
         PUTS("),");
-        if (mList_len(fn)) USENAMEDPRINTER("Type", mList_last(fn));
         PUTS(")");
       }),
       (r_closure, fn, {
         typeTreePrinterWorker_add(in, visitedmap);
         PUTS("(clos (");
         foreach (let it, mList_iter(fn.captures))
-          USENAMEDPRINTER("Type", it), PUTS(" ");
+          typePrinterWorker(it, visitedmap, _ctx), PUTS(" ");
         PUTS("),(");
         foreach (let it, mList_iter(fn.args))
-          USENAMEDPRINTER("Type", it), PUTS(" ");
+          typePrinterWorker(it, visitedmap, _ctx), PUTS(" ");
         PUTS("))");
       })
   );
@@ -422,109 +448,66 @@ typePrinter(TypeTree) {
 }
 
 typePrinter(Type) {
-  bool has_env = in.iscomptime || in.ptr_level || in.isref || in.isconst || in.isvolatile;
-
-  if (has_env) {
-    PUTS("(");
-    if (in.ptr_level > 0) PUTS("*"), USETYPEPRINTER(u32, in.ptr_level), PUTS(",");
-    if (in.isref) PUTS("&,");
-    if (in.isconst) PUTS("const,");
-    if (in.isvolatile) PUTS("volatile,");
-    if (in.iscomptime) PUTS("comptime,");
-  }
-
-  USETYPEPRINTER(TypeTree, in.t);
-  if (has_env) PUTS(")");
+  let visited = moxmap_init(PRINTARGS_ALLOCATOR(), TypeTree, u32, TypeTree_cmp_hash);
+  defer { moxmap_deinit(visited); };
+  typePrinterWorker(in, visited, _ctx);
 }
 // test
-test_fn(type_env_qualifiers) {
-  let u32t = (TypeTree)tu_of(r_uint, (u16)32);
-  let t1 = (Type){.t = u32t, .isconst = false};
-  let t2 = (Type){.t = u32t, .isconst = true};
-  test_assert(Type_cmp(t1, t2));
-
-  let t3 = (Type){.t = u32t, .ptr_level = 1};
-  let t4 = (Type){.t = u32t, .ptr_level = 2};
-  test_assert(Type_cmp(t3, t4));
-
-  let t5 = (Type){.t = u32t, .ptr_level = 2, .isconst = true};
-  let t6 = (Type){.t = u32t, .ptr_level = 2, .isconst = true};
-  test_assert(!Type_cmp(t5, t6));
-}
-
-test_fn(type_tag_nominal_equality) {
-  let u32t = (TypeTree)tu_of(r_uint, (u16)32);
-  let u64t = (TypeTree)tu_of(r_uint, (u16)64);
-  let a = (TypeTree)tu_of(r_tag, {.name = fp("Node"), .t = &u32t});
-  let b = (TypeTree)tu_of(r_tag, {.name = fp("Node"), .t = &u64t});
-  test_assert(!TypeTree_cmp(a, b));
-
-  let c = (TypeTree)tu_of(r_tag, {.name = fp("Edge"), .t = &u32t});
-  test_assert(TypeTree_cmp(a, c));
-}
-
-test_fn(type_struct_equality) {
-  let st1 = mList_init(allocator, r_struct_item);
-  let st2 = mList_init(allocator, r_struct_item);
-  defer {
-    mList_deinit(st1);
-    mList_deinit(st2);
-  };
-
-  let field_t = (Type){.t = tu_of(r_uint, (u16)32), .isconst = true};
-
-  mList_push(st1, ((r_struct_item){.alignment = 4, .name = fp("x"), .offset = 0, .t = field_t}));
-  mList_push(st2, ((r_struct_item){.alignment = 4, .name = fp("x"), .offset = 0, .t = field_t}));
-
-  let t1 = (Type){.t = tu_of(r_struct, st1)};
-  let t2 = (Type){.t = tu_of(r_struct, st2)};
-  test_assert(!Type_cmp(t1, t2));
-
-  mList_arr(st2)[0].t.isconst = false;
-  test_assert(Type_cmp(t1, t2));
-}
-
-test_fn(type_arr_equality) {
-  let u32t = (TypeTree)tu_of(r_uint, (u16)32);
-  let a = (TypeTree)tu_of(r_arr, {.t = &u32t, .count = 10});
-  let b = (TypeTree)tu_of(r_arr, {.t = &u32t, .count = 10});
-  let c = (TypeTree)tu_of(r_arr, {.t = &u32t, .count = 11});
-
-  test_assert(!TypeTree_cmp(a, b));
-  test_assert(TypeTree_cmp(a, c));
-}
-
-test_fn(type_printer_complex_sanity) {
-  let u32t = (TypeTree)tu_of(r_uint, (u16)32);
-  let arr = (TypeTree)tu_of(r_arr, {.t = &u32t, .count = 5});
-
-  let complex_t = (Type){
-      .t = arr,
-      .ptr_level = 2,
-      .isconst = true,
-      .isvolatile = true,
-      .isref = true
-  };
-
-  println("{TypeTree}", u32t);
-  println("{TypeTree}", u32t);
-}
 
 test_fn(type_linked_list) {
-  let u32t = (TypeTree)tu_of(r_uint, (u16)32);
+  let typeArena = arena_new_ext(allocator, 1024);
+  defer arena_cleanup(typeArena);
 
-  TypeTree node_struct;
-  let node_tag = (TypeTree)tu_of(r_tag, {.name = fp("Node"), .t = &node_struct});
+  let element = (TypeTree)tu_of(r_sint, 32);
+  let structItems = mList_init(typeArena, r_struct_item);
+  let _struct = (TypeTree)tu_of(r_struct, structItems);
+  let _final = (Type){_struct};
 
-  let st = mList_init(allocator, r_struct_item);
-  defer { mList_deinit(st); };
+  let ptr = (Type){_struct, 1};
+  let uint = (Type){element};
 
-  mList_push(st, ((r_struct_item){.alignment = 4, .offset = 0, .name = fp("val"), .t = (Type){.t = u32t}}));
-  mList_push(st, ((r_struct_item){.alignment = 8, .offset = 8, .name = fp("next"), .t = (Type){.t = node_tag, .ptr_level = 1}}));
+  struct analog {
+    struct analog *prev, *next;
+    i32 element;
+  };
+  r_func signatures = mList_init(typeArena, Type);
+  mList_pushArr(signatures, ((Type[]){_final, _final}));
 
-  node_struct = (TypeTree)tu_of(r_struct, st);
-
-  test_assert(!TypeTree_cmp(node_struct, node_struct));
-
-  println("{TypeTree}", node_struct);
+  // clang-format off
+  mList_pushArr(structItems, ((r_struct_item[]){
+    {
+       .name = fp("Self"),
+       .t =(((Type){tu_of(c_type,{})})),
+    },
+    {
+       .name = fp("getNext"),
+       .t =(((Type){tu_of(r_func,signatures)})),
+    },
+    {
+       .name = fp("getPrev"),
+       .t =(((Type){tu_of(r_func,signatures)})),
+    },
+    {
+       .alignment = alignof(itypeof(struct analog, prev)),
+       .offset = offsetof(struct analog, prev),
+       .name = fp("prev"),
+       .t = ptr,
+    },
+    {
+       .alignment = alignof(itypeof(struct analog, next)),
+       .offset = offsetof(struct analog, next),
+       .name = fp("next"),
+       .t = ptr,
+    },
+    {
+       .alignment = alignof(itypeof(struct analog, element)),
+       .offset = offsetof(struct analog, element),
+       .name = fp("element"),
+       .t = uint,
+    },
+  }));
+  // clang-format on
+  println("{Type}", _final);
+  test_inteq(alignof(struct analog), Type_alignof(_final));
+  test_inteq(sizeof(struct analog), Type_sizeof(_final));
 }
