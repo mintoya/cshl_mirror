@@ -12,7 +12,7 @@
 u32 lower /*                      */ (superscope *ss, scope *s, ast *a);
 // interprets a scope and yields the result
 typed_value interpret /*          */ (superscope *ss, scope *s);
-// interprets an ast in a temporary scope, under s and returns the result
+// casts the value at c.l to the integer type of reg(c.d), storing the result at c.d
 typed_value temporary_interpret /**/ (superscope *ss, scope *s, ast *a) {
   let work = scope_inferior(ss, s);
   defer { scope_destroy(ss, work); };
@@ -329,6 +329,11 @@ typePrinter(scope) {
         (ir_putptr, iv, {
           PUTS("(putptr ");
           USETYPEPRINTER(u32, iv.l), PUTS(" -> "), USETYPEPRINTER(u32, iv.d);
+          PUTS(")");
+        }),
+        (ir_cast, cv, {
+          PUTS("(cast ");
+          USETYPEPRINTER(u32, cv.l), PUTS(" -> "), USETYPEPRINTER(u32, cv.d);
           PUTS(")");
         }),
         (ir_if, ifv, {

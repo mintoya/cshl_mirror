@@ -9,8 +9,9 @@ static u32 coerce_type(superscope *ss, scope *s, u32 left, Type to) {
   println("coersing {Type} to {Type}", ot, to);
   if (!Type_cmp(ot, to)) return left;
   if (!Type_cmp(to, T(tu_of(c_any, {})))) return left;
-  TODO("handle type coersion");
-  TODO("handle operator overloading");
+  let dest = scope_add_value(ss, s, TV(to));
+  scope_add_inst(ss, s, (ir)tu_of(ir_cast, {.l = left, .d = dest}));
+  return dest;
 }
 u32 lower_op_wrap(superscope *ss, scope *s, ast *left, ast *right, u32 number) {
   if (number == opNumbers.call && tu_or(astOp, *left, {}).number_rep == opNumbers.colon) {
@@ -60,8 +61,10 @@ u32 lower(superscope *ss, scope *s, ast *a) {
            value = scope_add_value(ss, s, TV(type));
          }
          value = coerce_type(ss, s, value, type);
+
          if (dcl.is_const)
            scope_find(ss, s, value)->t.isconst = true;
+         if (dcl.name) scope_bind(ss, s, value, id_from_ast(ss, s, dcl.name));
          value;
        })),
   );

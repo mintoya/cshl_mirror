@@ -1,4 +1,5 @@
 #pragma once
+#include <assert.h>
 #include <wheels/fptr.h>
 #include <wheels/macros.h>
 #include <wheels/mytypes.h>
@@ -15,6 +16,7 @@ tu_def(
     (ir_getref, /* */ struct { u32 l, d; }),                 // d = &l; // but a referance
     (ir_getptr, /* */ struct { u32 l, d; }),                 // d = &l;
     (ir_putptr, /* */ struct { u32 l, d; }),                 // d = *l;
+    (ir_cast, /*   */ struct { u32 l, d; }),                 // d = (typeof(d))l; // integer cast
     (ir_rawop, /*  */ struct { u32 l, r, d, o; }),           // d = l (o) r;
 
     (ir_call, /*   */ struct { u32 l, d; slice(u32) args; }),// d = l(...args)
@@ -31,6 +33,7 @@ tu_def(
     (ir_cont, /*   */ struct {}),
     // functoin
 );
+static_assert(sizeof(ir));
 // clang-format on
 /*
    representations
@@ -42,6 +45,8 @@ tu_def(
       reg(d) = &reg(l);
     ir_putptr
       reg(d) = *reg(l);
+    ir_cast
+      reg(d) = (typeof(reg(l)))reg(l);
     ir_rawop // o is subset of operations supported by c. all binary
       reg(d) = reg(r) (o) reg(l);
     ir_call
