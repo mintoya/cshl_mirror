@@ -56,7 +56,29 @@ typedef enum {
   math_neq,
   math_eq,
 } math_operation;
-u32 lower_math(superscope *ss, scope *s, u32 left, u32 right, math_operation) { TODO(); }
+u32 lower_math(superscope *ss, scope *s, u32 left, u32 right, math_operation op) {
+  let lt = scope_find(ss, s, left)->t;
+  Type rt;
+  switch (op) {
+    case math_mor:
+    case math_les:
+    case math_moq:
+    case math_leq:
+    case math_neq:
+    case math_eq:
+    case math_and:
+    case math_or:
+      rt = T(tu_of(r_uint, (u16)1));
+      break;
+    default:
+      rt = lt;
+      break;
+  }
+  let d = scope_add_value(ss, s, TV(rt));
+  scope_add_inst(ss, s, (ir)tu_of(ir_rawop, {.r = left, .l = right, .d = d, .o = (u32)op}));
+  return d;
+}
+
 u32 lower_op(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
   // these are not overloadable
   // dot probably coming soon
