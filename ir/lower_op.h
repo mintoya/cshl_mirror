@@ -9,9 +9,11 @@ u32 lower_call_extra(superscope *ss, scope *s, u32 left, u32 first, ast *args) {
   TODO();
 }
 u32 lower_call(superscope *ss, scope *s, u32 left, ast *args) {
-  iflet_tu (let builtin, builtin, scope_find(ss, s, left)->t.t)
+  let l = scope_find(ss, s, left);
+  iflet_tu (let builtin, builtin, l->t.t)
     return lower_builtin(ss, s, builtin, args);
-  TODO();
+
+  error_print(args, "unsupported call on {*:typed_value}", l);
 }
 u32 lower_overload_possible(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
   let t = scope_find(ss, s, left)->t;

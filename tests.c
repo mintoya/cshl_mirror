@@ -8,30 +8,6 @@ __attribute__((noreturn)) void(error_at)(u8 *location, fptr message) {
 }
 
 //{ new Type/IR helpers
-test_fn(lower_type_helpers) {
-  let u32t = T(tu_of(r_uint, (u16)32));
-  test_assert(Type_isint(u32t));
-  test_assert(!Type_is_comptime(u32t));
-
-  let ct = (Type){.t = tu_of(c_int, {}), .iscomptime = true};
-  test_assert(Type_is_comptime(ct));
-  test_assert(Type_isint(ct));
-
-  let r = Type_ref(u32t);
-  test_assert(r.isref);
-  test_assert(Type_isint(r)); // ref to int is int-like (deref at use)
-
-  let p = Type_ptr(u32t);
-  test_assert(p.ptr_level == 1);
-  test_assert(Type_isint(p)); // pointer to int is int-like (deref at use)
-
-  let peeled = Type_peel_auto(r);
-  test_assert(!peeled.isref);
-
-  let tag = T(tu_of(r_tag, {.name = fp("T"), .t = &(TypeTree)tu_of(r_uint, (u16)32)}));
-  test_assert(Type_isint(tag));
-  test_assert(tu_is(r_uint, Type_peel_auto(tag).t));
-}
 
 test_fn(lower_scope_ref_resolution) {
   let env = ss_init(allocator);

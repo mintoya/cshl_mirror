@@ -5,12 +5,14 @@
 
 #include "ast.h"
 #include "indentprinter.h"
-#include "ir/lower.h"
 #include "wheels/fptr.h"
 #include "wheels/print/print_pre.h"
 #include <wheels/allocators/arenaAllocator.h>
 #include <wheels/allocators/debugallocator.h>
 #include <wheels/mytypes.h>
+//
+#include "ir/interpret.h"
+#include "ir/lower.h"
 
 // { util
 [[gnu::constructor]] void initOpNumbers() {
@@ -115,7 +117,6 @@ cmd_main(
     let env = ss_init(allocator);
     lower(env, env->outermost, ast);
     print_wfO(sexplike, nullptr, "{scope}\n", *env->outermost);
-    // TODO: emit + run (rewrite_backend); comptime still stubbed in ir/int.h
   }
 
   return 0;

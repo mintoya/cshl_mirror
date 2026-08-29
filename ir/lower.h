@@ -8,6 +8,7 @@ static u32 coerce_type(superscope *ss, scope *s, u32 left, Type to) {
   let ot = scope_find(ss, s, left)->t;
   println("coersing {Type} to {Type}", ot, to);
   if (!Type_cmp(ot, to)) return left;
+  if (!Type_cmp(to, T(tu_of(c_any, {})))) return left;
   TODO("handle type coersion");
   TODO("handle operator overloading");
 }

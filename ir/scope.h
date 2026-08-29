@@ -51,7 +51,7 @@ static inline scope *scope_inferior(superscope *b, scope *s) {
           .start = s ? s->start + msList_len(s->values) : 0,
       })
   );
-  scope_add_value(b, s, TV(T(tu_of(r_void, {}))));
+  scope_add_value(b, res, TV(T(tu_of(r_void, {}))));
   return res;
 }
 static inline void scope_destroy(superscope *b, scope *s) {
@@ -91,14 +91,15 @@ static inline Type Type_ref(Type t) {
 
 // superscope helpers
 static inline u32 ss_get_named(superscope *env, scope *s, fptr n) {
+  let o = s;
   let limit = s->start + msList_len(s->values);
   while (s) {
     if_decl (let val, moxmap_get(s->named, n))
       if (*val <= limit) {
         let vo = scope_find(env, s, *val);
         if (vo->t.isref) return *val;
-        let res = scope_add_value(env, s, TV(Type_ref(vo->t)));
-        scope_add_inst(env, s, (ir)tu_of(ir_getref, {.d = res, .l = *val}));
+        let res = scope_add_value(env, o, TV(Type_ref(vo->t)));
+        scope_add_inst(env, o, (ir)tu_of(ir_getref, {.d = res, .l = *val}));
         return res;
       }
     limit = s->start;
