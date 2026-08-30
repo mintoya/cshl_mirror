@@ -14,3 +14,9 @@ ox ~~ @offsetof point,x;
 oy ~~ @offsetof point,y;
 a ~point;
 b ~point;
+
+ll ~type~ @struct{
+  Self~type~@this();
+  next~@ptr Self;
+  data~@sint 8;
+};

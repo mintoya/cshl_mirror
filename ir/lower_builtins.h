@@ -250,7 +250,7 @@ static u32 lower_builtin_offsetof(superscope *ss, scope *s, ast *args) {
 static fptr unique_type_name(superscope *ss) {
   static usize struct_count = 0;
   let str = snprint(ss->alloc, "$struct{usize}", struct_count++);
-  str.len--; // snprint's length includes the trailing NUL; every other caller only reads .ptr
+  str.len--;
   return fp(str);
 }
 
@@ -272,20 +272,13 @@ static u32 lower_builtin_struct(superscope *ss, scope *s, ast *args) {
   let block = tu_catch(astBBlock, *list.ptr[0], error_print(args, "@struct expects a block"));
   let stmts = slice_stat(slice(astptr), *sentList_vla(block.stmts));
 
-  typedef struct struct_item {
-    fptr name;
-    Type t;
-    astptr value;
-  } struct_item;
-  let struct_items = mList_init(ss->alloc, struct_item);
-  defer mList_deinit(struct_items);
-
-  // TODO: something is wrong with binds
+  let offset = (usize){};
   foreach (let node, span(stmts.ptr, stmts.len)) {
     let stmt = *node;
     let dcl = tu_catch(astDecl, *stmt, error_print(stmt, "struct member must be a decl"));
     if (!dcl.name) error_print(stmt, "struct member needs a name");
     let name = id_from_ast(ss, working_scope, dcl.name);
+
     typed_value bound = {};
     if (dcl.type) {
       bound.t = value_asType_loc(temporary_interpret(ss, working_scope, dcl.type), ast_loc(*dcl.type));
@@ -301,27 +294,15 @@ static u32 lower_builtin_struct(superscope *ss, scope *s, ast *args) {
         error_print(stmt, "non-comptime struct member {slice(c8)} needs a type", name);
     }
 
-    if (dcl.is_const) scope_bind(ss, working_scope, scope_add_value(ss, working_scope, bound), name);
-    mList_push(struct_items, {name, bound.t, dcl.value});
-  }
+    if (dcl.is_const)
+      scope_bind(ss, working_scope, scope_add_value(ss, working_scope, bound), name);
 
-  let offset = (usize)0;
-  foreach (let item, mList_iter(struct_items)) {
-    r_struct_item ri = {.name = item.name, .t = *ss_getType(ss, item.t)};
+    r_struct_item ri = {.name = name, .t = *ss_getType(ss, bound.t)};
     if (!Type_is_comptime(ri.t)) {
       ri.offset = lineup(offset, ri.alignment = Type_alignof(ri.t));
       offset += Type_sizeof(ri.t);
     }
     mList_push(_struct, ri);
-  }
-
-  foreach (let item, mList_iter(struct_items)) {
-    let name = item.name;
-    let idx = ss_get_named_failable_noref(ss, working_scope, name);
-    if (!idx) continue;
-    println("[LOG] rebind {slice(c8)}", name);
-    let v = scope_find(ss, working_scope, idx);
-    *v = temporary_interpret(ss, working_scope, item.value);
   }
 
   void sexplike(const char *data, void *userdata, usize len, bool flush);
