@@ -8,6 +8,7 @@ point ~type~ @struct{
   Self ~type~ @this();
   x ~ i 32;
   y ~ i 32;
+  size ~~ @sizeof(Self);
   @id("+") ~~ @fn (self~Self,other~Self),Self,{
     r ~Self;
     r.x = self.x+other.x;

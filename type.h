@@ -10,7 +10,7 @@
 #include <wheels/oxmap.h>
 #include <wheels/print/print_pre.h>
 #include <wheels/sList.h>
-
+i8 fptr_cmp_hash(const void *a, const void *b) { return fptr_cmp(*(fptr *)a, *(fptr *)b); }
 typedef enum : u8 {
   builtin_fn,       // @fn((decl|type...) ,decl|type,body) c_func of this type,
   builtin_closure,  // @closure((captures...),(decl|type...) ,decl|type,body) c_func of this type,
@@ -36,6 +36,10 @@ typedef enum : u8 {
   builtin_typeof,   // @typeof(V) type of argument
   builtin_arrof,    // @arrof(N,t) array of N t's
   builtin_ptrof,    // @ptrof(t) pionter to t
+                    //
+  builtin_sizeof,   // @sizeof(T) comptime size of T in bytes
+  builtin_alignof,  // @alignof(T) comptime alignment of T
+  builtin_offsetof, // @offsetof(T,member) comptime offset of member in T
                     //
   builtin_struct,   // @struct{} struct of declarations
   builtin__this,    // @this() inside of struct, this is the result type
@@ -186,7 +190,7 @@ static usize TypeTree_sizeof(TypeTree t) {
       (r_struct, s, ({
          usize sz = 0;
          foreach (let i, mList_iter(s))
-           sz = Type_is_comptime(i.t) ? 0 : MAX$((i.offset + Type_sizeof(i.t)), sz);
+           sz = Type_is_comptime(i.t) ? sz : MAX$((i.offset + Type_sizeof(i.t)), sz);
          lineup(sz, TypeTree_alignof(t));
        })),
   );
@@ -322,6 +326,9 @@ typePrinter(builtin_id) {
     case(builtin_ast):PUTS("ast");break;
     case(builtin_arrof):PUTS("arrof");break;
     case(builtin_ptrof):PUTS("ptrof");break;
+    case(builtin_sizeof):PUTS("sizeof");break;
+    case(builtin_alignof):PUTS("alignof");break;
+    case(builtin_offsetof):PUTS("offsetof");break;
     case(builtin_at):PUTS("at");break;
     case(builtin_where):PUTS("where");break;
     case(builtin_any):PUTS("any");break;
@@ -400,9 +407,9 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printe
         foreach (let type, span(mList_arr(st), mList_len(st))) {
           if (type != mList_arr(st)) PUTS(",");
           USETYPEPRINTER(id_str, type->name);
-          PUTS("@");
-          USETYPEPRINTER(usize, type->offset);
-          PUTS("~");
+          Type_is_comptime(type->t)
+              ? PUTS("~")
+              : (PUTS("@"), USETYPEPRINTER(usize, type->offset), PUTS("="));
           typePrinterWorker(type->t, visitedmap, _ctx);
         }
       }),

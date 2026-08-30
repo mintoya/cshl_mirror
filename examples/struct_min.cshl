@@ -1,0 +1,16 @@
+i ~~@sint;
+type ~~@type();
+
+point ~type~ @struct{
+  Self ~type~ @this();
+  x ~ i 32;
+  y ~ i 32;
+  size ~~ @sizeof(Self);
+  align ~~ @alignof(Self);
+};
+ps ~~ @sizeof point;
+pa ~~ @alignof point;
+ox ~~ @offsetof point,x;
+oy ~~ @offsetof point,y;
+a ~point;
+b ~point;

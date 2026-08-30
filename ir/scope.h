@@ -25,10 +25,7 @@ struct superscope {
   moxmap(void *, usize) pointers;
   moxmap(TypeTree, TypeTree *) typetrees;
   moxmap(Type, Type *) types;
-  msList(struct {
-    Type *t;
-    scope *s;
-  }) thisstack;
+  msList(Type *) thisstack;
   moxmap(fptr, scope *) type_info;
   r_func fnctx;
   scope *outermost;
@@ -94,22 +91,26 @@ static inline Type Type_ref(Type t) {
 }
 
 // superscope helpers
-static inline u32 ss_get_named(superscope *env, scope *s, fptr n) {
+static inline u32 ss_get_named_failable_noref(superscope *env, scope *s, fptr n) {
   let o = s;
   let limit = s->start + msList_len(s->values);
   while (s) {
     if_decl (let val, moxmap_get(s->named, n))
-      if (*val <= limit) {
-        let vo = scope_find(env, s, *val);
-        if (vo->t.isref) return *val;
-        let res = scope_add_value(env, o, TV(Type_ref(vo->t)));
-        scope_add_inst(env, o, (ir)tu_of(ir_getref, {.d = res, .l = *val}));
-        return res;
-      }
+      if (*val <= limit)
+        return *val;
     limit = s->start;
     s = s->parent;
   }
-  error_print(n.ptr, "unbound identifier {slice(c8)}", n);
+  return 0;
+}
+static inline u32 ss_get_named(superscope *env, scope *s, fptr n) {
+  let val = ss_get_named_failable_noref(env, s, n);
+  if (!val) error_print(n.ptr, "unbound identifier {slice(c8)}", n);
+  let vo = scope_find(env, s, val);
+  if (vo->t.isref) return val;
+  let res = scope_add_value(env, s, TV(Type_ref(vo->t)));
+  scope_add_inst(env, s, (ir)tu_of(ir_getref, {.d = res, .l = val}));
+  return res;
 }
 
 static inline TypeTree *ss_getTypeTree(superscope *ss, TypeTree t) {
@@ -159,8 +160,8 @@ static inline superscope *ss_init(allocfn allocator) {
     .pointers = moxmap_init(allocator, void*, usize),
     .typetrees = moxmap_init(allocator, TypeTree, TypeTree *,TypeTree_cmp_hash),
     .types = moxmap_init(allocator, Type, Type *,Type_cmp_hash),
-    .type_info = moxmap_init(allocator, fptr, moxmap_vt(res->type_info),Type_cmp_hash),
-    .thisstack = msList_init(allocator , ptrstype(res->thisstack)),
+    .type_info = moxmap_init(allocator, fptr, scope *, fptr_cmp_hash),
+    .thisstack = msList_init(allocator , Type*),
   }));
   // clang-format on
   res->alloc = cba_init(allocator, nullptr, irb_cbb, res->pointers);
@@ -186,6 +187,9 @@ static inline superscope *ss_init(allocfn allocator) {
       {"@sint", builtin_sint},
       {"@uint", builtin_uint},
       {"@ptr", builtin_ptrof},
+      {"@sizeof", builtin_sizeof},
+      {"@alignof", builtin_alignof},
+      {"@offsetof", builtin_offsetof},
       {"@ref", builtin_ref},
       {"@refT", builtin_reft},
       {"@volatile", builtin_volatile},
@@ -218,6 +222,7 @@ static inline void ss_deInit(superscope *ss) {
   moxmap_deinit(ss->pointers);
   moxmap_deinit(ss->typetrees);
   moxmap_deinit(ss->types);
+  moxmap_deinit(ss->type_info);
   cba_deinit(ss->alloc);
   adestroy(allocator, ss);
 }

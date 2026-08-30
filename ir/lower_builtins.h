@@ -2,15 +2,35 @@
 #include "common.h"
 #include "scope.h"
 #include "wheels/macros.h"
-#include "wheels/sList.h"
 
 static u32 lower_builtin_fn(superscope *ss, scope *s, ast *args) { TODO(); }
 static u32 lower_builtin_closure(superscope *ss, scope *s, ast *args) { TODO(); }
 static u32 lower_builtin_if(superscope *ss, scope *s, ast *args) { TODO(); }
 static u32 lower_builtin_cif(superscope *ss, scope *s, ast *args) { TODO(); }
 static u32 lower_builtin_while(superscope *ss, scope *s, ast *args) { TODO(); }
-static u32 lower_builtin_at(superscope *ss, scope *s, ast *args) { TODO(); }
-static u32 lower_builtin_where(superscope *ss, scope *s, ast *args) { TODO(); }
+static u32 lower_builtin_at(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(&args);
+  if (list.len != 1) error_print(args, "@at(arg) takes exactly one argument");
+  let l = lower(ss, s, list.ptr[0]);
+  let t = scope_find(ss, s, l)->t;
+  if (!t.isref && !t.ptr_level) error_print(args, "@at expects a reference or pointer, got {Type}", t);
+  Type inner = t;
+  if (inner.isref) inner.isref = false;
+  else inner.ptr_level--;
+  let d = scope_add_value(ss, s, TV(inner));
+  scope_add_inst(ss, s, (ir)tu_of(ir_putptr, {.l = l, .d = d}));
+  return d;
+}
+static u32 lower_builtin_where(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(&args);
+  if (list.len != 1) error_print(args, "@where(arg) takes exactly one argument");
+  let l = lower(ss, s, list.ptr[0]);
+  let t = scope_find(ss, s, l)->t;
+  if (t.isref) return l; // already a referance
+  let d = scope_add_value(ss, s, TV(Type_ref(t)));
+  scope_add_inst(ss, s, (ir)tu_of(ir_getref, {.l = l, .d = d}));
+  return d;
+}
 static u32 lower_builtin_ref(superscope *ss, scope *s, ast *args) { TODO(); }
 
 static u32 lower_builtin_return(superscope *ss, scope *s, ast *args) {
@@ -194,12 +214,46 @@ static u32 lower_builtin_ptrof(superscope *ss, scope *s, ast *args) {
   Type inner = value_asType_loc(temporary_interpret(ss, s, list.ptr[0]), ast_loc(*args));
   return scope_add_value(ss, s, Type_asValue(ss, Type_ptr(inner)));
 }
-
-fptr unique_type_name(superscope *ss) {
-  static usize count = 0;
-  count++;
-  return fp(snprint(ss->alloc, "struct{}", count));
+static u32 lower_builtin_sizeof(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(&args);
+  if (list.len != 1) error_print(args, "@sizeof(T) takes exactly one argument");
+  let t = value_asType_loc(temporary_interpret(ss, s, list.ptr[0]), ast_loc(*args));
+  return scope_add_value(ss, s, TV_bigint(BInt.from.i64(ss->alloc, Type_sizeof(t))));
 }
+static u32 lower_builtin_alignof(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(&args);
+  if (list.len != 1) error_print(args, "@alignof(T) takes exactly one argument");
+  let t = value_asType_loc(temporary_interpret(ss, s, list.ptr[0]), ast_loc(*args));
+  return scope_add_value(ss, s, TV_bigint(BInt.from.i64(ss->alloc, Type_alignof(t))));
+}
+static r_struct find_struct_typetree(TypeTree t) {
+  return tu_match_exp(
+      t,
+      (r_struct, r, r),
+      (r_tag, r, find_struct_typetree(*r.t)),
+      (default, (r_struct) nullptr)
+  );
+}
+static u32 lower_builtin_offsetof(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(&args);
+  if (list.len != 2) error_print(args, "@offsetof(T, member) takes exactly two arguments");
+  let t = value_asType_loc(temporary_interpret(ss, s, list.ptr[0]), ast_loc(*args));
+  let name = id_from_ast(ss, s, list.ptr[1]);
+  let st = find_struct_typetree(t.t);
+  if (!st) error_print(args, "@offsetof expects a struct type, got {Type}", t);
+  foreach (let item, mList_iter(st))
+    if (fptr_eq(item.name, name))
+      return scope_add_value(ss, s, TV_bigint(BInt.from.i64(ss->alloc, item.offset)));
+  error_print(args, "{Type} has no member {slice(c8)}", t, name);
+}
+
+static fptr unique_type_name(superscope *ss) {
+  static usize struct_count = 0;
+  let str = snprint(ss->alloc, "$struct{usize}", struct_count++);
+  str.len--; // snprint's length includes the trailing NUL; every other caller only reads .ptr
+  return fp(str);
+}
+
 static u32 lower_builtin_struct(superscope *ss, scope *s, ast *args) {
   let _struct = mList_init(ss->alloc, r_struct_item);
   // clang-format off
@@ -208,18 +262,77 @@ static u32 lower_builtin_struct(superscope *ss, scope *s, ast *args) {
     unique_type_name(ss),
   }));
   // clang-format on
-  msList_push(ss->alloc, ss->thisstack, {});
+  let working_scope = scope_inferior(ss, s);
+  msList_push(ss->alloc, ss->thisstack, {ss_getType(ss, T(*_this))});
   defer msList_pop(ss->thisstack);
-  let working_scope = scope_inferior(ss, ss->outermost); // ?
-  //
-  TODO();
-  //
+  moxmap_set(ss->type_info, tu_catch(r_tag, *_this).name, working_scope);
+
+  let list = builtin_arg_list(&args);
+  if (list.len != 1) error_print(args, "@struct expects one arg");
+  let block = tu_catch(astBBlock, *list.ptr[0], error_print(args, "@struct expects a block"));
+  let stmts = slice_stat(slice(astptr), *sentList_vla(block.stmts));
+
+  typedef struct struct_item {
+    fptr name;
+    Type t;
+    astptr value;
+  } struct_item;
+  let struct_items = mList_init(ss->alloc, struct_item);
+  defer mList_deinit(struct_items);
+
+  // TODO: something is wrong with binds
+  foreach (let node, span(stmts.ptr, stmts.len)) {
+    let stmt = *node;
+    let dcl = tu_catch(astDecl, *stmt, error_print(stmt, "struct member must be a decl"));
+    if (!dcl.name) error_print(stmt, "struct member needs a name");
+    let name = id_from_ast(ss, working_scope, dcl.name);
+    typed_value bound = {};
+    if (dcl.type) {
+      bound.t = value_asType_loc(temporary_interpret(ss, working_scope, dcl.type), ast_loc(*dcl.type));
+      if (tu_is(c_type, bound.t.t) && dcl.value) {
+        bound = temporary_interpret(ss, working_scope, dcl.value);
+        if (!tu_is(c_type, bound.t.t))
+          error_print(stmt, "member {slice(c8)} has a type but its value is not a type", name);
+      } else bound = TV(*ss_getType(ss, bound.t));
+    } else {
+      if (!dcl.value) error_print(stmt, "struct member {slice(c8)} needs a type or a value", name);
+      bound = temporary_interpret(ss, working_scope, dcl.value);
+      if (!Type_is_comptime(bound.t))
+        error_print(stmt, "non-comptime struct member {slice(c8)} needs a type", name);
+    }
+
+    if (dcl.is_const) scope_bind(ss, working_scope, scope_add_value(ss, working_scope, bound), name);
+    mList_push(struct_items, {name, bound.t, dcl.value});
+  }
+
+  let offset = (usize)0;
+  foreach (let item, mList_iter(struct_items)) {
+    r_struct_item ri = {.name = item.name, .t = *ss_getType(ss, item.t)};
+    if (!Type_is_comptime(ri.t)) {
+      ri.offset = lineup(offset, ri.alignment = Type_alignof(ri.t));
+      offset += Type_sizeof(ri.t);
+    }
+    mList_push(_struct, ri);
+  }
+
+  foreach (let item, mList_iter(struct_items)) {
+    let name = item.name;
+    let idx = ss_get_named_failable_noref(ss, working_scope, name);
+    if (!idx) continue;
+    println("[LOG] rebind {slice(c8)}", name);
+    let v = scope_find(ss, working_scope, idx);
+    *v = temporary_interpret(ss, working_scope, item.value);
+  }
+
+  void sexplike(const char *data, void *userdata, usize len, bool flush);
+  print_wf(sexplike, "[LOG] created struct : {Type}\n", T(*tu_catch(r_tag, *_this).t));
+  print_wf(sexplike, "[LOG] it's scope {scope}\n", *working_scope);
   return scope_add_value(ss, s, TV_type(ss_getType(ss, T(*_this))));
 }
 static u32 lower_builtin_this(superscope *ss, scope *s, ast *args) {
   if (builtin_arg_list(&args).len) error_print(args, "@this takes no arguments");
   if (!msList_len(ss->thisstack)) error_print(args, "@this() used outside of a struct definition");
-  return scope_add_value(ss, s, (typed_value){T(tu_of(c_type, {})), msList_last(ss->thisstack).t});
+  return scope_add_value(ss, s, (typed_value){T(tu_of(c_type, {})), msList_last(ss->thisstack)});
 }
 static u32 lower_builtin_break(superscope *ss, scope *s, ast *args) {
   if (builtin_arg_list(&args).len) error_print(args, "break takes no args");
@@ -256,6 +369,9 @@ static u32 lower_builtin(superscope *ss, scope *s, builtin_id builtin, ast *args
       (builtin_typeof, /*  */ lower_builtin_typeof(ss, s, args)),
       (builtin_arrof, /*   */ lower_builtin_arrof(ss, s, args)),
       (builtin_ptrof, /*   */ lower_builtin_ptrof(ss, s, args)),
+      (builtin_sizeof, /*  */ lower_builtin_sizeof(ss, s, args)),
+      (builtin_alignof, /* */ lower_builtin_alignof(ss, s, args)),
+      (builtin_offsetof, /**/ lower_builtin_offsetof(ss, s, args)),
       (builtin_struct, /*  */ lower_builtin_struct(ss, s, args)),
       (builtin__this, /*   */ lower_builtin_this(ss, s, args)),
       (builtin_qot, /*     */ lower_builtin_qot(ss, s, args)),

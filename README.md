@@ -14,11 +14,11 @@ then run it again, and also if you ever modify nob you have to remove and recomp
 # CSHL
 ---
 meant to be a c-like language with
-    - first class types
-    - first class functions
-    - first class ast
-    - operator overloading
-    - raii?
+- first class types
+- first class functions
+- first class ast
+- operator overloading
+- raii?
 ## grammer
 - empty  : `;`
 - id     : identifier, c rules but can contain `!?$#`
