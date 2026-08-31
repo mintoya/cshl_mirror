@@ -72,8 +72,6 @@ tu_def( // type
     (r_struct /*     */, mList(r_struct_item)),
     (r_bitfield /*   */, mList(r_bitf_item)),
 
-    (r_func /*       */, mList(Type)),
-    (r_closure /*    */, struct { r_func captures, args; }),
     // compile time
     // they could all be nothing_t's, i'd rather show here what they a re but also
     // not have them take up any storage space
@@ -81,7 +79,12 @@ tu_def( // type
     (c_int /*        */, typeof(bigint[0])),
     (c_type /*       */, typeof(Type *[0])),
     (c_ast /*        */, typeof(ast *[0])),
+    // something else
+    (c_fun /*       */, mList(Type)),
+    (r_closure /*    */, struct { c_fun captures, args; }),
 );
+#define T(...) ((Type){.t = __VA_ARGS__})
+#define TV(...) ((typed_value){__VA_ARGS__})
 struct Type {
   TypeTree t;
   u32 ptr_level : 32;
@@ -92,7 +95,7 @@ struct Type {
 };
 typedef union {
   void *value;
-
+  u32 c_fun; // function index in list + 1
   arrstype(c_int) c_int;
   arrstype(c_ast) c_ast;
   arrstype(c_type) c_type;
@@ -122,7 +125,7 @@ static inline usize Type_sizeof(Type t);
 static inline bool Type_is_comptime(Type t) {
   return t.iscomptime ||
          tu_is(builtin, t.t) ||
-         tu_is(r_func, t.t) ||
+         tu_is(c_fun, t.t) ||
          tu_is(r_closure, t.t) ||
          tu_is(c_int, t.t) ||
          tu_is(c_any, t.t) ||
@@ -136,7 +139,7 @@ static usize TypeTree_alignof(TypeTree t) {
       (r_tag, tag, TypeTree_alignof(*tag.t)),
       // no representation
       (builtin, _, (usize)1),
-      (r_func, _, (usize)1),
+      (c_fun, _, (usize)1),
       (r_closure, _, (usize)1),
       (c_int, _, (usize)1),
       (c_any, _, (usize)1),
@@ -173,7 +176,7 @@ static usize TypeTree_sizeof(TypeTree t) {
       (c_ast, _, (usize)0),
       (c_int, _, (usize)0),
       (c_any, _, (usize)0),
-      (r_func, _, (usize)0),
+      (c_fun, _, (usize)0),
       (r_closure, _, (usize)0),
       //  0 for it's own reason
       (r_void, _, (usize)0),
@@ -246,8 +249,8 @@ i8 TypeTree_cmp(TypeTree a, TypeTree b) {
         return TypeTree_cmp(*ai.t, *bi.t);
       }),
 
-      (r_func, ai, {
-        let bi = tu_catch(r_func, b);
+      (c_fun, ai, {
+        let bi = tu_catch(c_fun, b);
         if_decl (let cmp, icmp(mList_len(ai), mList_len(bi))) return cmp;
 
         foreach (let i, range(0, mList_len(ai)))
@@ -386,7 +389,7 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printe
       (r_void, _, PUTS("void")),
       (r_tag, t, {
         PUTS("(id ");
-        USETYPEPRINTER(id_str, t.name);
+        USENAMEDPRINTER("slice(c8)", t.name);
         PUTS(")");
       }),
       (r_uint, bits, PUTS("u"); USETYPEPRINTER(usize, bits);),
@@ -426,7 +429,7 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printe
           typePrinterWorker(type->t, visitedmap, _ctx);
         }
       }),
-      (r_func, fn, {
+      (c_fun, fn, {
         typeTreePrinterWorker_add(in, visitedmap);
         PUTS("(fn (");
         foreach (let it, mList_iter(fn))
@@ -477,7 +480,7 @@ test_fn(type_linked_list) {
     struct analog *prev, *next;
     i32 element;
   };
-  r_func signatures = mList_init(typeArena, Type);
+  c_fun signatures = mList_init(typeArena, Type);
   mList_pushArr(signatures, ((Type[]){_final, _final}));
 
   // clang-format off
@@ -488,11 +491,11 @@ test_fn(type_linked_list) {
     },
     {
        .name = fp("getNext"),
-       .t =(((Type){tu_of(r_func,signatures)})),
+       .t =(((Type){tu_of(c_fun,signatures)})),
     },
     {
        .name = fp("getPrev"),
-       .t =(((Type){tu_of(r_func,signatures)})),
+       .t =(((Type){tu_of(c_fun,signatures)})),
     },
     {
        .alignment = alignof(itypeof(struct analog, prev)),

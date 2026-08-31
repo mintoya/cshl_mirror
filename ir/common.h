@@ -1,10 +1,51 @@
 #pragma once
-#include "scope.h"
+#include "../type.h"
+#include "ir.h"
 #include <string.h>
 #include <wheels/bigint.h>
 #include <wheels/macros.h>
 #include <wheels/print/print_pre.h>
 
+typedef struct superscope superscope;
+typedef struct scope scope;
+struct scope {
+  scope *parent;
+  msList(ir) instructions;
+  msList(typed_value) values;
+  moxmap(fptr, u32) named;
+  u32 start;
+};
+
+typedef struct {
+  Type ret;
+  scope *spec;
+} function_instance;
+
+typedef struct function {
+  slice(astptr) params;
+  ast *retT;
+  ast *body;
+  scope *defscope;
+  moxmap(sliceDef(typed_value), function_instance) mp;
+} function;
+struct superscope {
+  allocfn alloc;
+
+  moxmap(void *, usize) pointers;
+  moxmap(TypeTree, TypeTree *) typetrees;
+  moxmap(Type, Type *) types;
+  msList(Type *) thisstack;
+  moxmap(fptr, scope *) type_info;
+  msList(function) functions;
+  msList(c_fun) fnctx;
+  scope *outermost;
+};
+scope *scope_inferior(superscope *b, scope *s);
+void scope_destroy(superscope *b, scope *s);
+u32 scope_add_value(superscope *env, scope *s, typed_value v);
+Type *ss_getType(superscope *ss, Type t);
+TypeTree *ss_getTypeTree(superscope *ss, TypeTree t);
+typed_value *scope_find(superscope *env, scope *s, u32 idx);
 #define T(...) ((Type){.t = __VA_ARGS__})
 #define TV(...) ((typed_value){__VA_ARGS__})
 

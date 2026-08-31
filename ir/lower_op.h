@@ -6,7 +6,7 @@
 #include "wheels/macros.h"
 #include "wheels/mytypes.h"
 #include <string.h>
-u32 lower_call_inner(superscope *ss, scope *s, r_func f, slice(u32) args) { TODO("actually decide what an r_func is"); }
+u32 lower_call_inner(superscope *ss, scope *s, c_fun f, slice(u32) args) { TODO("actually decide what an r_func is"); }
 u32 lower_call_extra(superscope *ss, scope *s, u32 left, u32 first, ast *args) {
   TODO("just a call with an extra member");
 }
@@ -98,11 +98,10 @@ u32 lower_dot(superscope *ss, scope *s, u32 left, ast *right, astLit lit) {
 
   if (l->t.ptr_level > 1) error_print(*right, "{Type} does not support dot", l->t);
 
-  iflet_tu (let tag, r_tag, l->t.t) {
+  iflet_tu (let tag, r_tag, l->t.t)
     if_decl (let info, moxmap_get(ss->type_info, tag.name))
       if_decl (let idx, moxmap_get((*info)->named, name))
         return scope_add_value(ss, s, *scope_find(ss, *info, *idx));
-  }
 
   if_decl (let st, find_inner_struct(l->t.t)) {
     u32 i = 0;
@@ -209,7 +208,7 @@ u32 lower_op(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
       (default, ),
   );
   if_decl (let ovl, lower_overload_possible(ss, s, left, right, opNumber)) return ovl;
-  return switch_exp(
+  let res = switch_exp(
       (op_as_enum(opNumber)),
       (enop_pipe, (assertMessage(false, "unreachable"), (u32)0)),
       (enop_colon, (assertMessage(false, "unreachable"), (u32)0)),
@@ -245,4 +244,6 @@ u32 lower_op(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
       (enop_neq, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_neq)),
       (enop_leq, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_leq)),
   );
+  if (!res) error_print(right, "something went wrong {} , {} , {ast}", left, opNumber, right);
+  return res;
 }

@@ -1,9 +1,15 @@
 #pragma once
 #include "common.h"
+#include "function.h"
 #include "scope.h"
 #include "wheels/macros.h"
 
-static u32 lower_builtin_fn(superscope *ss, scope *s, ast *args) { TODO(); }
+static u32 lower_builtin_fn(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(&args);
+  if (list.len != 3) error_print(args, "@fn takes 3 args");
+  let p = tu_catch(astPBlock, *list.ptr[0], error_print(list.ptr[0], "expected a parenthesized list"));
+  return lower_function(ss, s, p, list.ptr[1], list.ptr[2]);
+}
 static u32 lower_builtin_closure(superscope *ss, scope *s, ast *args) { TODO(); }
 static u32 lower_builtin_if(superscope *ss, scope *s, ast *args) { TODO(); }
 static u32 lower_builtin_cif(superscope *ss, scope *s, ast *args) { TODO(); }

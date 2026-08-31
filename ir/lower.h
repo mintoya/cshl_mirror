@@ -32,7 +32,7 @@ u32 lower_op_wrap(superscope *ss, scope *s, ast *left, ast *right, u32 number) {
 }
 u32 lower(superscope *ss, scope *s, ast *a) {
   if (!a) return (println("[WARNING] null ast in lower"), scope_add_value(ss, s, void_value));
-  return tu_match_exp(
+  let res = tu_match_exp(
       *a,
       (astEmptyStatement, _, scope_add_value(ss, s, void_value)),
       (astOp, op, lower_op_wrap(ss, s, op.left, op.right, op.number_rep)),
@@ -65,8 +65,10 @@ u32 lower(superscope *ss, scope *s, ast *a) {
            type = value_asType_loc(t, ast_loc(*dcl.type));
          }
          u32 value = 0;
-         if (dcl.value) value = lower(ss, s, dcl.value);
-         else {
+         if (dcl.value) {
+           value = lower(ss, s, dcl.value);
+           assertMessage(value);
+         } else {
            assertMessage(dcl.type, "must have type or value");
            value = scope_add_value(ss, s, TV(type));
          }
@@ -78,4 +80,6 @@ u32 lower(superscope *ss, scope *s, ast *a) {
          value;
        })),
   );
+  if (!res) error_print(a, "something is wrong {ast}", a);
+  return res;
 }
