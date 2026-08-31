@@ -118,7 +118,6 @@ static inline enum_op op_as_enum(u32 opn) {
                                     : (assertMessage(false, "Unknown operator %x", opn), 0);
 }
 
-
 static inline bool Type_isint(Type t) {
   return !t.ptr_level &&
          tu_match_exp(
@@ -299,6 +298,20 @@ typePrinter(scope) {
             USETYPEPRINTER(u32, *c), c == call.args.ptr ? PUTS(" ") : 0;
           PUTS("),");
           USETYPEPRINTER(u32, call.d);
+          PUTS(")");
+        }),
+        (ir_array, f, {
+          PUTS("(arr ");
+          USETYPEPRINTER(u32, f.l), PUTS(" ");
+          USETYPEPRINTER(u32, f.r), PUTS(" ");
+          PUTS(" -> "), USETYPEPRINTER(u32, f.d);
+          PUTS(")");
+        }),
+        (ir_field, f, {
+          PUTS("(dot ");
+          USETYPEPRINTER(u32, f.l), PUTS(" ");
+          USETYPEPRINTER(u32, f.i), PUTS(" ");
+          PUTS(" -> "), USETYPEPRINTER(u32, f.d);
           PUTS(")");
         }),
         (ir_rawop, op, {

@@ -6,6 +6,7 @@
 #include "wheels/macros.h"
 #include "wheels/mytypes.h"
 #include "wheels/sList.h"
+#include <string.h>
 u32 lower_call_inner(superscope *ss, scope *s, r_func f, slice(u32) args) { TODO("actually decide what an r_func is"); }
 u32 lower_call_extra(superscope *ss, scope *s, u32 left, u32 first, ast *args) {
   TODO("just a call with an extra member");
@@ -23,26 +24,34 @@ tu_def(
     (astStrLit, astString),
     (astNumLit, astNumber),
 );
-r_struct find_inner_struct(TypeTree t) {
-  return tu_match_exp(
-      t,
-      (r_struct, r, r),
-      (r_tag, r, find_inner_struct(*r.t)),
-      (default, (r_struct) nullptr)
-  );
-}
 u32 lower_overload_possible(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
   let t = scope_find(ss, s, left)->t;
   if (t.ptr_level > 1) return 0;
-  if_decl (let is, find_inner_struct(t.t)) t = T(tu_of(r_struct, {}));
   return tu_match_exp(
       t.t,
       (default, (u32)0),
-      (r_struct, _, ({
-         TODO("opwerator overloading");
-         (u32)0;
+      (r_arr, arr, ({ // array index
+                      // no bounds checking, because there is no pointer arithmatic
+         if (opNumber != opNumbers.call) error_at(*right, "array does not support this operation");
+         let block = tu_catch(astABlock, *right, error_at(*right, "array does not support this call"));
+         if (sentList_len(block.items) != 1) error_at(*right, "expected [N]");
+         let d = scope_add_value(ss, s, TV(T(*arr.t, .isref = true)));
+         let r = lower(ss, s, block.items[0]);
+         if (!Type_isint(scope_find(ss, s, r)->t)) error_print(*right, "index into array with non-integer");
+         scope_add_inst(ss, s, (ir)tu_of(ir_array, {.d = d, .r = r, .l = left}));
+         d;
        })),
-      (r_arr, _, TODO("a[...] is a call to a with an ablock"); (u32)0),
+      (r_tag, t, ({
+         let result = (u32)0;
+         if_decl (let info, moxmap_get(ss->type_info, t.name)) {
+           char op_str[5] = {};
+           memcpy(op_str, &opNumber, 4);
+           if_decl (let item, moxmap_get((*info)->named, fp((char *)op_str))) {
+             TODO("handle operator overloading, depends on functions though");
+           }
+         }
+         result;
+       })),
       (c_ast, _, ({
          TODO(
              "opwerator overloading \
@@ -68,28 +77,7 @@ r_bitfield find_inner_bitfield(TypeTree t) {
   );
 }
 u32 lower_dot(superscope *ss, scope *s, u32 left, astLit lit) {
-  // structs and bitfields
-  let l = scope_find(ss, s, left);
-  let str = astLit_str(lit);
-  let loc = str.ptr;
-  if (l->t.ptr_level > 1) error_print(loc, "{Type} does not support dot", l->t);
-
-  bool isStr = tu_is(astStrLit, lit);
-  if (isStr) str = string_escape(ss->alloc, str);
-  defer if (isStr) slice_free(ss->alloc, str);
-
-  let st = find_inner_struct(l->t.t);
-  let bf = st ? 0 : find_inner_bitfield(l->t.t);
-  if (st) {
-    foreach (let item, mList_iter(st))
-      if (fptr_eq(item.name, str))
-        TODO("implement dot operator");
-  } else if (bf) {
-    foreach (let item, mList_iter(bf))
-      if (fptr_eq(item.name, str))
-        TODO("implement dot operator");
-  } else error_print(loc, "{Type} does not support dot", l->t);
-  error_print(loc, "{*:typed_value} has no member {slice(c8)}", l, str);
+  TODO();
 }
 typedef enum {
   math_mul,

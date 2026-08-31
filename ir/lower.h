@@ -7,10 +7,19 @@
 static u32 coerce_type(superscope *ss, scope *s, u32 left, Type to) {
   let ot = scope_find(ss, s, left)->t;
   println("coersing {Type} to {Type}", ot, to);
-  if (!Type_cmp(ot, to)) return left;
-  if (!Type_cmp(to, T(tu_of(c_any, {})))) return left;
+  if (!Type_cmp(ot, to)) return left; // noop on same type
+  if (!Type_cmp(to, T(tu_of(c_any, {})))) {
+    if (!ot.isref) return left; // ?
+    to = ot;
+    to.isref = false;
+    to.isconst = ot.isconst;
+    let d = scope_add_value(ss, s, TV(to, scope_find(ss, s, left)->v));
+    scope_add_inst(ss, s, (ir)tu_of(ir_cast, {.l = left, .d = d}));
+    return d;
+  }
   let dest = scope_add_value(ss, s, TV(to));
   scope_add_inst(ss, s, (ir)tu_of(ir_cast, {.l = left, .d = dest}));
+  println("coersing {Type} to {Type}", ot, to);
   return dest;
 }
 u32 lower_op_wrap(superscope *ss, scope *s, ast *left, ast *right, u32 number) {
