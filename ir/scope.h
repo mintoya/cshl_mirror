@@ -108,6 +108,7 @@ static inline u32 ss_get_named(superscope *env, scope *s, fptr n) {
   if (!val) error_print(n.ptr, "unbound identifier {slice(c8)}", n);
   let vo = scope_find(env, s, val);
   if (vo->t.isref) return val;
+  if (Type_is_comptime(vo->t)) return scope_add_value(env, s, *vo);
   let res = scope_add_value(env, s, TV(Type_ref(vo->t)));
   scope_add_inst(env, s, (ir)tu_of(ir_getref, {.d = res, .l = val}));
   return res;

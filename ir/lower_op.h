@@ -5,7 +5,6 @@
 #include "wheels/fptr.h"
 #include "wheels/macros.h"
 #include "wheels/mytypes.h"
-#include "wheels/sList.h"
 #include <string.h>
 u32 lower_call_inner(superscope *ss, scope *s, r_func f, slice(u32) args) { TODO("actually decide what an r_func is"); }
 u32 lower_call_extra(superscope *ss, scope *s, u32 left, u32 first, ast *args) {
@@ -76,8 +75,64 @@ r_bitfield find_inner_bitfield(TypeTree t) {
       (default, (r_bitfield) nullptr)
   );
 }
-u32 lower_dot(superscope *ss, scope *s, u32 left, astLit lit) {
-  TODO();
+r_struct find_inner_struct(TypeTree t) {
+  return tu_match_exp(
+      t,
+      (r_struct, r, r),
+      (r_tag, r, find_inner_struct(*r.t)),
+      (default, (r_struct) nullptr)
+  );
+}
+u32 lower_dot(superscope *ss, scope *s, u32 left, ast *right, astLit lit) {
+  let l = scope_find(ss, s, left);
+  let name = astLit_str(lit);
+
+  if (tu_is(c_type, l->t.t)) {
+    let target = value_asType_loc(*l, ast_loc(*right));
+    iflet_tu (let tag, r_tag, target.t)
+      if_decl (let info, moxmap_get(ss->type_info, tag.name))
+        if_decl (let idx, moxmap_get((*info)->named, name))
+          return scope_add_value(ss, s, *scope_find(ss, *info, *idx));
+    error_print(*right, "{Type} has no member {slice(c8)}", target, name);
+  }
+
+  if (l->t.ptr_level > 1) error_print(*right, "{Type} does not support dot", l->t);
+
+  iflet_tu (let tag, r_tag, l->t.t) {
+    if_decl (let info, moxmap_get(ss->type_info, tag.name))
+      if_decl (let idx, moxmap_get((*info)->named, name))
+        return scope_add_value(ss, s, *scope_find(ss, *info, *idx));
+  }
+
+  if_decl (let st, find_inner_struct(l->t.t)) {
+    u32 i = 0;
+    foreach (let item, mList_iter(st)) {
+      if (fptr_eq(item.name, name)) {
+        if (Type_is_comptime(item.t))
+          error_print(*right, "{slice(c8)} has no storage; its type has no name to look it up by", name);
+        Type rt = item.t;
+        rt.isref = true;
+        let d = scope_add_value(ss, s, TV(rt));
+        scope_add_inst(ss, s, (ir)tu_of(ir_field, {.l = left, .d = d, .i = i}));
+        return d;
+      }
+      i++;
+    }
+  } else if_decl (let bf, find_inner_bitfield(l->t.t)) {
+    u32 i = 0;
+    foreach (let item, mList_iter(bf)) {
+      if (fptr_eq(item.name, name)) {
+        Type rt = item.t;
+        rt.isref = true;
+        let d = scope_add_value(ss, s, TV(rt));
+        scope_add_inst(ss, s, (ir)tu_of(ir_field, {.l = left, .d = d, .i = i})); // maybe it's own ir entry, if porting to c without bitfields
+        return d;
+      }
+      i++;
+    }
+  }
+
+  error_print(*right, "{Type} has no member {slice(c8)}", l->t, name);
 }
 typedef enum {
   math_mul,
@@ -169,7 +224,7 @@ u32 lower_op(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
                 (astNumber, num, (astLit)tu_of(astNumLit, num)),
                 (default, (assertMessage(false, "non-overloaded dot only works on literals"), (astLit){}))
             ),
-            lower_dot(ss, s, left, $));
+            lower_dot(ss, s, left, right, $));
        })),
       // operators are handled, so it should just be math now
       (enop_mul, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_mul)),
