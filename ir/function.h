@@ -2,6 +2,7 @@
 #include "../ast.h"
 #include "../type.h"
 #include "common.h"
+#include "scope.h"
 #include "wheels/macros.h"
 #include <wheels/fptr.h>
 #include <wheels/mylist.h>
@@ -21,7 +22,21 @@ i8 slice_typed_value_cmp(const void *a, const void *b) {
 }
 
 static inline Type function_item_type(superscope *ss, scope *s, ast *item) {
-  TODO();
+  let decl = tu_catch(astDecl, *item, error_print(item, "function parameter must be a decl"));
+  if (!decl.name) error_print(item, "function parameter needs a name");
+  if (!decl.type) error_print(item, "function parameter needs a type");
+  let name = id_from_ast(ss, s, decl.name);
+  let t = value_asType_loc(temporary_interpret(ss, s, decl.type), ast_loc(*decl.type));
+
+  typed_value placeholder;
+  if (Type_is_comptime(t)) {
+    if (tu_is(c_type, t.t))
+      placeholder = Type_asValue(ss, T(tu_of(c_any, {})));  // dependant ones resulve as any correctlu
+    else placeholder = TV(T(tu_of(c_any, {})));           
+  } else placeholder = TV(t);                            
+
+  scope_bind(ss, s, scope_add_value(ss, s, placeholder), name);
+  return t;
 }
 
 u32 lower_function(superscope *ss, scope *s, astPBlock args, ast *retT, ast *body) {
@@ -42,9 +57,9 @@ u32 lower_function(superscope *ss, scope *s, astPBlock args, ast *retT, ast *bod
   {
     let arg_scope = scope_inferior(ss, s);
     defer scope_destroy(ss, arg_scope);
-    // for a type, bind type whos value is the type of an any (when later referanced, it will correctly be any)
-    // for a comptime type, generate an anytype
-    TODO("what a generate function signature ");
+    foreach (let p, span(params.ptr, params.len))
+      mList_push(signature, function_item_type(ss, arg_scope, *p));
+    mList_push(signature, value_asType_loc(temporary_interpret(ss, arg_scope, retT), ast_loc(*retT)));
   }
   return res;
 }

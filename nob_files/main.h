@@ -31,7 +31,7 @@
 //{timespec
 #include <time.h>
 typedef struct timespec timespec;
-typedef _BitInt(sizeof(size_t) * 8 + 30) ts_int;
+typedef long long ts_int;
 static const ts_int ts_int_ns = 1;
 static const ts_int ts_int_us = ts_int_ns * 1000;
 static const ts_int ts_int_ms = ts_int_us * 1000;

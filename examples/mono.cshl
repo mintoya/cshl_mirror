@@ -1,9 +1,10 @@
 type ~~ @type();
 ref ~~ @refT;
+void  ~~ @void();
 
 hshr ~~ @fn (
   t ~type,
-  i ~ref t
+  i ~(ref t),
 ),void,{
   i = i shl @sizeof(i);
 };

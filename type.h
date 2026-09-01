@@ -433,8 +433,8 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printe
         typeTreePrinterWorker_add(in, visitedmap);
         PUTS("(fn (");
         foreach (let it, mList_iter(fn))
-          typePrinterWorker(it, visitedmap, _ctx),
-              _foreach_._foreach_._current ? (void)0 : (void)PUTS(" ");
+          (_foreach_._foreach_._current) ? (void)PUTS(" ") : (void)0,
+              typePrinterWorker(it, visitedmap, _ctx);
         PUTS("),");
         PUTS(")");
       }),

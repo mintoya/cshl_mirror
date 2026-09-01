@@ -314,6 +314,7 @@ typePrinter(typed_value) {
       (c_int, _, in.v.c_int ? USENAMEDPRINTER("bigint", in.v.c_int) : PUTS("??");),
       (c_ast, _, in.v.c_ast ? USENAMEDPRINTER("astTag", in.v.c_ast->tag) : PUTS("??");),
       (c_type, _, in.v.value ? USETYPEPRINTER(Type, *(Type *)in.v.value) : PUTS("??");),
+      (c_fun, _, in.v.value ? PUTS("("), USETYPEPRINTER(u32, in.v.c_fun), PUTS(")") : PUTS("??");),
       (default, {
         if (in.v.value)
           USETYPEPRINTER(fptr, ((fptr){Type_sizeof(in.t), in.v.value}));
