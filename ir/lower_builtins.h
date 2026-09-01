@@ -11,9 +11,19 @@ static u32 lower_builtin_fn(superscope *ss, scope *s, ast *args) {
   return lower_function(ss, s, p, list.ptr[1], list.ptr[2]);
 }
 static u32 lower_builtin_closure(superscope *ss, scope *s, ast *args) { TODO(); }
-static u32 lower_builtin_if(superscope *ss, scope *s, ast *args) { TODO(); }
 static u32 lower_builtin_cif(superscope *ss, scope *s, ast *args) { TODO(); }
-static u32 lower_builtin_while(superscope *ss, scope *s, ast *args) { TODO(); }
+static u32 lower_truthy(superscope *ss, scope *s, u32 variable) { TODO(); }
+static u32 lower_builtin_if(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(&args);
+  if (!EQUAL_ANY(list.len, 2, 3)) error_print(args, "@if takes 2-3 args");
+  TODO();
+}
+static u32 lower_builtin_while(superscope *ss, scope *s, ast *args) {
+
+  let list = builtin_arg_list(&args);
+  if (!EQUAL_ANY(list.len, 1, 2)) error_print(args, "@while takes 1-2 args");
+  TODO();
+}
 static u32 lower_builtin_at(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
   if (list.len != 1) error_print(args, "@at(arg) takes exactly one argument");
