@@ -56,7 +56,7 @@ u32 lower_function(superscope *ss, scope *s, astPBlock args, ast *retT, ast *bod
   // generate example signature
   {
     let arg_scope = scope_inferior(ss, s);
-    defer scope_destroy(ss, arg_scope);
+    defer { scope_destroy(ss, arg_scope); };
     foreach (let p, span(params.ptr, params.len))
       mList_push(signature, function_item_type(ss, arg_scope, *p));
     mList_push(signature, value_asType_loc(temporary_interpret(ss, arg_scope, retT), ast_loc(*retT)));

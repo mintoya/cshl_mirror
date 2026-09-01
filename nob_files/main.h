@@ -24,7 +24,7 @@
 
 #define COMMON_CFLAGS                          \
   INPUT_FLAGS,                                 \
-      "-std=gnu23", "-fdefer-ts",              \
+      "-std=gnu23",                            \
       "-I", "deps", "-fno-sanitize=vla-bound", \
       "-g"
 

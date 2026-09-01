@@ -270,7 +270,7 @@ static u32 lower_builtin_struct(superscope *ss, scope *s, ast *args) {
   // clang-format on
   let working_scope = scope_inferior(ss, s);
   msList_push(ss->alloc, ss->thisstack, {ss_getType(ss, T(*_this))});
-  defer msList_pop(ss->thisstack);
+  defer { msList_pop(ss->thisstack); };
   moxmap_set(ss->type_info, tu_catch(r_tag, *_this).name, working_scope);
 
   let list = builtin_arg_list(&args);

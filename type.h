@@ -279,7 +279,8 @@ i8 TypeTree_cmp(TypeTree a, TypeTree b) {
         if_decl (let cmp, icmp(mList_len(ai), mList_len(bi))) return cmp;
 
         foreach (let i, range(0, mList_len(ai))) {
-          let a_i = mList_arr(ai)[i], b_i = mList_arr(bi)[i];
+          let a_i = mList_arr(ai)[i];
+          let b_i = mList_arr(bi)[i];
           if_decl (let cmp, fptr_cmp(a_i.name, b_i.name)) return cmp;
           if_decl (let cmp, icmp(a_i.offset, b_i.offset)) return cmp;
           if_decl (let cmp, icmp(a_i.alignment, b_i.alignment)) return cmp;
@@ -293,7 +294,8 @@ i8 TypeTree_cmp(TypeTree a, TypeTree b) {
         if_decl (let cmp, icmp(mList_len(ai), mList_len(bi))) return cmp;
 
         foreach (let i, range(0, mList_len(ai))) {
-          let a_i = mList_arr(ai)[i], b_i = mList_arr(bi)[i];
+          let a_i = mList_arr(ai)[i];
+          let b_i = mList_arr(bi)[i];
           if_decl (let cmp, fptr_cmp(a_i.name, b_i.name)) return cmp;
           if_decl (let cmp, icmp(a_i.width, b_i.width)) return cmp;
           if_decl (let cmp, Type_cmp(a_i.t, b_i.t)) return cmp;
@@ -466,7 +468,7 @@ typePrinter(Type) {
 
 test_fn(type_linked_list) {
   let typeArena = arena_new_ext(allocator, 1024);
-  defer arena_cleanup(typeArena);
+  defer { arena_cleanup(typeArena); };
 
   let element = (TypeTree)tu_of(r_sint, 32);
   let structItems = mList_init(typeArena, r_struct_item);
