@@ -127,10 +127,10 @@ typePrinter(enum_op) {
   );
 }
 
-typed_value TV_bigint(bigint b) { return TV(T(tu_of(c_int, {})), b); }
-typed_value TV_type(Type *t) { return TV(T(tu_of(c_type, {})), t); }
-typed_value TV_ast(ast *ats) { return TV(T(tu_of(c_ast, {})), ats); }
-typed_value TV_any() { return TV(T(tu_of(c_any, {}))); }
+[[gnu::const]] typed_value TV_bigint(bigint b) { return TV(T(tu_of(c_int, {})), b); }
+[[gnu::const]] typed_value TV_type(Type *t) { return TV(T(tu_of(c_type, {})), t); }
+[[gnu::const]] typed_value TV_ast(ast *ats) { return TV(T(tu_of(c_ast, {})), ats); }
+[[gnu::const]] typed_value TV_any() { return TV(T(tu_of(c_any, {}))); }
 
 static inline enum_op op_as_enum(u32 opn) {
   return opn == opNumbers.call      ? enop_call
