@@ -11,43 +11,71 @@ static u32 lower_builtin_fn(superscope *ss, scope *s, ast *args) {
   return lower_function(ss, s, p, list.ptr[1], list.ptr[2]);
 }
 static u32 lower_builtin_closure(superscope *ss, scope *s, ast *args) { TODO(); }
-static u32 lower_builtin_cif(superscope *ss, scope *s, ast *args) { TODO(); }
-static u32 lower_truthy(superscope *ss, scope *s, u32 variable) { TODO(); }
+static void lower_truthy(superscope *ss, scope *s, ast *) { TODO(); }
+static u32 lower_builtin_cif(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(&args);
+  if (!EQUAL_ANY(list.len, 2, 3)) error_print(args, "@if takes 2-3 args");
+  let value = ({
+    let ns = scope_inferior(ss, s);
+    defer { scope_destroy(ss, ns); };
+    lower_truthy(ss, ns, list.ptr[0]);
+    interpret(ss, ns);
+  });
+  TODO("expect a one bit number, known value obviously");
+  return scope_add_value(ss, s, TV(T(tu_of(r_void, {}))));
+}
 static u32 lower_builtin_if(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
   if (!EQUAL_ANY(list.len, 2, 3)) error_print(args, "@if takes 2-3 args");
-  TODO();
+  let cnds = scope_inferior(ss, s);
+  lower_truthy(ss, cnds, list.ptr[0]);
+  let ts = scope_inferior(ss, s);
+  lower(ss, ts, list.ptr[1]);
+  let fs = list.len == 3 ? scope_inferior(ss, s) : nullptr;
+  if (fs) lower(ss, fs, list.ptr[2]);
+  scope_add_inst(ss, s, (ir)tu_of(ir_if, {.cnd = cnds, .t = ts, .f = fs}));
+  return scope_add_value(ss, s, TV(T(tu_of(r_void, {}))));
 }
 static u32 lower_builtin_while(superscope *ss, scope *s, ast *args) {
-
   let list = builtin_arg_list(&args);
   if (!EQUAL_ANY(list.len, 1, 2)) error_print(args, "@while takes 1-2 args");
-  TODO();
+  let cnds = scope_inferior(ss, s);
+  lower_truthy(ss, cnds, list.ptr[0]);
+  let cs = list.len == 2 ? scope_inferior(ss, s) : nullptr;
+  if (list.len == 2) lower(ss, cs, list.ptr[1]);
+  scope_add_inst(ss, s, (ir)tu_of(ir_while, {.cnd = cnds, .body = cs}));
+  return scope_add_value(ss, s, TV(T(tu_of(r_void, {}))));
 }
 static u32 lower_builtin_at(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
   if (list.len != 1) error_print(args, "@at(arg) takes exactly one argument");
   let l = lower(ss, s, list.ptr[0]);
   let t = scope_find(ss, s, l)->t;
-  if (!t.isref && !t.ptr_level) error_print(args, "@at expects a reference or pointer, got {Type}", t);
+  if (!t.ptr_level) error_print(args, "@at expects a reference or pointer, got {Type}", t);
   Type inner = t;
-  if (inner.isref) inner.isref = false;
-  else inner.ptr_level--;
+  inner.ptr_level--;
   let d = scope_add_value(ss, s, TV(inner));
   scope_add_inst(ss, s, (ir)tu_of(ir_putptr, {.l = l, .d = d}));
   return d;
 }
 static u32 lower_builtin_where(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
-  if (list.len != 1) error_print(args, "@where(arg) takes exactly one argument");
+  if (list.len != 1) error_print(args, "@where takes one arg");
   let l = lower(ss, s, list.ptr[0]);
   let t = scope_find(ss, s, l)->t;
-  if (t.isref) return l; // already a referance
+  let d = scope_add_value(ss, s, TV(Type_ptr(t)));
+  scope_add_inst(ss, s, (ir)tu_of(ir_getptr, {.l = l, .d = d}));
+  return d;
+}
+static u32 lower_builtin_ref(superscope *ss, scope *s, ast *args) {
+  let list = builtin_arg_list(&args);
+  if (list.len != 1) error_print(args, "@ref takes one arg");
+  let l = lower(ss, s, list.ptr[0]);
+  let t = scope_find(ss, s, l)->t;
   let d = scope_add_value(ss, s, TV(Type_ref(t)));
   scope_add_inst(ss, s, (ir)tu_of(ir_getref, {.l = l, .d = d}));
   return d;
 }
-static u32 lower_builtin_ref(superscope *ss, scope *s, ast *args) { TODO(); }
 
 static u32 lower_builtin_return(superscope *ss, scope *s, ast *args) {
   // TODO enforce return type
