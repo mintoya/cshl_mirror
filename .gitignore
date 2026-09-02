@@ -19,3 +19,4 @@ nob_files/zcc.exe
 a.exe
 a.pdb
 /.clangd
+/.tsconfig.json
