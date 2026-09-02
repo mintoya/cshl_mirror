@@ -26,6 +26,10 @@ typedef struct {
   typed_value
       *ret;
 } irsig;
+typedef struct {
+  superscope* ss;
+  scope* s;
+}irstate ;
 void irsig_break(irsig *_sig) {
   if (!_sig->brk) error_print(nullptr, "broke in non-breakable context");
   *_sig->brk = 1;

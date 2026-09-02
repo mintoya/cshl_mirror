@@ -63,6 +63,7 @@ tu_def( // type
     (builtin /*      */, builtin_id),
     // runtime
     (r_void /*       */, struct {}),
+    (r_bool /*       */, struct {}),
     (r_uint /*       */, u16),
     (r_sint /*       */, u16),
 
@@ -149,6 +150,7 @@ static usize TypeTree_alignof(TypeTree t) {
       (r_void, _, (usize)1),
 
       (r_uint, u, lineup(u, CHAR_BIT) / CHAR_BIT),
+      (r_bool, _, TypeTree_alignof((TypeTree)tu_of(r_uint, 1))),
       (r_sint, u, TypeTree_alignof((TypeTree)tu_of(r_uint, u))),
       (r_arr, a, TypeTree_alignof(*a.t)),
       (r_bitfield, b, ({
@@ -182,6 +184,7 @@ static usize TypeTree_sizeof(TypeTree t) {
       (r_void, _, (usize)0),
       //
       (r_uint, u, lineup(u, CHAR_BIT) / CHAR_BIT),
+      (r_bool, _, TypeTree_sizeof((TypeTree)tu_of(r_uint, 1))),
       (r_sint, u, TypeTree_sizeof((TypeTree)tu_of(r_uint, u))),
       (r_arr, a, TypeTree_sizeof(*a.t) * a.count),
       (r_bitfield, b, ({
@@ -237,6 +240,7 @@ i8 TypeTree_cmp(TypeTree a, TypeTree b) {
       (r_sint, ai, return icmp(ai, tu_catch(r_sint, b))),
       (r_tag, ai, return fptr_cmp(ai.name, tu_catch(r_tag, b).name)),
 
+      (r_bool, _, return 0),
       (r_void, _, return 0),
       (c_int, _, return 0),
       (c_any, _, return 0),
@@ -384,31 +388,26 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printe
         USETYPEPRINTER(builtin_id, builtin);
         PUTS(")");
       }),
-      (c_int, i, PUTS("int")),
-      (c_type, t, PUTS("type")),
-      (c_ast, t, PUTS("ast")),
-      (c_any, t, PUTS("any")),
-      (r_void, _, PUTS("void")),
-      (r_tag, t, {
-        PUTS("(id ");
-        USENAMEDPRINTER("slice(c8)", t.name);
-        PUTS(")");
-      }),
-      (r_uint, bits, PUTS("u"); USETYPEPRINTER(usize, bits);),
-      (r_sint, bits, PUTS("s"); USETYPEPRINTER(usize, bits);),
+      (r_bool, /**/ _, PUTS("bool")),
+      (c_int, /* */ _, PUTS("int")),
+      (c_type, /**/ _, PUTS("type")),
+      (c_ast, /* */ _, PUTS("ast")),
+      (c_any, /* */ _, PUTS("any")),
+      (r_void, /**/ _, PUTS("void")),
+      (r_tag, t, PUTS("(id "), USENAMEDPRINTER("slice(c8)", t.name), PUTS(")")),
+      (r_uint, bits, PUTS("u"), USETYPEPRINTER(usize, bits)),
+      (r_sint, bits, PUTS("s"), USETYPEPRINTER(usize, bits)),
 
       // Complex, require recursion
       (r_arr, arr, {
         typeTreePrinterWorker_add(in, visitedmap);
-        PUTS("(a ");
-        defer { PUTS(")"); };
-        PUTS("["), USETYPEPRINTER(usize, arr.count), PUTS("] ");
+        PUTS("(a ["), USETYPEPRINTER(usize, arr.count), PUTS("],");
         typeTreePrinterWorker(*arr.t, visitedmap, _ctx);
+        PUTS(")");
       }),
       (r_struct, st, {
         typeTreePrinterWorker_add(in, visitedmap);
-        PUTS("(s ");
-        defer { PUTS(")"); }
+        PUTS("(s,");
         foreach (let type, span(mList_arr(st), mList_len(st))) {
           if (type != mList_arr(st)) PUTS(",");
           USETYPEPRINTER(id_str, type->name);
@@ -417,19 +416,18 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printe
               : (PUTS("@"), USETYPEPRINTER(usize, type->offset), PUTS("="));
           typePrinterWorker(type->t, visitedmap, _ctx);
         }
+        PUTS(")");
       }),
       (r_bitfield, st, {
         typeTreePrinterWorker_add(in, visitedmap);
-        PUTS("(bf ");
-        defer { PUTS(")"); }
+        PUTS("(bf,");
         foreach (let type, span(mList_arr(st), mList_len(st))) {
           if (type != mList_arr(st)) PUTS(",");
-          USETYPEPRINTER(id_str, type->name);
-          PUTS(":");
-          USETYPEPRINTER(usize, type->width);
-          PUTS("~");
+          USETYPEPRINTER(id_str, type->name), PUTS(":");
+          USETYPEPRINTER(usize, type->width), PUTS("~");
           typePrinterWorker(type->t, visitedmap, _ctx);
         }
+        PUTS(")");
       }),
       (c_fun, fn, {
         typeTreePrinterWorker_add(in, visitedmap);
@@ -437,17 +435,16 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printe
         foreach (let it, mList_iter(fn))
           (_foreach_._foreach_._current) ? (void)PUTS(" ") : (void)0,
               typePrinterWorker(it, visitedmap, _ctx);
-        PUTS("),");
-        PUTS(")");
+        PUTS("))");
       }),
       (r_closure, fn, {
         typeTreePrinterWorker_add(in, visitedmap);
         PUTS("(clos (");
         foreach (let it, mList_iter(fn.captures))
-          typePrinterWorker(it, visitedmap, _ctx), PUTS(" ");
+          (_foreach_._foreach_._current) ? PUTS(" ") : (void)0, typePrinterWorker(it, visitedmap, _ctx);
         PUTS("),(");
         foreach (let it, mList_iter(fn.args))
-          typePrinterWorker(it, visitedmap, _ctx), PUTS(" ");
+          (_foreach_._foreach_._current) ? PUTS(" ") : (void)0, typePrinterWorker(it, visitedmap, _ctx);
         PUTS("))");
       })
   );
@@ -458,7 +455,6 @@ typePrinter(TypeTree) {
   defer { moxmap_deinit(visited); };
   typeTreePrinterWorker(in, visited, _ctx);
 }
-
 typePrinter(Type) {
   let visited = moxmap_init(PRINTARGS_ALLOCATOR(), TypeTree, u32, TypeTree_cmp_hash);
   defer { moxmap_deinit(visited); };
@@ -482,9 +478,7 @@ test_fn(type_linked_list) {
     struct analog *prev, *next;
     i32 element;
   };
-  c_fun signatures = mList_init(typeArena, Type);
-  mList_pushArr(signatures, ((Type[]){_final, _final}));
-
+  let signatures = mList_initArr(typeArena, ((Type[]){_final, _final}));
   // clang-format off
   mList_pushArr(structItems, ((r_struct_item[]){
     {
@@ -519,7 +513,9 @@ test_fn(type_linked_list) {
     },
   }));
   // clang-format on
-  println("{Type}", _final);
+
+  void sexplike(const char *data, void *userdata, usize len, bool flush);
+  print_wf(sexplike, "{Type}\n", _final);
   test_inteq(alignof(struct analog), Type_alignof(_final));
   test_inteq(sizeof(struct analog), Type_sizeof(_final));
 }

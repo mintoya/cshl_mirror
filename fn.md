@@ -42,7 +42,7 @@ void _closure_1(struct _closuretype_1 a) {
 }
 _closuretype_1 _gen_fn1(int i) {
   return (_closuretype_1){
-      {&i}, // this is a leak in any system that works
+      {&i}, // leak but who cares
       {},
       {},
       _closure_1
