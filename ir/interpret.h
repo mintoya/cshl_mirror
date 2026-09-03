@@ -2,22 +2,6 @@
 #include "wheels/macros.h"
 #include "wheels/print/print_pre.h"
 #include "wheels/sList.h"
-#include <string.h>
-typedef struct {
-  u32 idx;
-} idxtv;
-static struct {
-  superscope *ss;
-  scope *s;
-} scopeCtx;
-typedef struct {
-  typeof(scopeCtx) sc;
-} setitemscope;
-typePrinter(setitemscope) { scopeCtx = in.sc; }
-typePrinter(idxtv) { assertMessage(scopeCtx.s && scopeCtx.s), USETYPEPRINTER(typed_value, *scope_find(scopeCtx.ss, scopeCtx.s, in.idx)); }
-// interpreter signals
-//  if they are null, that means that this item is no-longer break-able
-//  mask out to add context
 typedef struct {
   bool * /*       */ brk;
   bool * /*       */ cnt;
@@ -31,11 +15,6 @@ typedef struct {
 } irstate;
 
 typed_value *irstate_find(irstate irs, u32 idx) {
-  assertMessage(idx > irs.root->start);
-  TODO();
-}
-// same but value should already exist
-typed_value *irstate_findInitialized(irstate irs, u32 idx) {
   assertMessage(idx > irs.root->start);
   TODO();
 }
@@ -57,30 +36,31 @@ void irsig_return(irsig *_sig, typed_value v) {
   _sig->ret->v = v.v;
   return;
 }
-void interpret_set(irstate st, ir_set c) {
-  println("{setitemscope}{idxtv} , set , {idxtv}", ((setitemscope){{st.ss, st.s}}), c.d, c.l);
-  TODO("set");
-}
-void interpret_cast(irstate st, ir_cast c) {
-  println("{setitemscope}{idxtv} , set , {idxtv}", ((setitemscope){{st.ss, st.s}}), c.d, c.l);
-  TODO();
-}
-typed_value *ir_initTv(typed_value *tv) { TODO(); }
 void interpret_ret(irstate st, ir_ret c) { irsig_return(&st.sig, *irstate_find(st, c)); }
 void interpret_break(irstate st, ir_break c) { return irsig_break(&st.sig); }
 void interpret_cont(irstate st, ir_cont c) { return irsig_continue(&st.sig); }
+void interpret_set(irstate st, ir_set c) { TODO(); }
+void interpret_cast(irstate st, ir_cast c) { TODO(); }
+typed_value *ir_initTv(typed_value *tv) { TODO(); }
 void interpret_if(irstate st, ir_if c) { TODO(); }
 void interpret_while(irstate st, ir_while c) { TODO(); }
-void interpret_getptr(irstate st, ir_getptr c) {
-  *(void **)ir_initTv(irstate_find(st, c.d))->v.value = (void *)irstate_findInitialized(st, c.l)->v.value;
-}
-void interpret_getref(irstate st, ir_getref c) {
-  interpret_getptr(st, (ir_getptr){.l = c.l, .d = c.d});
-}
+void interpret_getptr(irstate st, ir_getptr c) { TODO(); }
+void interpret_getref(irstate st, ir_getref c) { interpret_getptr(st, (ir_getptr){.l = c.l, .d = c.d}); }
 void interpret_putptr(irstate st, ir_putptr c) { TODO(); }
 void interpret_call(irstate st, ir_call c) { TODO(); }
 void interpret_rawop(irstate st, ir_rawop c) { TODO(); }
-void interpret_block(irstate st, ir_block c) { TODO(); }
+void interpret_block(irstate st, ir_block c) {
+  void interpret_op(irstate, ir);
+  let o = st.s;
+  defer { st.s = o; };
+  st.s = c;
+  foreach (let i, span(c->values, msList_len(c->values)))
+    if (!Type_is_comptime(i->t) && !i->v.value)
+      if_decl (let s, Type_sizeof(i->t))
+        i->v.value = acreate(st.ss->alloc, u8[s]);
+  foreach (let i, span(c->instructions, msList_len(c->instructions)))
+    interpret_op(st, *i);
+}
 void interpret_farg(irstate st, ir_farg c) { TODO(); }
 void interpret_array(irstate st, ir_array c) { TODO(); }
 void interpret_field(irstate st, ir_field c) { TODO(); }
@@ -106,9 +86,7 @@ void interpret_op(irstate st, ir inst) {
   );
 }
 typed_value interpret(superscope *ss, scope *s) {
-  let state = (irstate){ss, s, {}};
-  foreach (let ip, span(s->instructions, msList_len(s->instructions)))
-    interpret_op(state, *ip);
+  interpret_block((irstate){ss, s, s, {}}, s);
   let result = msList_last(s->values);
   assertMessage(result.v.value, "interpreting ir yielded an unknown value");
   return result;
