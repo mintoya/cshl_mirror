@@ -24,7 +24,7 @@
 
 #define COMMON_CFLAGS                          \
   INPUT_FLAGS,                                 \
-      "-std=gnu23",                            \
+      "-std=c23",                              \
       "-I", "deps", "-fno-sanitize=vla-bound", \
       "-g"
 
@@ -41,11 +41,7 @@ static const ts_int ts_int_hour = ts_int_min * 60;
 static const ts_int ts_int_day = ts_int_hour * 24;
 
 static inline ts_int timespec_int(timespec in) { return ((ts_int)in.tv_sec * ts_int_s) + in.tv_nsec; }
-static inline timespec int_timespec(ts_int in) {
-  typedef __typeof__(((timespec *)0)->tv_sec) secs;
-  typedef __typeof__(((timespec *)0)->tv_nsec) nsecs;
-  return (timespec){(secs)(in / ts_int_s), (nsecs)(in % ts_int_s)};
-}
+static inline timespec int_timespec(ts_int in) { return (timespec){.tv_sec = (in / ts_int_s), .tv_nsec = (in % ts_int_s)}; }
 static inline ts_int now() {
   struct timespec ts = {};
   assert(timespec_get(&ts, TIME_UTC) == TIME_UTC);
@@ -96,13 +92,14 @@ int build_main(int nargs, char **args) {
   )));
   nob_da_append(&p, cmd_run_async(cmd_imm(
     CC, COMMON_CFLAGS,
-    "-D_GNU_SOURCE",
+    "-I", "deps/tree-sitter/lib/src",
     "-I", "deps/tree-sitter/lib/include",
     "-c", "deps/tree-sitter/lib/src/lib.c",
     "-o", "build/tree_sitter.o"
   )));
   nob_da_append(&p, cmd_run_async(cmd_imm(
     CC, COMMON_CFLAGS,
+    "-I", "deps/tree-sitter/lib/src",
     "-I", "tsversion/src",
     "-c", "tsversion/src/parser.c",
     "-o", "build/parser.o"
@@ -116,18 +113,17 @@ int build_main(int nargs, char **args) {
   // clang-format on
 
   if (!nob_procs_wait(p)) return false;
-  let merge = cmd_imm(
-      CC,
-      COMMON_CFLAGS,
-      "-o",
-      "build/compiler" EXTENSION,
+  if (!nob_cmd_run_sync(cmd_imm(
+          CC,
+          COMMON_CFLAGS,
+          "-o",
+          "build/compiler" EXTENSION,
 
-      "build/main.o",
-      "build/tree_sitter.o",
-      "build/parser.o",
-      "build/ts_adapt.o"
-  );
-  if (!nob_cmd_run_sync(merge)) return false;
+          "build/main.o",
+          "build/tree_sitter.o",
+          "build/parser.o",
+          "build/ts_adapt.o"
+      ))) return false;
 
   Cmd runcmd = {};
   cmd_append(&runcmd, "./build/compiler" EXTENSION);

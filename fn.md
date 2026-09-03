@@ -4,7 +4,7 @@ void is allowed, so a void is just some empty struct
 x ~~ @fn (),void,{};
 e = x();
 ```
-```c
+```cshl
 // functions are comptime, so they dont get variables
 nothing_t _gen_fn1(){}
 e = _gen_fn1();
@@ -20,7 +20,6 @@ x ~~ @fn (i~i32),ct,{
 x(1)(2);
 ```
 ```c
-
 typedef struct _closuretype_1 {
   struct {
     int *i;
