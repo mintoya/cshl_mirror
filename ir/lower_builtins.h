@@ -11,9 +11,6 @@ static u32 lower_builtin_fn(superscope *ss, scope *s, ast *args) {
   return lower_function(ss, s, p, list.ptr[1], list.ptr[2]);
 }
 static u32 lower_builtin_closure(superscope *ss, scope *s, ast *args) { TODO(); }
-// lowers `a`, then coerces the result to a 1-bit r_uint truth value, left as
-// the last value pushed into `s` (ir_if/ir_while read the condition scope's
-// last value directly).
 u32 lower_truthy(superscope *ss, scope *s, ast *a) {
   let l = lower(ss, s, a);
   let v = scope_find(ss, s, l);
@@ -23,13 +20,13 @@ u32 lower_truthy(superscope *ss, scope *s, ast *a) {
       if_decl (let idx, moxmap_get((*info)->named, fp("@truthy")))
         TODO();
   if (Type_isint(t)) {
-    let d = scope_add_value(ss, s, TV(T(tu_of(r_uint, 1))));
+    let d = scope_add_value(ss, s, TV(T(tu_of(r_bool, {}))));
     scope_add_inst(ss, s, (ir)tu_of(ir_cast, {.l = l, .d = d}));
     return d;
   } else if (tu_is(c_ast, t.t))
-    return scope_add_value(ss, s, TV(T(tu_of(r_uint, 1)), avalue(ss->alloc, (bool)(!v->v.c_ast || tu_is(astEmptyStatement, *v->v.c_ast)))));
+    return scope_add_value(ss, s, TV(T(tu_of(r_bool, {})), avalue(ss->alloc, (bool)(!v->v.c_ast || tu_is(astEmptyStatement, *v->v.c_ast)))));
   else if (tu_is(c_type, t.t))
-    return scope_add_value(ss, s, TV(T(tu_of(r_uint, 1)), avalue(ss->alloc, (bool)(!v->v.c_type || !Type_cmp(T(tu_of(r_void, {})), *v->v.c_type)))));
+    return scope_add_value(ss, s, TV(T(tu_of(r_bool, {})), avalue(ss->alloc, (bool)(!v->v.c_type || !Type_cmp(T(tu_of(r_void, {})), *v->v.c_type)))));
   else error_print(a, "no way to extract truthyness from {Type}", t);
 }
 static u32 lower_builtin_cif(superscope *ss, scope *s, ast *args) {
@@ -41,7 +38,12 @@ static u32 lower_builtin_cif(superscope *ss, scope *s, ast *args) {
     lower_truthy(ss, ns, list.ptr[0]);
     interpret(ss, ns);
   });
-  TODO("expect a one bit number, known value obviously");
+  assertMessage(tu_is(r_bool, value.t.t));
+  assertMessage(value.v.value);
+
+  if (!!*(bool *)value.v.value) lower(ss, s, list.ptr[1]);
+  else if (list.len == 3) lower(ss, s, list.ptr[2]);
+
   return scope_add_value(ss, s, TV(T(tu_of(r_void, {}))));
 }
 static u32 lower_builtin_if(superscope *ss, scope *s, ast *args) {
@@ -404,6 +406,7 @@ static u32 lower_builtin(superscope *ss, scope *s, builtin_id builtin, ast *args
       (builtin__id, /*     */ lower_builtin_id(ss, s, args)),
       (builtin_ast, /*     */ lower_builtin_bare_type(ss, s, args, T(tu_of(c_ast, {})))),
       (builtin_any, /*     */ lower_builtin_bare_type(ss, s, args, T(tu_of(c_any, {})))),
+      (builtin_bool, /*    */ lower_builtin_bare_type(ss, s, args, T(tu_of(r_bool, {})))),
       (builtin_void, /*    */ lower_builtin_bare_type(ss, s, args, T(tu_of(r_void, {})))),
       (builtin_int, /*     */ lower_builtin_bare_type(ss, s, args, T(tu_of(c_int, {})))),
       (builtin_type, /*    */ lower_builtin_bare_type(ss, s, args, T(tu_of(c_type, {})))),

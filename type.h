@@ -27,6 +27,7 @@ typedef enum : u8 {
   builtin_ast,      // @ast() type of ast
   builtin_any,      // @any() type of any
   builtin_void,     // @void() the void type
+  builtin_bool,     // @bool() compile time bigint
   builtin_int,      // @int() compile time bigint
   builtin_type,     // @type() the type of a type
   builtin_const,    // @const(T) constant
@@ -325,42 +326,42 @@ static inline void typeTreePrinterWorker_add(TypeTree t, moxmap(TypeTree, u32) v
 }
 
 typePrinter(builtin_id) {
-  switch (in) {
-      // clang-format off
-    case(builtin_if):PUTS("if");break;
-    case(builtin_cif):PUTS("cif");break;
-    case(builtin__id):PUTS("id");break;
-    case(builtin_fn):PUTS("fn");break;
-    case(builtin_closure):PUTS("closure");break;
-    case(builtin_ast):PUTS("ast");break;
-    case(builtin_arrof):PUTS("arrof");break;
-    case(builtin_ptrof):PUTS("ptrof");break;
-    case(builtin_sizeof):PUTS("sizeof");break;
-    case(builtin_alignof):PUTS("alignof");break;
-    case(builtin_offsetof):PUTS("offsetof");break;
-    case(builtin_at):PUTS("at");break;
-    case(builtin_where):PUTS("where");break;
-    case(builtin_any):PUTS("any");break;
-    case(builtin_void):PUTS("void");break;
-    case(builtin_int):PUTS("int");break;
-    case(builtin_sint):PUTS("sint");break;
-    case(builtin_uint):PUTS("uint");break;
-    case(builtin_const):PUTS("const");break;
-    case(builtin_volatile):PUTS("volatile");break;
-    case(builtin_type):PUTS("type");break;
-    case(builtin_struct):PUTS("struct");break;
-    case(builtin__this):PUTS("this");break;
-    case(builtin_while):PUTS("while");break;
-    case(builtin_return):PUTS("return");break;
-    case(builtin_typeof):PUTS("typeof");break;
-    case(builtin_break):PUTS("break");break;
-    case(builtin_continue):PUTS("break");break;
-    case(builtin_qot):PUTS("qot");break;
-    case(builtin_uqot):PUTS("uqot");break;
-    case(builtin_ref):PUTS("ref");break;
-    case(builtin_reft):PUTS("reft");break;
-      // clang-format on
-  }
+  switch_tuple(
+      in,
+      (builtin_fn, /*      */ PUTS("fn")),
+      (builtin_at, /*      */ PUTS("at")),
+      (builtin_if, /*      */ PUTS("if")),
+      (builtin__id, /*     */ PUTS("id")),
+      (builtin_qot, /*     */ PUTS("qot")),
+      (builtin_ref, /*     */ PUTS("ref")),
+      (builtin_any, /*     */ PUTS("any")),
+      (builtin_int, /*     */ PUTS("int")),
+      (builtin_cif, /*     */ PUTS("cif")),
+      (builtin_ast, /*     */ PUTS("ast")),
+      (builtin_uqot, /*    */ PUTS("uqot")),
+      (builtin_reft, /*    */ PUTS("reft")),
+      (builtin_type, /*    */ PUTS("type")),
+      (builtin_void, /*    */ PUTS("void")),
+      (builtin_sint, /*    */ PUTS("sint")),
+      (builtin_uint, /*    */ PUTS("uint")),
+      (builtin_bool, /*    */ PUTS("bool")),
+      (builtin__this, /*   */ PUTS("this")),
+      (builtin_where, /*   */ PUTS("where")),
+      (builtin_arrof, /*   */ PUTS("arrof")),
+      (builtin_ptrof, /*   */ PUTS("ptrof")),
+      (builtin_break, /*   */ PUTS("break")),
+      (builtin_const, /*   */ PUTS("const")),
+      (builtin_while, /*   */ PUTS("while")),
+      (builtin_sizeof, /*  */ PUTS("sizeof")),
+      (builtin_struct, /*  */ PUTS("struct")),
+      (builtin_return, /*  */ PUTS("return")),
+      (builtin_typeof, /*  */ PUTS("typeof")),
+      (builtin_alignof, /* */ PUTS("alignof")),
+      (builtin_closure, /* */ PUTS("closure")),
+      (builtin_continue, /**/ PUTS("continue")),
+      (builtin_offsetof, /**/ PUTS("offsetof")),
+      (builtin_volatile, /**/ PUTS("volatile")),
+  );
 }
 void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printerfunction_context _ctx);
 void typePrinterWorker(Type in, moxmap(TypeTree, u32) visitedmap, printerfunction_context _ctx) {
