@@ -84,7 +84,13 @@ void irsig_return(irsig *_sig, typed_value v) {
 void interpret_ret(irstate st, ir_ret c) { irsig_return(&st.sig, irstate_findR(st, c)); }
 void interpret_break(irstate st, ir_break c) { return irsig_break(&st.sig); }
 void interpret_cont(irstate st, ir_cont c) { return irsig_continue(&st.sig); }
-void interpret_set(irstate st, ir_set c) { TODO(); }
+void interpret_set(irstate st, ir_set c) {
+  let l = scope_find(st.ss, st.s, c.l);
+  let d = scope_find(st.ss, st.s, c.d);
+  println("[LOG] in_set {*:typed_value}->{*:typed_value}", l, d);
+
+  TODO();
+}
 void interpret_cast(irstate st, ir_cast c) {
   let d = irstate_find(st, c.d);
   let l = irstate_find(st, c.l);

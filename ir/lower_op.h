@@ -1,5 +1,6 @@
 #pragma once
 #include "common.h"
+#include "function.h"
 #include "lower_builtins.h"
 #include "scope.h"
 #include "wheels/fptr.h"
@@ -14,6 +15,8 @@ u32 lower_call(superscope *ss, scope *s, u32 left, ast *args) {
   let l = scope_find(ss, s, left);
   iflet_tu (let builtin, builtin, l->t.t)
     return lower_builtin(ss, s, builtin, args);
+  iflet_tu (let fn, c_fun, l->t.t)
+    return lower_function_call(ss, s, left, args);
 
   error_print(args, "unsupported call on {*:typed_value}", l);
 }

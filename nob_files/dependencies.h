@@ -1,3 +1,4 @@
+#include <process.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -23,6 +24,16 @@ char *strcats(char *c, ...) {
   return c;
 }
 #define strcats(cp, ...) strcats(cp __VA_OPT__(, __VA_ARGS__, (char *)0))
+char *strcats_space(char *c, ...) {
+  va_list l;
+  va_start(l, c);
+  char *nc = 0;
+  while ((nc = va_arg(l, char *)))
+    strcat(strcat(c, nc), " ");
+  va_end(l);
+  return c;
+}
+#define strcats_space(cp, ...) strcats_space(cp __VA_OPT__(, __VA_ARGS__, (char *)0))
 int clone(char *url) {
   return system(strcats((char[1024]){}, "git clone ", url));
 }
@@ -37,12 +48,13 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  if (system(CC " -o nob" EXTENSION " nob.c")) {
+  if (rename("nob" EXTENSION, "nob.old" EXTENSION)) {
+    puts("Failed to rename self\n");
+    return 1;
+  }
+  if (system(strcats_space(((char[1024]){}), CC, "-o", "nob" EXTENSION, "nob.c"))) {
     puts("Failed to recompile self\n");
     return 1;
   }
-  char cmd[1024] = "./nob" EXTENSION;
-  for (int i = 1; i < argc; ++i)
-    strcats(cmd, " ", argv[i]);
-  return system(cmd);
+  printf("done cloning dependencies, re-run nob");
 }
