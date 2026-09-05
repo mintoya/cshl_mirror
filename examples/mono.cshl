@@ -1,5 +1,5 @@
-type ~~ @type();
-ref ~~ @refT;
+type  ~~ @type();
+ref   ~~ @refT;
 void  ~~ @void();
 
 hshr ~~ @fn (

@@ -25,7 +25,6 @@ typedef struct function {
   slice(astptr) params;
   ast *retT;
   ast *body;
-  scope *defscope;
   moxmap(sliceDef(Type), function_instance) mp;
 } function;
 struct superscope {

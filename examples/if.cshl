@@ -42,6 +42,6 @@ if' (one == 2) {
   one = 0;
 };
 
-cnd ~~ @fn((a ~any,b ~any,c ~@typeof b),any,{
-  if (a) (return b) else (return c);
+cnd ~~ @fn((a ~any,b ~any,c ~(@typeof b)),any,{
+  if' (a) (return b) else (return c);
 });

@@ -1,9 +1,7 @@
 asize ~= 1;
 type ~~ @type();
 increasing_array~~@fn((t~type),type,
-  1
-  |> { asize = asize + _;} 
-  |> return @arr _,t );
+   return @arr { asize = asize + 1;},t );
 
 a ~increasing_array @sint 8; // 2 i8's
 b ~increasing_array @uint 8; // 3 u8's

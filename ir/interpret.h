@@ -39,8 +39,11 @@ Type Type_fnr(Type_noref tnr) {
   };
 }
 typed_value irstate_findR(irstate irs, u32 idx) {
+  let res = scope_find(irs.ss, irs.s, idx);
+  if (!(idx > irs.root->start))
+    println("[LOG] ir getting {*:typed_value} from out of scope", res);
   assertMessage(idx > irs.root->start);
-  return *scope_find(irs.ss, irs.s, idx);
+  return *res;
 }
 typed_value_noref irstate_find(irstate irs, u32 idx) {
   let tc = irstate_findR(irs, idx);

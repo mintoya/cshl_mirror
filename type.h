@@ -1,5 +1,6 @@
 #pragma once
 #include "ast.h"
+#include <assert.h>
 #include <limits.h>
 #include <wheels/bigint.h>
 #include <wheels/fptr.h>

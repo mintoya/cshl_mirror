@@ -1,7 +1,8 @@
-i32 ~@type()~ @sint(32);
+type ~~ @type();
+i32 ~type~ @sint(32);
 { 
-  Point ~@type()~ @struct{
-    Self ~@type()~ @this();
+  Point ~type~ @struct{
+    Self ~type~ @this();
     x ~i32;
     y ~i32;
   };
@@ -9,8 +10,8 @@ i32 ~@type()~ @sint(32);
   px ~~ a.x;
 };
 { 
-  Point ~@type()~ @struct{
-    Self ~@type()~ @this();
+  Point ~type~ @struct{
+    Self ~type~ @this();
     x ~i32;
     y ~i32;
     sz ~~ @sizeof(Self);
