@@ -3,6 +3,7 @@
 #include "common.h"
 #include "ir.h"
 #include "wheels/macros.h"
+#include "wheels/oxmap.h"
 #include <assert.h>
 #include <wheels/allocators/cballocator.h>
 #include <wheels/sList.h>
@@ -30,6 +31,19 @@ scope *scope_inferior(superscope *b, scope *s) {
   );
   scope_add_value(b, res, TV(T(tu_of(r_void, {}))));
   return res;
+}
+scope *scope_copy(superscope *ss, scope *s) {
+  return avalue(
+      ss->alloc,
+      ((scope){
+
+          .parent = s->parent,
+          .instructions = msList_initArr(ss->alloc, *msList_vla(s->instructions)),
+          .values = msList_initArr(ss->alloc, *msList_vla(s->values)),
+          .named = (moxmap(fptr, u32))oxmap_copy(ss->alloc, (oxmap *)s->named),
+          .start = s->start,
+      })
+  );
 }
 void scope_destroy(superscope *b, scope *s) {
   msList_deInit(b->alloc, s->values);

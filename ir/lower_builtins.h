@@ -261,7 +261,7 @@ static u32 lower_builtin_intty(superscope *ss, scope *s, ast *args, bool is_sign
   );
 }
 static u32 lower_builtin_typeof(superscope *ss, scope *s, ast *args) {
-  return scope_add_value(ss, s, Type_asValue(ss, temporary_interpret(ss, s, args).t));
+  return scope_add_value(ss, s, Type_asValue(ss, scope_find(ss, s, lower(ss, s, args))->t));
 }
 static u32 lower_builtin_arrof(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
