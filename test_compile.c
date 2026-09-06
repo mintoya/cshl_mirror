@@ -87,6 +87,46 @@ static typed_value ast_probe(allocfn arena, fptr dotwork, fptr arg) {
   return interpret_source(arena, fp(src));
 }
 
+test_fn(interpret_comptime_recursion) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "fact ~~ @fn((n ~@int),@int,{\n"
+          "  @cif(n leq 1, {1;}, {n * fact(n - 1);});\n"
+          "});\n"
+          "fact(5);\n"
+      )
+  );
+
+  test_assert(tu_is(c_int, r.t.t));
+  test_assert(!BInt.cmp(r.v.c_int, BInt.from.i64(arena, 120)));
+}
+
+test_fn(interpret_runtime_recursion) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "sum ~~ @fn((n ~@sint(32)),@sint(32),{\n"
+          "  @if(n leq 0, { zero ~ @sint(32) = 0; return zero; });\n"
+          "  rest ~ @sint(32) = sum(n - 1);\n"
+          "  total ~ @sint(32) = n + rest;\n"
+          "  return total;\n"
+          "});\n"
+          "sum(4);\n"
+      )
+  );
+
+  test_assert(tu_is(r_sint, r.t.t));
+  test_inteq(tu_catch(r_sint, r.t.t), 32);
+  test_inteq(*(i32 *)r.v.value, 10);
+}
+
 test_fn(ast_dot_operator_match) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };

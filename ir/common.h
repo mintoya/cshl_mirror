@@ -15,6 +15,7 @@ struct scope {
   moxmap(fptr, u32) named;
   u32 start;
 };
+sliceDef(scope);
 
 typedef struct {
   Type ret;
@@ -45,6 +46,8 @@ u32 scope_add_value(superscope *env, scope *s, typed_value v);
 Type *ss_getType(superscope *ss, Type t);
 TypeTree *ss_getTypeTree(superscope *ss, TypeTree t);
 typed_value *scope_find(superscope *env, scope *s, u32 idx);
+scope *scope_copy(superscope *ss, scope *s);
+static inline void scope_bind(superscope *env, scope *s, u32 idx, fptr name);
 #define T(...) ((Type){.t = __VA_ARGS__})
 #define TV(...) ((typed_value){__VA_ARGS__})
 

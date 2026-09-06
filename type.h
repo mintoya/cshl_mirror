@@ -56,6 +56,8 @@ typedef enum : u8 {
 } builtin_id;
 //{type
 typedef struct Type Type;
+sliceDef(Type);
+
 typedef struct TypeTree TypeTree;
 typedef struct r_struct_item r_struct_item;
 typedef struct r_bitf_item r_bitf_item;

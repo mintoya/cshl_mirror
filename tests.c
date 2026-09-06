@@ -6,6 +6,7 @@
 
 fptr *filectx = nullptr;
 __attribute__((noreturn)) void(error_at)(u8 *location, fptr message) {
+  fflush(stdout); // otherwise the error text is lost when the trap kills the process
   assertMessage(false);
 }
 

@@ -1,9 +1,9 @@
 type ~~ @type();
 a ~  @sint(8);
-b ~= "h";
+b ~= "hellos";
 
 two~~@fn((t ~type),type,
   return @arr(2 , t));
 
-at ~two(@typeof(a));
-bt ~two(@typeof(b));
+at ~two @typeof a;
+bt ~two @typeof b;

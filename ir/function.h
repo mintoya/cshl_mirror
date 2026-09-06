@@ -105,8 +105,10 @@ static u32 lower_runtime_call(
     scope_add_inst(ss, s, (ir)tu_of(ir_call, {.l = fn, .d = d, .args = iargs}));
     return d;
   }
-  lower(ss, fnscope, fstruct->body);
+  // register the specialization before lowering the body so a recursive self-call
+  // resolves to it instead of re-lowering the body forever
   moxmap_set(fstruct->mp, sig, ((function_instance){.ret = retT, .spec = fnscope}));
+  lower(ss, fnscope, fstruct->body);
   let d = scope_add_value(ss, s, TV(retT));
   scope_add_inst(ss, s, (ir)tu_of(ir_call, {.l = fn, .d = d, .args = iargs}));
   return d;
@@ -138,8 +140,13 @@ static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args,
       scope_bind(ss, fnscope, (*iargs)[idx] = scope_add_value(ss, fnscope, TV_ast(argsList.ptr[idx - nlead])), name);
     } else {
       let arg = (nlead && idx == 0) ? lead : lower(ss, s, argsList.ptr[idx - nlead]);
-      if (Type_is_comptime(t)) (*iargs)[idx] = arg;
-      else (*iargs)[idx] = coerce_type(ss, s, arg, t);
+      if (Type_is_comptime(t)) {
+        // comptime params need their value now; computed args (rawop etc.) only exist
+        // as ir, so evaluate the arg eagerly
+        if (!(nlead && idx == 0) && !scope_find(ss, s, arg)->v.value)
+          scope_find(ss, s, arg)->v = temporary_interpret(ss, s, argsList.ptr[idx - nlead]).v;
+        (*iargs)[idx] = arg;
+      } else (*iargs)[idx] = coerce_type(ss, s, arg, t);
       let d = scope_add_value(ss, fnscope, TV(t));
       scope_add_inst(ss, fnscope, (ir)tu_of(ir_farg, {.l = idx, .d = d}));
       scope_bind(ss, fnscope, d, name);
