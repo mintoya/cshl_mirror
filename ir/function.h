@@ -73,13 +73,11 @@ u32 lower_function(superscope *ss, scope *s, astPBlock args, ast *retT, ast *bod
   return res;
 }
 static u32 coerce_type(superscope *ss, scope *s, u32 left, Type to);
-// lower_function_call with `lead`: an extra argument that has already been lowered to
-// a value in `s` (used for a:b(...) == a.b(a,...), where a is the receiver).
-static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args, u32 lead) {
+static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args, u32 lead) { // TODO: this does too damn much
   let it = scope_find(ss, s, fn);
   let fun = tu_catch(c_fun, it->t.t);
   let argsList = builtin_arg_list(&args);
-  let nlead = lead ? 1 : 0;
+  let nlead = !!lead;
   if (argsList.len + nlead != mList_len(fun) - 1)
     error_print(args, "expected {} args, got {}", mList_len(fun) - 1, argsList.len + nlead);
 
@@ -101,9 +99,6 @@ static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args,
       scope_bind(ss, fnscope, (*iargs)[idx] = scope_add_value(ss, fnscope, TV_ast(argsList.ptr[idx - nlead])), name);
     } else {
       let arg = (nlead && idx == 0) ? lead : lower(ss, s, argsList.ptr[idx - nlead]);
-      // comptime-typed params get the raw value: coercing would emit an ir_cast whose
-      // register is only filled when the caller's scope runs, too late for the body
-      // (which is lowered and interpreted right here for comptime calls)
       if (Type_is_comptime(t)) (*iargs)[idx] = arg;
       else (*iargs)[idx] = coerce_type(ss, s, arg, t);
       let d = scope_add_value(ss, fnscope, TV(t));
@@ -116,22 +111,18 @@ static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args,
   (*sig)[argsList.len + nlead] = retT;
 
   if (Type_is_comptime(retT)) {
-    // the call happens at compile time, and the body is lowered now, so the body may
-    // need to read the parameter values while it is being lowered (e.g. @arr(2, t)).
-    // bind the args into the parameter registers up front; the ir_farg's emitted above
-    // then find their register already filled and do nothing.
     foreach (let p, span(fstruct.params.ptr, fstruct.params.len)) {
       let idx = p - fstruct.params.ptr;
       let dcl = tu_catch(astDecl, **p, error_print(*p, "function parameter must be a decl"));
       let t = (*sig)[idx];
       if (!Type_is_comptime(t))
         error_print(**p, "comptime function cannot take a runtime value");
-      if (tu_is(c_ast, t.t)) continue; // ast params already hold their raw ast
+      if (tu_is(c_ast, t.t)) continue;
       let name = id_from_ast(ss, fnscope, dcl.name);
       if_decl (let b, moxmap_get(fnscope->named, name))
         scope_find(ss, fnscope, *b)->v = scope_find(ss, s, (*iargs)[idx])->v;
     }
-    typed_value result = {.t = retT};
+    let result = TV(retT);
     lower(ss, fnscope, fstruct.body);
     interpret_sig(ss, fnscope, &result);
     scope_destroy(ss, fnscope);

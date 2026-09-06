@@ -11,11 +11,11 @@ if ~~ @fn (a ~ast),ast,{
   cond ~ast~ call.opleft;
   rest ~ast~ call.opright; // not putting ast in the expected type causes an evaluation of the ast argument
 
-  @if((rest."()".opright."()".opleft == "else"), {
+  @cif((rest."()".opright."()".opleft == "else"), {
     then ~ast~ rest.opleft;
     else ~ast~ rest.opright."()";
 
-    @if(else and (rest.opright."()".opleft == "else"), return @qot @if(
+    @cif(else and (rest.opright."()".opleft == "else"), return @qot @cif(
             @uqot(cond),
             @uqot(then),
             @uqot(else.opright)
@@ -23,7 +23,7 @@ if ~~ @fn (a ~ast),ast,{
     );
   });
 
-  return @qot @if(
+  return @qot @cif(
       @uqot(cond),
       @uqot(rest)
   );

@@ -327,10 +327,6 @@ static struct { // opNumbers
       iexpand,
       set;
 } opNumbers = {};
-
-// opNumbers is a per-TU static (every TU including ast.h gets its own copy),
-// so the initializer lives here as a constructor: each TU initializes its own
-// copy automatically instead of each .c file having to do it.
 [[gnu::constructor]] static void initOpNumbers() {
   typedef union {
     char s[sizeof(u32) + 1];
@@ -361,10 +357,3 @@ static struct { // opNumbers
   opNumbers.iexpand = /**/ ((opS){"'"}).n;
 }
 
-typedef struct DepthState {
-  outputFunction inner_put;
-  void *inner_arb;
-  usize depth;
-  usize indent_spaces;
-  bool at_line_start;
-} DepthState;

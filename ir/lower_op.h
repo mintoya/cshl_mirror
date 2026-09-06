@@ -7,10 +7,7 @@
 #include "wheels/macros.h"
 #include "wheels/mytypes.h"
 #include <string.h>
-u32 lower_call_inner(superscope *ss, scope *s, c_fun f, slice(u32) args) { TODO("actually decide what an r_func is"); }
 u32 lower_call_extra(superscope *ss, scope *s, u32 left, u32 first, ast *args) {
-  // a:b(...) == a.b(a, ...): by the time we get here the receiver has been lowered
-  // (first) and `left` is the a.b member, so this is just a call with `first` prepended
   let l = scope_find(ss, s, left);
   iflet_tu (let fn, c_fun, l->t.t)
     return lower_function_call_with(ss, s, left, args, first);
@@ -60,16 +57,49 @@ u32 lower_overload_possible(superscope *ss, scope *s, u32 left, ast *right, u32 
          result;
        })),
       (c_ast, _, ({
-         TODO(
-             "opwerator overloading \
-             dot :\
-             strings : opwerators go through a similar process to opNumbers, then if the ast is an opNumber and it's the matching operation, return the operatoin itself. otherwise return the empty ast, which is falsy \
-             literals : lower case versoin of ast is available, also leave unchanged. so .bblock,.ablock,.op... erturn the ast itself if it's that thing\
-             in addition, opleft and opright supported for checking operation members\
-             call :\
-             array acess is a macro call with an ablock, so act accordingly for the block types"
-         );
-         (u32)0;
+         u32 ovl = 0;
+         if (opNumber == opNumbers.dot) {
+           ast *empty = ({
+             static ast empty = (ast)tu_of(astEmptyStatement, {});
+             &empty;
+           });
+           let self = scope_find(ss, s, left)->v.c_ast;
+           iflet_tu (let m, astString, *right) {
+             ast *res = empty;
+             if (self && tu_is(astOp, *self) && m.len >= 2 && m.ptr[0] == '"' && m.ptr[m.len - 1] == '"') {
+               let op = tu_catch(astOp, *self);
+               union {
+                 u32 n;
+                 char s[sizeof(u32)];
+               } spelling = {};
+               memcpy(spelling.s, m.ptr + 1, m.len - 2);
+               if (op.number_rep == spelling.n) res = self;
+             }
+             ovl = scope_add_value(ss, s, TV_ast(res));
+           } else iflet_tu (let m, astId, *right) {
+             ast *res = empty;
+             if (self)
+               iflet_tu (let op, astOp, *self) {
+                 if (fptr_eq(m, "opleft")) res = op.left ?: empty;
+                 else if (fptr_eq(m, "opright")) res = op.right ?: empty;
+               }
+             if (res == empty && self)
+               res = tu_match_exp(
+                   *self,
+                   (astOp, _, /*    */ fptr_eq(m, "op") /*    */ ? self : empty),
+                   (astId, _, /*    */ fptr_eq(m, "id") /*    */ ? self : empty),
+                   (astDecl, _, /*  */ fptr_eq(m, "decl") /*  */ ? self : empty),
+                   (astNumber, _, /**/ fptr_eq(m, "number") /**/ ? self : empty),
+                   (astString, _, /**/ fptr_eq(m, "string") /**/ ? self : empty),
+                   (astPBlock, _, /**/ fptr_eq(m, "pblock") /**/ ? self : empty),
+                   (astBBlock, _, /**/ fptr_eq(m, "bblock") /**/ ? self : empty),
+                   (astABlock, _, /**/ fptr_eq(m, "ablock") /**/ ? self : empty),
+                   (astEmptyStatement, _, empty),
+               );
+             ovl = scope_add_value(ss, s, TV_ast(res));
+           }
+         }
+         ovl;
        })),
   );
 }

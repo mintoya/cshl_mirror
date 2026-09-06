@@ -72,3 +72,70 @@ test_fn(interpret_type_fn) {
   test_inteq(arr.count, 2);
   test_inteq(tu_catch(r_sint, *arr.t), 8);
 }
+
+static typed_value ast_probe(allocfn arena, fptr dotwork, fptr arg) {
+  let src = snprint(
+      arena,
+      "ast ~~ @ast();\n"
+      "mac ~~ @fn((a ~ast),ast,/{ return {slice(c8)}; });\n"
+      "mac({slice(c8)});\n",
+      dotwork,
+      arg
+  );
+  src.len--;
+  return interpret_source(arena, fp(src));
+}
+
+test_fn(ast_dot_operator_match) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = ast_probe(arena, fp("a.\"+\""), fp("1 + 2"));
+  test_assert(tu_is(c_ast, r.t.t));
+  test_assert(tu_is(astOp, *r.v.c_ast));
+  test_inteq(tu_catch(astOp, *r.v.c_ast).number_rep, opNumbers.plus);
+}
+
+test_fn(ast_dot_operator_mismatch) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = ast_probe(arena, fp("a.\"+\""), fp("1 - 2"));
+  test_assert(tu_is(c_ast, r.t.t));
+  test_assert(tu_is(astEmptyStatement, *r.v.c_ast));
+}
+
+test_fn(ast_dot_operation_members) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let l = ast_probe(arena, fp("a.opleft"), fp("1 + 2"));
+  test_assert(tu_is(astNumber, *l.v.c_ast));
+  test_fpeq(tu_catch(astNumber, *l.v.c_ast), "1");
+  let rr = ast_probe(arena, fp("a.opright"), fp("1 + 2"));
+  test_assert(tu_is(astNumber, *rr.v.c_ast));
+  test_fpeq(tu_catch(astNumber, *rr.v.c_ast), "2");
+}
+
+test_fn(ast_dot_member_check_on_non_op) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let l = ast_probe(arena, fp("a.opleft"), fp("7"));
+  test_assert(tu_is(astEmptyStatement, *l.v.c_ast));
+}
+
+test_fn(ast_dot_kind_check) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let i = ast_probe(arena, fp("a.id"), fp("foo"));
+  test_assert(tu_is(astId, *i.v.c_ast));
+  test_fpeq(tu_catch(astId, *i.v.c_ast), "foo");
+
+  let o = ast_probe(arena, fp("a.op"), fp("1 + 2"));
+  test_assert(tu_is(astOp, *o.v.c_ast));
+
+  let e = ast_probe(arena, fp("a.id"), fp("7"));
+  test_assert(tu_is(astEmptyStatement, *e.v.c_ast));
+}
