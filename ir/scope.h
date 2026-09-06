@@ -32,19 +32,52 @@ scope *scope_inferior(superscope *b, scope *s) {
   scope_add_value(b, res, TV(T(tu_of(r_void, {}))));
   return res;
 }
-scope *scope_copy(superscope *ss, scope *s) {
-  return avalue(
+// deep-copies a scope tree: child scopes embedded in instructions must point at
+// the copy too, or a copied activation resolves values through the original
+// scope's storage instead of its own
+static scope *scope_copy_deep(superscope *ss, scope *s, scope *parent) {
+  if (!s) return nullptr;
+  // oxmap_copy asserts on empty maps, so mint a fresh one for those
+  moxmap(fptr, u32) named = ((oxmap *)s->named)->keys->length
+                                ? (moxmap(fptr, u32))oxmap_copy(ss->alloc, (oxmap *)s->named)
+                                : moxmap_init(ss->alloc, fptr, u32, cmpfptr);
+  scope *res = avalue(
       ss->alloc,
       ((scope){
 
-          .parent = s->parent,
+          .parent = parent,
           .instructions = msList_initArr(ss->alloc, *msList_vla(s->instructions)),
           .values = msList_initArr(ss->alloc, *msList_vla(s->values)),
-          .named = (moxmap(fptr, u32))oxmap_copy(ss->alloc, (oxmap *)s->named),
+          .named = named,
           .start = s->start,
       })
   );
+  foreach (let i, span(res->instructions, msList_len(res->instructions))) {
+    switch (i->tag) {
+      case ir_block_enum: {
+        let b = tu_catch(ir_block, *i);
+        *i = (ir)tu_of(ir_block, scope_copy_deep(ss, b, res));
+        break;
+      }
+      case ir_if_enum: {
+        let f = tu_catch(ir_if, *i);
+        *i = (ir)tu_of(
+            ir_if,
+            {.cnd = scope_copy_deep(ss, f.cnd, res), .t = scope_copy_deep(ss, f.t, res), .f = scope_copy_deep(ss, f.f, res)}
+        );
+        break;
+      }
+      case ir_while_enum: {
+        let w = tu_catch(ir_while, *i);
+        *i = (ir)tu_of(ir_while, {.cnd = scope_copy_deep(ss, w.cnd, res), .body = scope_copy_deep(ss, w.body, res)});
+        break;
+      }
+      default: break;
+    }
+  }
+  return res;
 }
+scope *scope_copy(superscope *ss, scope *s) { return scope_copy_deep(ss, s, s->parent); }
 void scope_destroy(superscope *b, scope *s) {
   msList_deInit(b->alloc, s->values);
   msList_deInit(b->alloc, s->instructions);
@@ -113,6 +146,7 @@ TypeTree *ss_getTypeTree(superscope *ss, TypeTree t) {
       //
       (r_uint, u, (TypeTree)tu_of(r_uint, u)),
       (r_sint, s, (TypeTree)tu_of(r_sint, s)),
+      (r_bool, _, (TypeTree)tu_of(r_bool, {})),
       //
       (r_tag, tag, (TypeTree)tu_of(r_tag, {tag.t, tag.name})),
       (r_arr, arr, (TypeTree)tu_of(r_arr, {ss_getTypeTree(ss, *arr.t), arr.count})),

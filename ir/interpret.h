@@ -33,8 +33,7 @@ static inline void *irstate_mem(irstate st, u32 idx) {
   return tv->v.value = tv->v.value ?: acreate(st.ss->alloc, u8[size ?: 1]);
 }
 
-// reads a value through a reference; a ref stores the pointee's storage in its own
-static typed_value ir_load(irstate st, u32 idx) {
+static typed_value ir_readthrough(irstate st, u32 idx) {
   typed_value *tv = irstate_find(st, idx);
   if (!tv->t.isref) return *tv;
   Type t = tv->t;
@@ -63,16 +62,9 @@ void irsig_return(irsig *_sig, typed_value v) {
   return;
 }
 void interpret_ret(irstate st, ir_ret c) {
-  let x = *irstate_find(st, c);
-  typed_value res =
-      (x.t.isref)
-          ? ({
-              x.v.value = irstate_mem(st, c);
-              x.t.isref = false;
-              x;
-            })
-          : x;
-  irsig_return(&st.sig, res);
+  // bare-id returns lower as references; unfold them to the pointee's storage
+  let x = ir_readthrough(st, c);
+  irsig_return(&st.sig, x);
 }
 void interpret_break(irstate st, ir_break c) { return irsig_break(&st.sig); }
 void interpret_cont(irstate st, ir_cont c) { return irsig_continue(&st.sig); }
@@ -96,7 +88,7 @@ void interpret_set(irstate st, ir_set c) {
 }
 void interpret_cast(irstate st, ir_cast c) {
   let d = irstate_find(st, c.d);
-  let b = int_as_bigint(st.ss, ir_load(st, c.l));
+  let b = int_as_bigint(st.ss, ir_readthrough(st, c.l));
   if (tu_is(c_int, d->t.t)) {
     d->v.c_int = b;
     return;
@@ -136,16 +128,16 @@ void interpret_getptr(irstate st, ir_getptr c) {
 void interpret_getref(irstate st, ir_getref c) { interpret_getptr(st, (ir_getptr){.l = c.l, .d = c.d}); }
 void interpret_putptr(irstate st, ir_putptr c) {
   let d = irstate_find(st, c.d);
-  d->v.value = *(void **)ir_load(st, c.l).v.value;
+  d->v.value = *(void **)ir_readthrough(st, c.l).v.value;
 }
 void interpret_call(irstate st, ir_call c) {
-  let f = irstate_find(st, c.l);
-  let fun = tu_catch(c_fun, f->t.t);
-  let fstruct = (st.ss->functions)[f->v.c_fun - 1];
+  let f = ir_readthrough(st, c.l); // the callee may be a reference, read through it
+  let fun = tu_catch(c_fun, f.t.t);
+  let fstruct = (st.ss->functions)[f.v.c_fun - 1];
   assertMessage(c.args.len + 1 == mList_len(fun));
   value_store *args = (value_store *)acreate(st.ss->alloc, value_store[c.args.len ?: 1]);
   foreach (let a, span(c.args.ptr, c.args.len))
-    args[a - c.args.ptr] = ir_load(st, *a).v;
+    args[a - c.args.ptr] = ir_readthrough(st, *a).v;
 
   // rebuild the specialization key the lowerer used: declared param types + resolved return type
   let keyscope = scope_inferior(st.ss, st.s);
@@ -185,8 +177,8 @@ void interpret_call(irstate st, ir_call c) {
 void interpret_rawop(irstate st, ir_rawop c) {
   let d = irstate_find(st, c.d);
   allocfn al = st.ss->alloc;
-  bigint lhs = int_as_bigint(st.ss, ir_load(st, c.r)); // r holds the left operand, see ir.h
-  bigint rhs = int_as_bigint(st.ss, ir_load(st, c.l));
+  bigint lhs = int_as_bigint(st.ss, ir_readthrough(st, c.r)); // r holds the left operand, see ir.h
+  bigint rhs = int_as_bigint(st.ss, ir_readthrough(st, c.l));
   bool bres = false;
   bigint out = nullptr;
   switch (op_as_enum(c.o)) {
@@ -249,15 +241,15 @@ void interpret_farg(irstate st, ir_farg c) {
   }
 }
 void interpret_array(irstate st, ir_array c) {
-  let l = ir_load(st, c.l);
+  let l = ir_readthrough(st, c.l);
   let arr = tu_catch(r_arr, l.t.t);
-  let idx = int_as_bigint(st.ss, ir_load(st, c.r));
+  let idx = int_as_bigint(st.ss, ir_readthrough(st, c.r));
   bigint_expand(st.ss->alloc, &idx, sizeof(usize) / sizeof(bigint_unit) + 1);
   // no bounds checking, matching the lowerer; a zero-length array has nothing to check against
   *(void **)irstate_mem(st, c.d) = (u8 *)l.v.value + *(usize *)idx * Type_sizeof(T(*arr.t));
 }
 void interpret_field(irstate st, ir_field c) {
-  let l = ir_load(st, c.l);
+  let l = ir_readthrough(st, c.l);
   let strct = ir_find_struct(l.t.t);
   assertMessage(strct, "field access on non-struct (bitfields unsupported)");
   let item = mList_arr(strct)[c.i];

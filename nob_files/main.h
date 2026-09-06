@@ -111,9 +111,9 @@ int build_tests() {
 
   Cmd cmd = {};
 #if defined(_WIN32)
-  cmd_append(&cmd, CC, COMMON_CFLAGS, "-o", "build/tests" EXTENSION, "build/tests.o", "build/tree_sitter.o", "build/parser.o", "build/ts_adapt.o",);
+  cmd_append(&cmd, CC, COMMON_CFLAGS, "-o", "build/tests" EXTENSION, "build/tests.o", "build/tree_sitter.o", "build/parser.o", "build/ts_adapt.o", );
 #else
-  cmd_append(&cmd, CC, COMMON_CFLAGS, "-o", "build/tests" EXTENSION, "build/tests.o", "build/tree_sitter.o", "build/parser.o", "build/ts_adapt.o",);
+  cmd_append(&cmd, CC, COMMON_CFLAGS, "-o", "build/tests" EXTENSION, "build/tests.o", "build/tree_sitter.o", "build/parser.o", "build/ts_adapt.o", );
 #endif
   if (!cmd_run_sync(cmd)) return false;
 

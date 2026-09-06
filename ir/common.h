@@ -257,7 +257,11 @@ static inline bigint int_as_bigint(superscope *ss, typed_value t) {
                 "unhandled integer case , %s",
                 snprint(stdAlloc, "{Type}", t.t).ptr
             );
-          assertMessage(false, "should not be called with a non-int");
+          assertMessage(
+              false,
+              "expeceted integer, found %s",
+              snprint(stdAlloc, "{typed_value}", t).ptr
+          );
         }),
         (bigint) nullptr)),
   );

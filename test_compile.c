@@ -94,9 +94,16 @@ test_fn(interpret_comptime_recursion) {
   let r = interpret_source(
       arena,
       fp(
-          "fact ~~ @fn((n ~@int),@int,{\n"
-          "  @cif(n leq 1, {1;}, {n * fact(n - 1);});\n"
-          "});\n"
+          "fact ~~ @fn("
+          " (n ~@int()),"
+          " @int(),"
+          " {"
+          "   @cif(( n <= 1 ),"
+          "     (return ( 1 )),"
+          "     (return ( n * fact(n - 1) ))"
+          "   );"
+          " }"
+          ");"
           "fact(5);\n"
       )
   );
@@ -113,7 +120,7 @@ test_fn(interpret_runtime_recursion) {
       arena,
       fp(
           "sum ~~ @fn((n ~@sint(32)),@sint(32),{\n"
-          "  @if(n leq 0, { zero ~ @sint(32) = 0; return zero; });\n"
+          "  @if(n <= 0, { zero ~ @sint(32) = 0; return zero; });\n"
           "  rest ~ @sint(32) = sum(n - 1);\n"
           "  total ~ @sint(32) = n + rest;\n"
           "  return total;\n"

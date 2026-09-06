@@ -27,6 +27,8 @@ u32 lower_truthy(superscope *ss, scope *s, ast *a) {
     return scope_add_value(ss, s, TV(T(tu_of(r_bool, {})), avalue(ss->alloc, (bool)(!v->v.c_ast || tu_is(astEmptyStatement, *v->v.c_ast)))));
   else if (tu_is(c_type, t.t))
     return scope_add_value(ss, s, TV(T(tu_of(r_bool, {})), avalue(ss->alloc, (bool)(!v->v.c_type || !Type_cmp(T(tu_of(r_void, {})), *v->v.c_type)))));
+  else if (tu_is(r_bool, t.t))
+    return l;
   else error_print(a, "no way to extract truthyness from {Type}", t);
 }
 static u32 lower_builtin_cif(superscope *ss, scope *s, ast *args) {

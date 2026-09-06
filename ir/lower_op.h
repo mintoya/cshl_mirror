@@ -19,7 +19,6 @@ u32 lower_call(superscope *ss, scope *s, u32 left, ast *args) {
     return lower_builtin(ss, s, builtin, args);
   iflet_tu (let fn, c_fun, l->t.t)
     return lower_function_call(ss, s, left, args);
-
   error_print(args, "unsupported call on {*:typed_value}", l);
 }
 tu_def(
@@ -31,7 +30,7 @@ tu_def(
 u32 lower_overload_possible(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
   let t = scope_find(ss, s, left)->t;
   if (t.ptr_level > 1) return 0;
-  return tu_match_exp(
+  let result = tu_match_exp(
       t.t,
       (default, (u32)0),
       (r_arr, arr, ({ // array index
@@ -98,10 +97,36 @@ u32 lower_overload_possible(superscope *ss, scope *s, u32 left, ast *right, u32 
                );
              ovl = scope_add_value(ss, s, TV_ast(res));
            }
+         } else if (opNumber == opNumbers.eq) {
+           // "checking against string for id. for asts, do it like java":
+           // ast == ast is identity; id/number/string nodes compare their
+           // spelling when the other side is a string
+           let self = scope_find(ss, s, left)->v.c_ast;
+           let other = scope_find(ss, s, lower(ss, s, right));
+           bool res = false;
+           iflet_tu (let arr, r_arr, other->t.t) {
+             if (self) {
+               fptr spelling = tu_match_exp(
+                   *self,
+                   (astId, id, /*     */ id),
+                   (astNumber, num, /*  */ num),
+                   (astString, str, /*  */ str),
+                   (default, (fptr){})
+               );
+               if (spelling.len && spelling.ptr[0] == '"') // string nodes still carry their quotes
+                 spelling = string_escape(ss->alloc, spelling);
+               res = fptr_eq(spelling, ((fptr){arr.count, (u8 *)other->v.value}));
+             }
+           } else if (tu_is(c_ast, other->t.t)) {
+             res = self == other->v.c_ast; // java-style identity
+           }
+           ovl = scope_add_value(ss, s, TV(T(tu_of(r_bool, {})), avalue(ss->alloc, (bool)res)));
          }
          ovl;
        })),
   );
+  // if (!result) println("[LOG] failed overload {opNumber} for {Type}", opNumber, t);
+  return result;
 }
 
 fptr astLit_str(astLit l) { return tu_match_exp(l, (astIdLit, l, l), (astStrLit, l, l), (astNumLit, l, l)); }
