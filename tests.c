@@ -9,3 +9,5 @@ __attribute__((noreturn)) void(error_at)(u8 *location, fptr message) {
   assertMessage(false);
 }
 
+#include "test_compile.c"
+

@@ -52,6 +52,9 @@ typed_value *scope_find(superscope *env, scope *s, u32 idx);
 u32 lower /*                      */ (superscope *ss, scope *s, ast *a);
 // interprets a scope and yields the result
 typed_value interpret /*          */ (superscope *ss, scope *s);
+// interprets a scope with a return slot; yields the value written by ir_ret, or falls
+// back to the scope's last value if the body never returns
+typed_value interpret_sig /*      */ (superscope *ss, scope *s, typed_value *ret);
 // casts the value at c.l to the integer type of reg(c.d), storing the result at c.d
 typed_value temporary_interpret /**/ (superscope *ss, scope *s, ast *a) {
   let work = scope_inferior(ss, s);

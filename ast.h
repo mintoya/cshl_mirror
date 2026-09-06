@@ -328,6 +328,39 @@ static struct { // opNumbers
       set;
 } opNumbers = {};
 
+// opNumbers is a per-TU static (every TU including ast.h gets its own copy),
+// so the initializer lives here as a constructor: each TU initializes its own
+// copy automatically instead of each .c file having to do it.
+[[gnu::constructor]] static void initOpNumbers() {
+  typedef union {
+    char s[sizeof(u32) + 1];
+    u32 n;
+  } opS;
+  opNumbers.call = /*   */ ((opS){"()"}).n;
+  opNumbers.dot = /*    */ ((opS){"."}).n;
+  opNumbers.colon = /*  */ ((opS){":"}).n;
+  opNumbers.mul = /*    */ ((opS){"*"}).n;
+  opNumbers.div = /*    */ ((opS){"/"}).n;
+  opNumbers.mod = /*    */ ((opS){"%"}).n;
+  opNumbers.plus = /*   */ ((opS){"+"}).n;
+  opNumbers.minus = /*  */ ((opS){"-"}).n;
+  opNumbers.oand = /*   */ ((opS){"and"}).n;
+  opNumbers.oor = /*    */ ((opS){"or"}).n;
+  opNumbers.oband = /*  */ ((opS){"band"}).n;
+  opNumbers.obor = /*   */ ((opS){"bor"}).n;
+  opNumbers.shr = /*    */ ((opS){"shr"}).n;
+  opNumbers.shl = /*    */ ((opS){"shl"}).n;
+  opNumbers.mor = /*    */ ((opS){">"}).n;
+  opNumbers.les = /*    */ ((opS){"<"}).n;
+  opNumbers.moq = /*    */ ((opS){">="}).n;
+  opNumbers.leq = /*    */ ((opS){"<="}).n;
+  opNumbers.eq = /*     */ ((opS){"=="}).n;
+  opNumbers.neq = /*    */ ((opS){"!="}).n;
+  opNumbers.pipe = /*   */ ((opS){"|>"}).n;
+  opNumbers.set = /*    */ ((opS){"="}).n;
+  opNumbers.iexpand = /**/ ((opS){"'"}).n;
+}
+
 typedef struct DepthState {
   outputFunction inner_put;
   void *inner_arb;

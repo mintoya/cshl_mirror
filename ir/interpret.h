@@ -1,3 +1,4 @@
+#pragma once
 #include "common.h"
 #include "wheels/macros.h"
 #include "wheels/print/print_pre.h"
@@ -67,6 +68,57 @@ typed_value_noref irstate_find(irstate irs, u32 idx) {
   return result;
 }
 
+// storage helpers -----------------------------------------------------------
+// a register whose scope was never interpreted (e.g. a decl in an outer scope)
+// has no storage yet; the helpers below materialize it on first touch, so
+// instructions always operate on actual memory and never need to know whether a
+// register is a reference, a comptime payload, or still unallocated.
+
+static inline typed_value *irstate_reg(irstate st, u32 idx) { return scope_find(st.ss, st.s, idx); }
+
+// the register's own allocation: the data for a plain value, the pointer cell for
+// a reference
+static inline void *irstate_cell(irstate st, u32 idx) {
+  let tv = irstate_reg(st, idx);
+  if (tv->v.value) return tv->v.value;
+  assertMessage(!Type_is_comptime(tv->t), "comptime values have no storage cell");
+  usize sz = Type_sizeof(tv->t);
+  return sz ? (tv->v.value = acreate(st.ss->alloc, u8[sz])) : nullptr;
+}
+
+// the memory holding a register's value, following a reference once; materializes
+// the pointee on demand
+static inline void *irstate_value(irstate st, u32 idx) {
+  let tv = irstate_reg(st, idx);
+  if (tv->t.isref) {
+    void *cell = irstate_cell(st, idx);
+    if (!*(void **)cell) {
+      Type pointee = tv->t;
+      pointee.isref = false;
+      *(void **)cell = acreate(st.ss->alloc, u8[Type_sizeof(pointee)]);
+    }
+    return *(void **)cell;
+  }
+  return tv->v.value ?: irstate_cell(st, idx);
+}
+
+// where a store lands: through the reference's cell when the register is a
+// reference, otherwise its own storage
+static inline void *irstate_target(irstate st, u32 idx) {
+  let tv = irstate_reg(st, idx);
+  if (Type_is_comptime(tv->t)) return nullptr; // comptime values are copied by payload
+  if (tv->t.isref) {
+    void *cell = irstate_cell(st, idx);
+    if (!*(void **)cell) {
+      Type pointee = tv->t;
+      pointee.isref = false;
+      *(void **)cell = acreate(st.ss->alloc, u8[Type_sizeof(pointee)]);
+    }
+    return *(void **)cell;
+  }
+  return irstate_cell(st, idx);
+}
+
 void irsig_break(irsig *_sig) {
   if (!_sig->brk) error_print(nullptr, "broke in non-breakable context");
   *_sig->brk = 1;
@@ -88,11 +140,18 @@ void interpret_ret(irstate st, ir_ret c) { irsig_return(&st.sig, irstate_findR(s
 void interpret_break(irstate st, ir_break c) { return irsig_break(&st.sig); }
 void interpret_cont(irstate st, ir_cont c) { return irsig_continue(&st.sig); }
 void interpret_set(irstate st, ir_set c) {
-  let l = scope_find(st.ss, st.s, c.l);
-  let d = scope_find(st.ss, st.s, c.d);
-  println("[LOG] in_set {*:typed_value}->{*:typed_value}", l, d);
-
-  TODO();
+  let d = irstate_reg(st, c.d);
+  let l = irstate_reg(st, c.l);
+  void *src = irstate_value(st, c.l);
+  if (Type_is_comptime(d->t)) {
+    // comptime values live in their payload pointer: alias it
+    d->v.value = src;
+    return;
+  }
+  Type dt = d->t;
+  if (dt.isref) dt.isref = false;
+  usize sz = Type_sizeof(dt);
+  if (sz) memcpy(irstate_target(st, c.d), src, sz);
 }
 void interpret_cast(irstate st, ir_cast c) {
   let d = irstate_find(st, c.d);
@@ -127,9 +186,8 @@ void interpret_while(irstate st, ir_while c) {
   }
 }
 void interpret_getptr(irstate st, ir_getptr c) {
-  let l = irstate_find(st, c.l);
-  let d = irstate_find(st, c.d);
-  *(void **)d.v.value = l.v.value;
+  // the destination's cell holds the address of the source's storage
+  *(void **)irstate_cell(st, c.d) = irstate_cell(st, c.l);
 }
 void interpret_getref(irstate st, ir_getref c) { interpret_getptr(st, (ir_getptr){.l = c.l, .d = c.d}); }
 void interpret_putptr(irstate st, ir_putptr c) { TODO(); }
@@ -153,6 +211,9 @@ void interpret_block(irstate st, ir_block c) {
   }
 }
 void interpret_farg(irstate st, ir_farg c) {
+  // comptime calls bind their args into the registers during lowering, in which case
+  // there is no runtime frame to load from
+  if (scope_find(st.ss, st.s, c.d)->v.value) return;
   assertMessage(st.fnctx.func && st.fnctx.args);
   let arr = mList_vla(st.fnctx.func);
   assertMessage(countof(*arr) - 1 > c.l);
@@ -181,9 +242,15 @@ void interpret_op(irstate st, ir inst) {
       (ir_field, /* */ op, interpret_field /* */ (st, op)),
   );
 }
-typed_value interpret(superscope *ss, scope *s) {
-  interpret_block((irstate){ss, s, s, {}}, s);
+typed_value interpret_sig(superscope *ss, scope *s, typed_value *ret) {
+  interpret_block((irstate){.ss = ss, .s = s, .root = s, .sig = {.ret = ret}}, s);
+  if (ret && ret->v.value) return *ret;
   let result = msList_last(s->values);
-  assertMessage(result.v.value, "interpreting ir yielded an unknown value");
+  assertMessage(
+      result.v.value,
+      "interpreting ir yielded an unknown value, %s",
+      snprint(stdAlloc, "{typed_value}", result).ptr
+  );
   return result;
 }
+typed_value interpret(superscope *ss, scope *s) { return interpret_sig(ss, s, nullptr); }

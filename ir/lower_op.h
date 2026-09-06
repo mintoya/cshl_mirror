@@ -9,7 +9,12 @@
 #include <string.h>
 u32 lower_call_inner(superscope *ss, scope *s, c_fun f, slice(u32) args) { TODO("actually decide what an r_func is"); }
 u32 lower_call_extra(superscope *ss, scope *s, u32 left, u32 first, ast *args) {
-  TODO("just a call with an extra member");
+  // a:b(...) == a.b(a, ...): by the time we get here the receiver has been lowered
+  // (first) and `left` is the a.b member, so this is just a call with `first` prepended
+  let l = scope_find(ss, s, left);
+  iflet_tu (let fn, c_fun, l->t.t)
+    return lower_function_call_with(ss, s, left, args, first);
+  error_print(args, "unsupported : call on {*:typed_value}", l);
 }
 u32 lower_call(superscope *ss, scope *s, u32 left, ast *args) {
   let l = scope_find(ss, s, left);

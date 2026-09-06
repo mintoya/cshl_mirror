@@ -15,35 +15,6 @@
 #include "ir/lower.h"
 
 // { util
-[[gnu::constructor]] void initOpNumbers() {
-  typedef union {
-    char s[sizeof(u32) + 1];
-    u32 n;
-  } opS;
-  opNumbers.call = /*   */ ((opS){"()"}).n;
-  opNumbers.dot = /*    */ ((opS){"."}).n;
-  opNumbers.colon = /*  */ ((opS){":"}).n;
-  opNumbers.mul = /*    */ ((opS){"*"}).n;
-  opNumbers.div = /*    */ ((opS){"/"}).n;
-  opNumbers.mod = /*    */ ((opS){"%"}).n;
-  opNumbers.plus = /*   */ ((opS){"+"}).n;
-  opNumbers.minus = /*  */ ((opS){"-"}).n;
-  opNumbers.oand = /*   */ ((opS){"and"}).n;
-  opNumbers.oor = /*    */ ((opS){"or"}).n;
-  opNumbers.oband = /*  */ ((opS){"band"}).n;
-  opNumbers.obor = /*   */ ((opS){"bor"}).n;
-  opNumbers.shr = /*    */ ((opS){"shr"}).n;
-  opNumbers.shl = /*    */ ((opS){"shl"}).n;
-  opNumbers.mor = /*    */ ((opS){">"}).n;
-  opNumbers.les = /*    */ ((opS){"<"}).n;
-  opNumbers.moq = /*    */ ((opS){">="}).n;
-  opNumbers.leq = /*    */ ((opS){"<="}).n;
-  opNumbers.eq = /*     */ ((opS){"=="}).n;
-  opNumbers.neq = /*    */ ((opS){"!="}).n;
-  opNumbers.pipe = /*   */ ((opS){"|>"}).n;
-  opNumbers.set = /*    */ ((opS){"="}).n;
-  opNumbers.iexpand = /**/ ((opS){"'"}).n;
-}
 fptr *filectx = nullptr;
 __attribute__((noreturn)) void(error_at)(u8 *location, fptr message) {
   assertMessage(filectx);

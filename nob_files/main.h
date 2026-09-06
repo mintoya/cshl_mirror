@@ -30,37 +30,47 @@
 
 #define let __auto_type
 #define cmd_imm(...) ({Cmd _r = {};cmd_append(&_r , __VA_ARGS__);_r; })
+#define nob_da_appends(procs, items) \
+  nob_da_append_many(procs, items, countof(items))
+Procs build_compiler(void) {
+  Procs p = {};
+  // clang-format off
+  nob_da_appends(&p, ((Nob_Proc[]) {
+    cmd_run_async(cmd_imm(
+        CC, COMMON_CFLAGS,
+        "-D_GNU_SOURCE",
+        "-I", "deps/tree-sitter/lib/src",
+        "-I", "deps/tree-sitter/lib/include",
+        "-c", "deps/tree-sitter/lib/src/lib.c",
+        "-o", "build/tree_sitter.o"
+    )),
+    cmd_run_async(cmd_imm(
+        CC, COMMON_CFLAGS,
+        "-I", "deps/tree-sitter/lib/src",
+        "-I", "tsversion/src",
+        "-c", "tsversion/src/parser.c",
+        "-o", "build/parser.o"
+    )),
+    cmd_run_async(cmd_imm(
+        CC, COMMON_CFLAGS,
+        "-I", "deps/tree-sitter/lib/include",
+        "-c", "ts_adapt.c",
+        "-o", "build/ts_adapt.o"
+    ))
+  }));
+  // clang-format on
+  return p;
+}
 int build_main(int nargs, char **args) {
-
   if (!mkdir_if_not_exists("build")) return false;
 
-  Procs p = {};
+  Procs p = build_compiler();
 
   // clang-format off
   nob_da_append(&p, cmd_run_async(cmd_imm(
     CC, COMMON_CFLAGS,
     "-c", "main.c",
     "-o", "build/main.o"
-  )));
-  nob_da_append(&p, cmd_run_async(cmd_imm(
-    CC, COMMON_CFLAGS,
-    "-I", "deps/tree-sitter/lib/src",
-    "-I", "deps/tree-sitter/lib/include",
-    "-c", "deps/tree-sitter/lib/src/lib.c",
-    "-o", "build/tree_sitter.o"
-  )));
-  nob_da_append(&p, cmd_run_async(cmd_imm(
-    CC, COMMON_CFLAGS,
-    "-I", "deps/tree-sitter/lib/src",
-    "-I", "tsversion/src",
-    "-c", "tsversion/src/parser.c",
-    "-o", "build/parser.o"
-  )));
-  nob_da_append(&p, cmd_run_async(cmd_imm(
-    CC, COMMON_CFLAGS,
-    "-I", "deps/tree-sitter/lib/include",
-    "-c", "ts_adapt.c",
-    "-o", "build/ts_adapt.o"
   )));
   // clang-format on
 
@@ -85,13 +95,25 @@ int build_main(int nargs, char **args) {
 }
 
 int build_tests() {
+  if (!mkdir_if_not_exists("build")) return false;
+
+  Procs p = build_compiler();
+
+  // clang-format off
+  nob_da_append(&p, cmd_run_async(cmd_imm(
+    CC, COMMON_CFLAGS,
+    "-c", "tests.c",
+    "-o", "build/tests.o"
+  )));
+  // clang-format on
+
+  if (!nob_procs_wait(p)) return false;
+
   Cmd cmd = {};
-  if (!mkdir_if_not_exists("build"))
-    return false;
 #if defined(_WIN32)
-  cmd_append(&cmd, CC, COMMON_CFLAGS, "-o", "build/tests" EXTENSION, "tests.c", "deps/wheels/c11threads/c11threads_win32.c");
+  cmd_append(&cmd, CC, COMMON_CFLAGS, "-o", "build/tests" EXTENSION, "build/tests.o", "build/tree_sitter.o", "build/parser.o", "build/ts_adapt.o", "deps/wheels/c11threads/c11threads_win32.c");
 #else
-  cmd_append(&cmd, CC, COMMON_CFLAGS, "-o", "build/tests" EXTENSION, "tests.c");
+  cmd_append(&cmd, CC, COMMON_CFLAGS, "-o", "build/tests" EXTENSION, "build/tests.o", "build/tree_sitter.o", "build/parser.o", "build/ts_adapt.o");
 #endif
   if (!cmd_run_sync(cmd)) return false;
 
