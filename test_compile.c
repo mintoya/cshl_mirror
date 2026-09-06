@@ -65,6 +65,7 @@ test_fn(interpret_type_fn) {
       )
   );
 
+  println("{typed_value}", r);
   test_assert(tu_is(c_type, r.t.t));
   let ty = *r.v.c_type;
   test_assert(tu_is(r_arr, ty.t));

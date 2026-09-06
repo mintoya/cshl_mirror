@@ -74,6 +74,7 @@ void interpret_set(irstate st, ir_set c) {
       (c_int, _, d->v.c_int = BInt.copy(st.ss->alloc, l->v.c_int)),
       (builtin, _, assertMessage(false)),
       (c_fun, _, d->v.c_fun = l->v.c_fun),
+      (c_type, _, d->v.c_type = l->v.c_type),
       (default, {
         Type dt = d->t;
         dt.isref = false;
