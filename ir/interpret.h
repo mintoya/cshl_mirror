@@ -30,7 +30,7 @@ typed_value *irstate_find(irstate irs, u32 idx) {
 static inline void *irstate_mem(irstate st, u32 idx) {
   let tv = irstate_find(st, idx);
   let size = Type_sizeof(tv->t);
-  return tv->v.value = tv->v.value ?: acreate(st.ss->alloc, u8[size]);
+  return tv->v.value = tv->v.value ?: acreate(st.ss->alloc, u8[size ?: 1]);
 }
 
 void irsig_break(irsig *_sig) {
