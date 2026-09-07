@@ -140,9 +140,9 @@ test_fn(bool_bigint_roundtrip) {
   let tv = TV(T(tu_of(r_bool, {})), mem);
 
   *mem = 1;
-  test_assert(!BInt.cmp(int_as_bigint(env, tv), BInt.from.i64(arena, 1)));
+  test_assert(!BInt.cmp(int_as_bigint(env->alloc, tv), BInt.from.i64(arena, 1)));
   *mem = 0;
-  test_assert(!BInt.cmp(int_as_bigint(env, tv), BInt.from.i64(arena, 0)));
+  test_assert(!BInt.cmp(int_as_bigint(env->alloc, tv), BInt.from.i64(arena, 0)));
 
   bigint_into_int(env, &tv, BInt.from.i64(arena, 5));
   test_inteq(*mem, 1);

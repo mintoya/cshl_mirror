@@ -26,7 +26,8 @@ typedef struct function {
   slice(astptr) params;
   ast *retT;
   ast *body;
-  moxmap(sliceDef(Type), function_instance) mp;
+  msList(function_instance) instances;
+  moxmap(sliceDef(Type), u32) mp;
 } function;
 struct superscope {
   allocfn alloc;
@@ -239,17 +240,17 @@ static inline u32 ss_compileString(superscope *b, scope *s, fptr in) {
   t.iscomptime = true;
   return scope_add_value(b, s, TV(*ss_getType(b, t), in.ptr));
 }
-static inline bigint int_as_bigint(superscope *ss, typed_value t) {
+static inline bigint int_as_bigint(allocfn allocator, typed_value t) {
   assertMessage(!t.t.ptr_level);
   assertMessage(!t.t.isref, "todo");
   assertMessage(t.v.value, "tried to convert unknown value");
   return tu_match_exp(
       t.t.t,
-      (c_int, _, BInt.copy(ss->alloc, t.v.c_int)),
-      (r_sint, si, BInt.from.bits(ss->alloc, t.v.value, si, 1)),
-      (r_uint, si, BInt.from.bits(ss->alloc, t.v.value, si, 0)),
-      (r_bool, _, BInt.from.i64(ss->alloc, !!*(u8 *)t.v.value)),
-      (r_tag, tg, int_as_bigint(ss, TV(T(*tg.t), t.v))),
+      (c_int, _, BInt.copy(allocator, t.v.c_int)),
+      (r_sint, si, BInt.from.bits(allocator, t.v.value, si, 1)),
+      (r_uint, si, BInt.from.bits(allocator, t.v.value, si, 0)),
+      (r_bool, _, BInt.from.i64(allocator, !!*(u8 *)t.v.value)),
+      (r_tag, tg, int_as_bigint(allocator, TV(T(*tg.t), t.v))),
       (default,
        (({
           if (Type_isint(t.t))
@@ -325,7 +326,7 @@ typePrinter(typed_value) {
       (c_int, _, in.v.c_int ? USENAMEDPRINTER("bigint", in.v.c_int) : PUTS("??");),
       (c_ast, _, in.v.c_ast ? USENAMEDPRINTER("astTag", in.v.c_ast->tag) : PUTS("??");),
       (c_type, _, in.v.value ? USETYPEPRINTER(Type, *(Type *)in.v.value) : PUTS("??");),
-      (c_fun, _, in.v.value ? PUTS("("), USETYPEPRINTER(u32, in.v.c_fun), PUTS(")") : PUTS("??");),
+      (c_fun, _, in.v.value ? PUTS("("), USETYPEPRINTER(u32, in.v.c_fun.fn), USETYPEPRINTER(u32, in.v.c_fun.spec), PUTS(")") : PUTS("??");),
       (default, {
         if (in.v.value)
           USETYPEPRINTER(fptr, ((fptr){Type_sizeof(in.t), in.v.value}));
@@ -345,7 +346,8 @@ typePrinter(scope) {
         *i,
         (ir_call, call, {
           PUTS("(call ");
-          USETYPEPRINTER(u32, call.l);
+          USETYPEPRINTER(u32, call.l.fn), PUTS(" ");
+          USETYPEPRINTER(u32, call.l.spec);
           PUTS(" (");
           foreach (let c, span(call.args.ptr, call.args.len))
             USETYPEPRINTER(u32, *c), c == call.args.ptr ? PUTS(" ") : 0;

@@ -253,7 +253,7 @@ static u32 lower_builtin_intty(superscope *ss, scope *s, ast *args, bool is_sign
   if (list.len != 1) error_print(args, "@sint//uint(N) takes exactly one argument");
   bigint largest_int = BInt.from.i64(ss->alloc, (u16)~0);
   defer { msList_deInit(ss->alloc, largest_int); };
-  bigint bigbits = int_as_bigint(ss, temporary_interpret(ss, s, list.ptr[0]));
+  bigint bigbits = int_as_bigint(ss->alloc, temporary_interpret(ss, s, list.ptr[0]));
   defer { msList_deInit(ss->alloc, bigbits); };
   if (bigint_cmp(bigbits, nullptr) <= 0) error_print(args, "integer width must be positive");
   if (bigint_cmp(bigbits, largest_int) > 0) error_print(args, "integer width too large");
@@ -268,7 +268,7 @@ static u32 lower_builtin_typeof(superscope *ss, scope *s, ast *args) {
 static u32 lower_builtin_arrof(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
   assertMessage(list.len == 2, "@arrof(N, T) takes exactly two arguments");
-  let count_tv = int_as_bigint(ss, temporary_interpret(ss, s, list.ptr[0]));
+  let count_tv = int_as_bigint(ss->alloc, temporary_interpret(ss, s, list.ptr[0]));
   defer { msList_deInit(ss->alloc, count_tv); };
   bigint_expand(ss->alloc, &count_tv, sizeof(usize) / sizeof(bigint_unit) + 1);
 

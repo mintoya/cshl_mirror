@@ -2,10 +2,11 @@
 #include "../ast.h"
 #include "../type.h"
 #include "common.h"
-#include "interpret.h"
+// #include "interpret.h"
 #include "scope.h"
 #include "wheels/macros.h"
 #include "wheels/mytypes.h"
+#include "wheels/sList.h"
 #include <wheels/fptr.h>
 #include <wheels/mylist.h>
 #include <wheels/oxmap.h>
@@ -46,7 +47,7 @@ u32 lower_function(superscope *ss, scope *s, astPBlock args, ast *retT, ast *bod
       .params = params,
       .retT = retT,
       .body = body,
-      .mp = moxmap_init(ss->alloc, slice(Type), function_instance, slice_typed_value_cmp),
+      .mp = moxmap_init(ss->alloc, slice(Type), u32, slice_typed_value_cmp),
   });
   // clang-format on
 
@@ -78,94 +79,16 @@ static u32 coerce_type(superscope *ss, scope *s, u32 left, Type to);
 static u32 lower_comptime_call(
     superscope *ss, scope *s, u32 fn, scope *fnscope, function *fstruct, Type retT, slice(Type) sig, slice(u32) iargs
 ) {
-  if_decl (let found, moxmap_get(fstruct->mp, sig)) {
-    scope_destroy(ss, fnscope);
-    let d = scope_add_value(ss, s, TV(found->ret));
-    scope_add_inst(ss, s, (ir)tu_of(ir_call, {.l = fn, .d = d, .args = iargs}));
-    return d;
-  }
-
-  // Register before lowering so recursive calls emit ir_call instead of lowering forever.
-  moxmap_set(fstruct->mp, sig, ((function_instance){.ret = retT, .spec = fnscope}));
-  foreach (let p, span(fstruct->params.ptr, fstruct->params.len)) {
-    let idx = p - fstruct->params.ptr;
-    let dcl = tu_catch(astDecl, **p, error_print(*p, "function parameter must be a decl"));
-    if (!Type_is_comptime(sig.ptr[idx])) error_print(**p, "comptime function cannot take a runtime value");
-    if (tu_is(c_ast, sig.ptr[idx].t)) continue;
-    let name = id_from_ast(ss, fnscope, dcl.name);
-    if_decl (let b, moxmap_get(fnscope->named, name))
-      scope_find(ss, fnscope, *b)->v = scope_find(ss, s, iargs.ptr[idx])->v;
-  }
-  let result = TV(retT);
-  lower(ss, fnscope, fstruct->body);
-  interpret_sig(ss, fnscope, &result);
-  moxmap_rem(fstruct->mp, sig);
-  scope_destroy(ss, fnscope);
-  return scope_add_value(ss, s, result);
+  TODO();
 }
 static u32 lower_runtime_call(
     superscope *ss, scope *s, u32 fn, scope *fnscope, function *fstruct, Type retT, slice(Type) sig, slice(u32) iargs
 ) {
-  if_decl (let found, moxmap_get(fstruct->mp, sig)) {
-    scope_destroy(ss, fnscope);
-    let d = scope_add_value(ss, s, TV(found->ret));
-    scope_add_inst(ss, s, (ir)tu_of(ir_call, {.l = fn, .d = d, .args = iargs}));
-    return d;
-  }
-  // register the specialization before lowering the body so a recursive self-call
-  // resolves to it instead of re-lowering the body forever
-  moxmap_set(fstruct->mp, sig, ((function_instance){.ret = retT, .spec = fnscope}));
-  lower(ss, fnscope, fstruct->body);
-  let d = scope_add_value(ss, s, TV(retT));
-  scope_add_inst(ss, s, (ir)tu_of(ir_call, {.l = fn, .d = d, .args = iargs}));
-  return d;
+  TODO();
 }
 
 static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args, u32 lead) {
-  let it = scope_find(ss, s, fn);
-  let fun = tu_catch(c_fun, it->t.t);
-  let argsList = builtin_arg_list(&args);
-  let nlead = !!lead;
-  if (argsList.len + nlead != mList_len(fun) - 1)
-    error_print(args, "expected {} args, got {}", mList_len(fun) - 1, argsList.len + nlead);
-
-  let fstruct = (ss->functions)[it->v.c_fun - 1];
-  let fnscope = scope_inferior(ss, s);
-
-  let sig = acreate(ss->alloc, Type[argsList.len + nlead + 1]);
-  let iargs = acreate(ss->alloc, u32[argsList.len + nlead]);
-
-  foreach (let p, span(fstruct.params.ptr, fstruct.params.len)) {
-    let idx = p - fstruct.params.ptr;
-    let dcl = tu_catch(astDecl, **p, error_print(*p, "function parameter must be a decl"));
-    let name = id_from_ast(ss, fnscope, dcl.name);
-    let t = value_asType_loc(temporary_interpret(ss, fnscope, dcl.type), ast_loc(*dcl.type));
-    (*sig)[idx] = t;
-
-    if (tu_is(c_ast, t.t)) {
-      if (nlead && idx == 0) error_print(**p, "cannot pass a value to an ast parameter");
-      scope_bind(ss, fnscope, (*iargs)[idx] = scope_add_value(ss, fnscope, TV_ast(argsList.ptr[idx - nlead])), name);
-    } else {
-      let arg = (nlead && idx == 0) ? lead : lower(ss, s, argsList.ptr[idx - nlead]);
-      if (Type_is_comptime(t)) {
-        if (!(nlead && idx == 0) && !scope_find(ss, s, arg)->v.value)
-          scope_find(ss, s, arg)->v = temporary_interpret(ss, s, argsList.ptr[idx - nlead]).v;
-        (*iargs)[idx] = arg;
-      } else (*iargs)[idx] = coerce_type(ss, s, arg, t);
-      let d = scope_add_value(ss, fnscope, TV(t));
-      scope_add_inst(ss, fnscope, (ir)tu_of(ir_farg, {.l = idx, .d = d}));
-      scope_bind(ss, fnscope, d, name);
-    }
-  }
-
-  let retT = value_asType_loc(temporary_interpret(ss, fnscope, fstruct.retT), ast_loc(*fstruct.retT));
-  (*sig)[argsList.len + nlead] = retT;
-
-  let sigslice = (slice(Type)){argsList.len + nlead + 1, *sig};
-  let argslice = (slice(u32)){argsList.len + nlead, *iargs};
-  if (Type_is_comptime(retT))
-    return lower_comptime_call(ss, s, fn, fnscope, &fstruct, retT, sigslice, argslice);
-  return lower_runtime_call(ss, s, fn, fnscope, &fstruct, retT, sigslice, argslice);
+  TODO();
 }
 u32 lower_function_call(superscope *ss, scope *s, u32 fn, ast *args) {
   return lower_function_call_with(ss, s, fn, args, 0);

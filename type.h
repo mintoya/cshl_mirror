@@ -100,7 +100,10 @@ struct Type {
 };
 typedef union {
   void *value;
-  u32 c_fun; // function index in list + 1
+  struct c_fun_struct{
+    u32 fn;
+    u32 spec;
+  } c_fun; // function index in list + 1
   arrstype(c_int) c_int;
   arrstype(c_ast) c_ast;
   arrstype(c_type) c_type;

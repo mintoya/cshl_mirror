@@ -1,4 +1,5 @@
 #pragma once
+#include "../type.h"
 #include <assert.h>
 #include <wheels/fptr.h>
 #include <wheels/macros.h>
@@ -21,7 +22,7 @@ tu_def(
     (ir_field, /*  */ struct { u32 l, d, i; }),              // d = ref(l.i), specifically runtime, struct members are named but also ordered so u32
     (ir_array, /*  */ struct { u32 l, d, r; }),              // d = ref(l[r]), r is index of variable not index itself
 
-    (ir_call, /*   */ struct { u32 l, d; slice(u32) args; }),// d = l(...args)
+    (ir_call, /*   */ struct { itypeof(value_store , c_fun) l; u32 d; slice(u32) args; }),// d = l(...args)
     (ir_farg ,/*   */ struct { u32 l, d; }), // load function argument l into d
     (ir_set ,/*    */ struct { u32 l, d; }), // same as set without a d
 

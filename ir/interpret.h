@@ -1,5 +1,6 @@
 #pragma once
 #include "common.h"
+#include "scope.h"
 #include "wheels/macros.h"
 #include "wheels/print/print_pre.h"
 #include "wheels/sList.h"
@@ -33,6 +34,7 @@ static inline void *irstate_mem(irstate st, u32 idx) {
   return tv->v.value = tv->v.value ?: acreate(st.ss->alloc, u8[size ?: 1]);
 }
 
+// returns a typed value with isref grunteed to be false
 static typed_value ir_readthrough(irstate st, u32 idx) {
   typed_value *tv = irstate_find(st, idx);
   if (!tv->t.isref) return *tv;
@@ -88,7 +90,7 @@ void interpret_set(irstate st, ir_set c) {
 }
 void interpret_cast(irstate st, ir_cast c) {
   let d = irstate_find(st, c.d);
-  let b = int_as_bigint(st.ss, ir_readthrough(st, c.l));
+  let b = int_as_bigint(st.ss->alloc, ir_readthrough(st, c.l));
   if (tu_is(c_int, d->t.t)) {
     d->v.c_int = b;
     return;
@@ -131,124 +133,40 @@ void interpret_putptr(irstate st, ir_putptr c) {
   d->v.value = *(void **)ir_readthrough(st, c.l).v.value;
 }
 void interpret_call(irstate st, ir_call c) {
-  let f = ir_readthrough(st, c.l); // the callee may be a reference, read through it
-  let fun = tu_catch(c_fun, f.t.t);
-  let fstruct = (st.ss->functions)[f.v.c_fun - 1];
-  assertMessage(c.args.len + 1 == mList_len(fun));
-  value_store *args = (value_store *)acreate(st.ss->alloc, value_store[c.args.len ?: 1]);
-  foreach (let a, span(c.args.ptr, c.args.len))
-    args[a - c.args.ptr] = ir_readthrough(st, *a).v;
-
-  // rebuild the specialization key the lowerer used: declared param types + resolved return type
-  let keyscope = scope_inferior(st.ss, st.s);
-  defer { scope_destroy(st.ss, keyscope); };
-  let key = *acreate(st.ss->alloc, Type[c.args.len + 1]);
-  foreach (let p, span(fstruct.params.ptr, fstruct.params.len)) {
-    let idx = p - fstruct.params.ptr;
-    let dcl = tu_catch(astDecl, **p, error_print(*p, "function parameter must be a decl"));
-    key[idx] = value_asType_loc(temporary_interpret(st.ss, keyscope, dcl.type), ast_loc(*dcl.type));
-    if (Type_is_comptime(key[idx]))
-      scope_bind(
-          st.ss, keyscope, scope_add_value(st.ss, keyscope, TV(key[idx], args[idx])), id_from_ast(st.ss, keyscope, dcl.name)
-      );
-  }
-  key[c.args.len] = value_asType_loc(temporary_interpret(st.ss, keyscope, fstruct.retT), ast_loc(*fstruct.retT));
-
-  if_decl (let spec, moxmap_get(fstruct.mp, ((slice(Type)){c.args.len + 1, key}))) {
-    (void)spec;
-    // Re-lower each compile-time activation with its current values. A copied
-    // scope would retain constants captured while lowering the first activation.
-    let run = scope_inferior(st.ss, st.s);
-    foreach (let p, span(fstruct.params.ptr, fstruct.params.len)) {
-      let idx = p - fstruct.params.ptr;
-      let dcl = tu_catch(astDecl, **p, error_print(*p, "function parameter must be a decl"));
-      typed_value arg = TV(key[idx], args[idx]);
-      if (tu_is(c_int, arg.t.t)) arg.v.c_int = BInt.copy(st.ss->alloc, arg.v.c_int);
-      scope_bind(st.ss, run, scope_add_value(st.ss, run, arg), id_from_ast(st.ss, run, dcl.name));
-    }
-    lower(st.ss, run, fstruct.body);
-    typed_value ret = TV(key[c.args.len]);
-    let res = interpret_sig(st.ss, run, &ret);
-    assertMessage(res.v.value, "call yielded an unknown value");
-    typed_value out = res;
-    if (tu_is(c_int, out.t.t)) out.v.c_int = BInt.copy(st.ss->alloc, out.v.c_int);
-    scope_destroy(st.ss, run);
-    irstate_find(st, c.d)->v = out.v;
-    return;
-  }
-  assertMessage(false, "no specialization was lowered for this call");
+  let it = st.ss->functions[c.l.fn - 1].instances[c.l.spec];
+  TODO();
 }
 void interpret_rawop(irstate st, ir_rawop c) {
-  let d = irstate_find(st, c.d);
-  allocfn al = st.ss->alloc;
-  bigint lhs = int_as_bigint(st.ss, ir_readthrough(st, c.r)); // r holds the left operand, see ir.h
-  bigint rhs = int_as_bigint(st.ss, ir_readthrough(st, c.l));
-  bool bres = false;
   bigint out = nullptr;
-  switch (op_as_enum(c.o)) {
-    case enop_mul:
-      out = BInt.mul(al, lhs, rhs);
-      break;
-    case enop_div:
-      out = BInt.div(al, lhs, rhs).div;
-      break;
-    case enop_mod:
-      out = BInt.div(al, lhs, rhs).mod;
-      break;
-    case enop_plus:
-      out = BInt.add(al, lhs, rhs);
-      break;
-    case enop_minus:
-      out = BInt.sub(al, lhs, rhs);
-      break;
-    case enop_shl:
-      out = BInt.bit.shift(al, lhs, rhs);
-      break;
-    case enop_shr:
-      out = BInt.bit.shift(al, lhs, BInt.negate(al, rhs));
-      break;
-    case enop_oband:
-      out = BInt.bit.band(al, lhs, rhs);
-      break;
-    case enop_obor:
-      out = BInt.bit.bor(al, lhs, rhs);
-      break;
-    case enop_oand:
-      bres = !!(BInt.cmp(lhs, nullptr) && BInt.cmp(rhs, nullptr));
-      break;
-    case enop_oor:
-      bres = !!(BInt.cmp(lhs, nullptr) || BInt.cmp(rhs, nullptr));
-      break;
-    case enop_eq:
-      bres = !BInt.cmp(lhs, rhs);
-      break;
-    case enop_neq:
-      bres = !!BInt.cmp(lhs, rhs);
-      break;
-    case enop_les:
-      bres = BInt.cmp(lhs, rhs) < 0;
-      break;
-    case enop_mor:
-      bres = BInt.cmp(lhs, rhs) > 0;
-      break;
-    case enop_leq:
-      bres = BInt.cmp(lhs, rhs) <= 0;
-      break;
-    case enop_moq:
-      bres = BInt.cmp(lhs, rhs) >= 0;
-      break;
-    default:
-      assertMessage(false, "unsupported rawop");
-  }
-  if (!out) out = BInt.from.i64(al, bres);
-  if (tu_is(c_int, d->t.t)) {
-    d->v.c_int = out;
-    return;
-  }
-  typed_value t = *d;
-  t.v.value = irstate_mem(st, c.d);
-  bigint_into_int(st.ss, &t, out);
-  d->v = t.v;
+  allocfn al = arena_new_ext(st.ss->alloc, 1024);
+  defer { arena_cleanup(al); };
+  bigint lhs = int_as_bigint(al, ir_readthrough(st, c.r)); // r holds the left operand, see ir.h
+  bigint rhs = int_as_bigint(al, ir_readthrough(st, c.l));
+  out = switch_exp(
+      op_as_enum(c.o),
+      (enop_mul /*  */, BInt.mul(al, lhs, rhs)),
+      (enop_div /*  */, BInt.div(al, lhs, rhs).div),
+      (enop_mod /*  */, BInt.div(al, lhs, rhs).mod),
+      (enop_plus /* */, BInt.add(al, lhs, rhs)),
+      (enop_minus /**/, BInt.sub(al, lhs, rhs)),
+      (enop_shl /*  */, BInt.bit.shift(al, lhs, rhs)),
+      (enop_shr /*  */, BInt.bit.shift(al, lhs, BInt.negate(al, rhs))),
+      (enop_oband /**/, BInt.bit.band(al, lhs, rhs)),
+      (enop_obor /* */, BInt.bit.bor(al, lhs, rhs)),
+      (enop_oand /* */, BInt.from.i64(al, !!(BInt.cmp(lhs, nullptr) && BInt.cmp(rhs, nullptr)))),
+      (enop_oor /*  */, BInt.from.i64(al, !!(BInt.cmp(lhs, nullptr) || BInt.cmp(rhs, nullptr)))),
+      (enop_eq /*   */, BInt.from.i64(al, !BInt.cmp(lhs, rhs))),
+      (enop_neq /*  */, BInt.from.i64(al, !!BInt.cmp(lhs, rhs))),
+      (enop_les /*  */, BInt.from.i64(al, BInt.cmp(lhs, rhs) < 0)),
+      (enop_mor /*  */, BInt.from.i64(al, BInt.cmp(lhs, rhs) > 0)),
+      (enop_leq /*  */, BInt.from.i64(al, BInt.cmp(lhs, rhs) <= 0)),
+      (enop_moq /*  */, BInt.from.i64(al, BInt.cmp(lhs, rhs) >= 0)),
+      (default, (assertMessage(false, "unsupported rawop"), (bigint) nullptr)),
+  );
+  assertMessage(out);
+  out = BInt.copy(st.ss->alloc, out);
+  let d = ir_readthrough(st, c.d);
+  bigint_into_int(st.ss, &d, out);
 }
 void interpret_block(irstate st, ir_block c) {
   if (!c) return;
@@ -268,21 +186,26 @@ void interpret_block(irstate st, ir_block c) {
   }
 }
 void interpret_farg(irstate st, ir_farg c) {
-  if (!st.fnctx.func) return; // comptime instantiations bind their args directly
-  assertMessage(st.fnctx.args);
+  assertMessage(st.fnctx.func && st.fnctx.args);
   assertMessage(c.l + 1 < mList_len(st.fnctx.func));
+  typed_value v = {mList_arr(st.fnctx.func)[c.l], (*st.fnctx.args)[c.l]};
   let d = irstate_find(st, c.d);
-  d->v = ((value_store *)st.fnctx.args)[c.l];
-  if_decl (let sz, Type_sizeof(d->t)) { // private storage so recursive frames dont alias the caller's
-    void *mem = acreate(st.ss->alloc, u8[sz]);
-    memcpy(mem, d->v.value, sz);
-    d->v.value = mem;
-  }
+
+  assertMessage(!Type_cmp(v.t, d->t));
+  tu_match_void(
+      d->t.t,
+      (c_ast, _, d->v.c_ast = v.v.value),
+      (c_int, _, d->v.c_int = BInt.copy(st.ss->alloc, v.v.c_int)),
+      (builtin, _, assertMessage(false)),
+      (c_fun, _, d->v.c_fun = v.v.c_fun),
+      (c_type, _, d->v.c_type = v.v.c_type),
+      (default, memcpy(irstate_mem(st, c.d), v.v.value, Type_sizeof(d->t)))
+  );
 }
 void interpret_array(irstate st, ir_array c) {
   let l = ir_readthrough(st, c.l);
   let arr = tu_catch(r_arr, l.t.t);
-  let idx = int_as_bigint(st.ss, ir_readthrough(st, c.r));
+  let idx = int_as_bigint(st.ss->alloc, ir_readthrough(st, c.r));
   bigint_expand(st.ss->alloc, &idx, sizeof(usize) / sizeof(bigint_unit) + 1);
   // no bounds checking, matching the lowerer; a zero-length array has nothing to check against
   *(void **)irstate_mem(st, c.d) = (u8 *)l.v.value + *(usize *)idx * Type_sizeof(T(*arr.t));

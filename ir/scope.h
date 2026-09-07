@@ -80,10 +80,13 @@ static scope *scope_copy_deep(superscope *ss, scope *s, scope *parent) {
 }
 scope *scope_copy(superscope *ss, scope *s) { return scope_copy_deep(ss, s, s->parent); }
 void scope_destroy(superscope *b, scope *s) {
-  foreach (let item, span(s->values, msList_len(s->values) - 1))
+  foreach (let item, span(s->values, msList_len(s->values))) // -1?
     if (tu_is(c_int, item->t.t) && !item->t.isref)
       msList_deInit(b->alloc, item->v.c_int);
   msList_deInit(b->alloc, s->values);
+  foreach (let scope, span(s->instructions, msList_len(s->instructions)))
+    iflet_tu (let s, ir_block, *scope)
+      scope_destroy(b, s);
   msList_deInit(b->alloc, s->instructions);
   moxmap_deinit(s->named);
   adestroy(b->alloc, s);
