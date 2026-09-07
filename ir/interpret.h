@@ -149,27 +149,31 @@ void interpret_call(irstate st, ir_call c) {
     key[idx] = value_asType_loc(temporary_interpret(st.ss, keyscope, dcl.type), ast_loc(*dcl.type));
     if (Type_is_comptime(key[idx]))
       scope_bind(
-          st.ss, keyscope, scope_add_value(st.ss, keyscope, TV(key[idx], args[idx])),
-          id_from_ast(st.ss, keyscope, dcl.name)
+          st.ss, keyscope, scope_add_value(st.ss, keyscope, TV(key[idx], args[idx])), id_from_ast(st.ss, keyscope, dcl.name)
       );
   }
   key[c.args.len] = value_asType_loc(temporary_interpret(st.ss, keyscope, fstruct.retT), ast_loc(*fstruct.retT));
 
   if_decl (let spec, moxmap_get(fstruct.mp, ((slice(Type)){c.args.len + 1, key}))) {
-    // run a private copy of the specialization so recursive activations dont share storage
-    let run = scope_copy(st.ss, spec->spec);
-    foreach (let v, span(run->values, msList_len(run->values)))
-      if (!Type_is_comptime(v->t)) v->v.value = nullptr;
-    let inner = st;
-    inner.s = inner.root = run;
-    inner.fnctx.func = fun;
-    inner.fnctx.args = (typeof(inner.fnctx.args))args;
-    typed_value ret = TV(key[c.args.len]); // the C stack frame owns the return slot
-    inner.sig = (irsig){.ret = &ret};
-    interpret_block(inner, run);
-    let res = ret.v.value ? ret : msList_last(run->values);
+    (void)spec;
+    // Re-lower each compile-time activation with its current values. A copied
+    // scope would retain constants captured while lowering the first activation.
+    let run = scope_inferior(st.ss, st.s);
+    foreach (let p, span(fstruct.params.ptr, fstruct.params.len)) {
+      let idx = p - fstruct.params.ptr;
+      let dcl = tu_catch(astDecl, **p, error_print(*p, "function parameter must be a decl"));
+      typed_value arg = TV(key[idx], args[idx]);
+      if (tu_is(c_int, arg.t.t)) arg.v.c_int = BInt.copy(st.ss->alloc, arg.v.c_int);
+      scope_bind(st.ss, run, scope_add_value(st.ss, run, arg), id_from_ast(st.ss, run, dcl.name));
+    }
+    lower(st.ss, run, fstruct.body);
+    typed_value ret = TV(key[c.args.len]);
+    let res = interpret_sig(st.ss, run, &ret);
     assertMessage(res.v.value, "call yielded an unknown value");
-    irstate_find(st, c.d)->v = res.v;
+    typed_value out = res;
+    if (tu_is(c_int, out.t.t)) out.v.c_int = BInt.copy(st.ss->alloc, out.v.c_int);
+    scope_destroy(st.ss, run);
+    irstate_find(st, c.d)->v = out.v;
     return;
   }
   assertMessage(false, "no specialization was lowered for this call");
@@ -182,24 +186,59 @@ void interpret_rawop(irstate st, ir_rawop c) {
   bool bres = false;
   bigint out = nullptr;
   switch (op_as_enum(c.o)) {
-    case enop_mul: out = BInt.mul(al, lhs, rhs); break;
-    case enop_div: out = BInt.div(al, lhs, rhs).div; break;
-    case enop_mod: out = BInt.div(al, lhs, rhs).mod; break;
-    case enop_plus: out = BInt.add(al, lhs, rhs); break;
-    case enop_minus: out = BInt.sub(al, lhs, rhs); break;
-    case enop_shl: out = BInt.bit.shift(al, lhs, rhs); break;
-    case enop_shr: out = BInt.bit.shift(al, lhs, BInt.negate(al, rhs)); break;
-    case enop_oband: out = BInt.bit.band(al, lhs, rhs); break;
-    case enop_obor: out = BInt.bit.bor(al, lhs, rhs); break;
-    case enop_oand: bres = !!(BInt.cmp(lhs, nullptr) && BInt.cmp(rhs, nullptr)); break;
-    case enop_oor: bres = !!(BInt.cmp(lhs, nullptr) || BInt.cmp(rhs, nullptr)); break;
-    case enop_eq: bres = !BInt.cmp(lhs, rhs); break;
-    case enop_neq: bres = !!BInt.cmp(lhs, rhs); break;
-    case enop_les: bres = BInt.cmp(lhs, rhs) < 0; break;
-    case enop_mor: bres = BInt.cmp(lhs, rhs) > 0; break;
-    case enop_leq: bres = BInt.cmp(lhs, rhs) <= 0; break;
-    case enop_moq: bres = BInt.cmp(lhs, rhs) >= 0; break;
-    default: assertMessage(false, "unsupported rawop");
+    case enop_mul:
+      out = BInt.mul(al, lhs, rhs);
+      break;
+    case enop_div:
+      out = BInt.div(al, lhs, rhs).div;
+      break;
+    case enop_mod:
+      out = BInt.div(al, lhs, rhs).mod;
+      break;
+    case enop_plus:
+      out = BInt.add(al, lhs, rhs);
+      break;
+    case enop_minus:
+      out = BInt.sub(al, lhs, rhs);
+      break;
+    case enop_shl:
+      out = BInt.bit.shift(al, lhs, rhs);
+      break;
+    case enop_shr:
+      out = BInt.bit.shift(al, lhs, BInt.negate(al, rhs));
+      break;
+    case enop_oband:
+      out = BInt.bit.band(al, lhs, rhs);
+      break;
+    case enop_obor:
+      out = BInt.bit.bor(al, lhs, rhs);
+      break;
+    case enop_oand:
+      bres = !!(BInt.cmp(lhs, nullptr) && BInt.cmp(rhs, nullptr));
+      break;
+    case enop_oor:
+      bres = !!(BInt.cmp(lhs, nullptr) || BInt.cmp(rhs, nullptr));
+      break;
+    case enop_eq:
+      bres = !BInt.cmp(lhs, rhs);
+      break;
+    case enop_neq:
+      bres = !!BInt.cmp(lhs, rhs);
+      break;
+    case enop_les:
+      bres = BInt.cmp(lhs, rhs) < 0;
+      break;
+    case enop_mor:
+      bres = BInt.cmp(lhs, rhs) > 0;
+      break;
+    case enop_leq:
+      bres = BInt.cmp(lhs, rhs) <= 0;
+      break;
+    case enop_moq:
+      bres = BInt.cmp(lhs, rhs) >= 0;
+      break;
+    default:
+      assertMessage(false, "unsupported rawop");
   }
   if (!out) out = BInt.from.i64(al, bres);
   if (tu_is(c_int, d->t.t)) {
@@ -287,4 +326,6 @@ typed_value interpret_sig(superscope *ss, scope *s, typed_value *ret) { // redic
   );
   return result;
 }
-typed_value interpret(superscope *ss, scope *s) { return interpret_sig(ss, s, nullptr); }
+typed_value interpret(superscope *ss, scope *s) {
+  return interpret_sig(ss, s, nullptr);
+}

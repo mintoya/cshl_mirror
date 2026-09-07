@@ -95,7 +95,8 @@ test_fn(interpret_comptime_recursion) {
       arena,
       fp(
           "fact ~~ @fn((n ~@int()),@int(),{"
-          "   @if(( n <= 1 ),"
+          "   @if("
+          "     (n <= 1),"
           "     (return ( 1 )),"
           "     (return ( n * fact(n - 1)))"
           "   );"

@@ -2,6 +2,7 @@
 #include "../ast.h"
 #include "../type.h"
 #include "common.h"
+#include "interpret.h"
 #include "scope.h"
 #include "wheels/macros.h"
 #include "wheels/mytypes.h"
@@ -74,11 +75,18 @@ u32 lower_function(superscope *ss, scope *s, astPBlock args, ast *retT, ast *bod
 }
 static u32 coerce_type(superscope *ss, scope *s, u32 left, Type to);
 
-// runs a comptime function now: param values are already bound in fnscope, body is lowered + interpreted,
-// and the resulting value is added to the caller's scope
 static u32 lower_comptime_call(
-    superscope *ss, scope *s, scope *fnscope, function *fstruct, Type retT, slice(Type) sig, slice(u32) iargs
+    superscope *ss, scope *s, u32 fn, scope *fnscope, function *fstruct, Type retT, slice(Type) sig, slice(u32) iargs
 ) {
+  if_decl (let found, moxmap_get(fstruct->mp, sig)) {
+    scope_destroy(ss, fnscope);
+    let d = scope_add_value(ss, s, TV(found->ret));
+    scope_add_inst(ss, s, (ir)tu_of(ir_call, {.l = fn, .d = d, .args = iargs}));
+    return d;
+  }
+
+  // Register before lowering so recursive calls emit ir_call instead of lowering forever.
+  moxmap_set(fstruct->mp, sig, ((function_instance){.ret = retT, .spec = fnscope}));
   foreach (let p, span(fstruct->params.ptr, fstruct->params.len)) {
     let idx = p - fstruct->params.ptr;
     let dcl = tu_catch(astDecl, **p, error_print(*p, "function parameter must be a decl"));
@@ -91,11 +99,10 @@ static u32 lower_comptime_call(
   let result = TV(retT);
   lower(ss, fnscope, fstruct->body);
   interpret_sig(ss, fnscope, &result);
+  moxmap_rem(fstruct->mp, sig);
   scope_destroy(ss, fnscope);
   return scope_add_value(ss, s, result);
 }
-
-// emits a runtime call into the caller's scope, reusing a memoized specialization when one matches sig
 static u32 lower_runtime_call(
     superscope *ss, scope *s, u32 fn, scope *fnscope, function *fstruct, Type retT, slice(Type) sig, slice(u32) iargs
 ) {
@@ -156,7 +163,8 @@ static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args,
 
   let sigslice = (slice(Type)){argsList.len + nlead + 1, *sig};
   let argslice = (slice(u32)){argsList.len + nlead, *iargs};
-  if (Type_is_comptime(retT)) return lower_comptime_call(ss, s, fnscope, &fstruct, retT, sigslice, argslice);
+  if (Type_is_comptime(retT))
+    return lower_comptime_call(ss, s, fn, fnscope, &fstruct, retT, sigslice, argslice);
   return lower_runtime_call(ss, s, fn, fnscope, &fstruct, retT, sigslice, argslice);
 }
 u32 lower_function_call(superscope *ss, scope *s, u32 fn, ast *args) {
