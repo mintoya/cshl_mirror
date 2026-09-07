@@ -39,8 +39,8 @@ test_fn(interpret_string_value) {
   let r = interpret_source(
       arena,
       fp(
-          "hi ~= \"yo\";\n"
-          "hi;\n"
+          "hi ~= \"yo\";"
+          "hi;"
       )
   );
 
@@ -57,11 +57,11 @@ test_fn(interpret_type_fn) {
   let r = interpret_source(
       arena,
       fp(
-          "type ~~ @type();\n"
-          "two ~~ @fn((t ~type),type,{\n"
-          "  return @arr(2, t);\n"
-          "});\n"
-          "two(@sint(8));\n"
+          "type ~~ @type();"
+          "two ~~ @fn((t ~type),type,{"
+          "  return @arr(2, t);"
+          "});"
+          "two(@sint(8));"
       )
   );
 
@@ -94,17 +94,13 @@ test_fn(interpret_comptime_recursion) {
   let r = interpret_source(
       arena,
       fp(
-          "fact ~~ @fn("
-          " (n ~@int()),"
-          " @int(),"
-          " {"
-          "   @cif(( n <= 1 ),"
+          "fact ~~ @fn((n ~@int()),@int(),{"
+          "   @if(( n <= 1 ),"
           "     (return ( 1 )),"
-          "     (return ( n * fact(n - 1) ))"
+          "     (return ( n * fact(n - 1)))"
           "   );"
-          " }"
-          ");"
-          "fact(5);\n"
+          " });"
+          "fact(5);"
       )
   );
 
@@ -119,13 +115,13 @@ test_fn(interpret_runtime_recursion) {
   let r = interpret_source(
       arena,
       fp(
-          "sum ~~ @fn((n ~@sint(32)),@sint(32),{\n"
-          "  @if(n <= 0, { zero ~ @sint(32) = 0; return zero; });\n"
-          "  rest ~ @sint(32) = sum(n - 1);\n"
-          "  total ~ @sint(32) = n + rest;\n"
-          "  return total;\n"
-          "});\n"
-          "sum(4);\n"
+          "sum ~~ @fn((n ~@sint(32)),@sint(32),{"
+          "  @if(n <= 0, { zero ~ @sint(32) = 0; return zero; });"
+          "  rest ~ @sint(32) = sum(n - 1);"
+          "  total ~ @sint(32) = n + rest;"
+          "  return total;"
+          "});"
+          "sum(4);"
       )
   );
 
