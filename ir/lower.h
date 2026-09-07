@@ -40,13 +40,13 @@ u32 lower(superscope *ss, scope *s, ast *a) {
       (astNumber, n, ss_compileInt(ss, s, n)),
       (astString, f, ss_compileString(ss, s, f)),
       (astPBlock, pb, ({
-         if (countof(*sentList_vla(pb.stmts)) != 1) error_print(a, "no tuples");
-         let res = scope_add_value(ss, s, TV(T(tu_of(c_any, {}))));
-         let sc = scope_inferior(ss, s);
-         scope_add_inst(ss, s, (ir)tu_of(ir_block, sc));
-         lower(ss, sc, pb.stmts[0]);
-         scope_yield(ss, sc, res);
-         res;
+         if (countof(*sentList_vla(pb.stmts)) != 1)
+           error_print(a, "no tuples");
+         // (a ~= 1); -> {a ~= 1;}; //leak decls on pourpose
+         // lower(ss, s, &(ast)tu_of(astBBlock, {.loc = pb.loc, .stmts = pb.stmts}));
+         // or
+         // (a ~= 1); -> a ~= 1;
+         lower(ss, s, pb.stmts[0]);
        })),
       (astBBlock, bb, ({
          let res = scope_add_value(ss, s, TV(T(tu_of(c_any, {}))));

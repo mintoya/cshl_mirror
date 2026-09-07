@@ -134,6 +134,25 @@ test_fn(interpret_runtime_recursion) {
   test_inteq(*(i32 *)r.v.value, 10);
 }
 
+test_fn(bool_bigint_roundtrip) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let env = ss_init(arena);
+
+  u8 *mem = *acreate(arena, u8[1]);
+  let tv = TV(T(tu_of(r_bool, {})), mem);
+
+  *mem = 1;
+  test_assert(!BInt.cmp(int_as_bigint(env, tv), BInt.from.i64(arena, 1)));
+  *mem = 0;
+  test_assert(!BInt.cmp(int_as_bigint(env, tv), BInt.from.i64(arena, 0)));
+
+  bigint_into_int(env, &tv, BInt.from.i64(arena, 5));
+  test_inteq(*mem, 1);
+  bigint_into_int(env, &tv, BInt.from.i64(arena, 0));
+  test_inteq(*mem, 0);
+}
+
 test_fn(ast_dot_operator_match) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };

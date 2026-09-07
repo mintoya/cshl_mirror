@@ -466,6 +466,12 @@ typePrinter(Type) {
 }
 // test
 
+test_fn(type_bools) {
+  // i dereferance bools later
+  let boolean = T(tu_of(r_bool, {}));
+  test_inteq(sizeof(bool), Type_sizeof(boolean));
+  test_inteq(alignof(bool), Type_alignof(boolean));
+}
 test_fn(type_linked_list) {
   let typeArena = arena_new_ext(allocator, 1024);
   defer { arena_cleanup(typeArena); };

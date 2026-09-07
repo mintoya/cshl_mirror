@@ -248,6 +248,7 @@ static inline bigint int_as_bigint(superscope *ss, typed_value t) {
       (c_int, _, BInt.copy(ss->alloc, t.v.c_int)),
       (r_sint, si, BInt.from.bits(ss->alloc, t.v.value, si, 1)),
       (r_uint, si, BInt.from.bits(ss->alloc, t.v.value, si, 0)),
+      (r_bool, _, BInt.from.i64(ss->alloc, !!*(u8 *)t.v.value)),
       (r_tag, tg, int_as_bigint(ss, TV(T(*tg.t), t.v))),
       (default,
        (({
@@ -283,6 +284,7 @@ static inline void bigint_into_int(superscope *ss, typed_value *t, bigint b) {
         let allocated_len = Type_sizeof(t->t);
         memcpy(t->v.value, b, allocated_len);
       }),
+      (r_bool, _, { *(u8 *)t->v.value = !!BInt.cmp(b, nullptr); }),
       (r_tag, tg, {
         let temp = (typed_value){.t = T(*tg.t), .v = t->v};
         return bigint_into_int(ss, &temp, b);

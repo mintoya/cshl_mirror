@@ -141,8 +141,6 @@ static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args,
     } else {
       let arg = (nlead && idx == 0) ? lead : lower(ss, s, argsList.ptr[idx - nlead]);
       if (Type_is_comptime(t)) {
-        // comptime params need their value now; computed args (rawop etc.) only exist
-        // as ir, so evaluate the arg eagerly
         if (!(nlead && idx == 0) && !scope_find(ss, s, arg)->v.value)
           scope_find(ss, s, arg)->v = temporary_interpret(ss, s, argsList.ptr[idx - nlead]).v;
         (*iargs)[idx] = arg;
