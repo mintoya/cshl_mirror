@@ -98,7 +98,11 @@ u32 scope_add_value(superscope *env, scope *s, typed_value v) {
   msList_push(env->alloc, s->values, v);
   return msList_len(s->values) + s->start;
 }
-static inline void scope_add_inst(superscope *env, scope *s, ir i) { msList_push(env->alloc, s->instructions, i); }
+bool try_interpret(superscope *ss, scope *s, ir i);
+static inline void scope_add_inst(superscope *env, scope *s, ir i) {
+  if (!try_interpret(env, s, i))
+    msList_push(env->alloc, s->instructions, i);
+}
 static inline void scope_bind(superscope *env, scope *s, u32 idx, fptr name) {
   if (moxmap_get(s->named, name)) error_print(name.ptr, "already bound {slice(c8)}", name);
   assertMessage(idx <= msList_len(s->values) + s->start, "%zu <= %zu + %zu", idx, msList_len(s->values), s->start);

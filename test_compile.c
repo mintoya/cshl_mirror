@@ -90,7 +90,27 @@ static typed_value ast_probe(allocfn arena, fptr dotwork, fptr arg) {
 test_fn(interpret_comptime_recursion) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
+  let r = interpret_source(
+      arena,
+      fp(
+          "fact ~~ @fn((n ~@int()),@int(),{"
+          "   @cif("
+          "     (n <= 1),"
+          "     (return ( 1 )),"
+          "     (return ( n * fact(n - 1)))"
+          "   );"
+          " });"
+          "fact(5);"
+      )
+  );
 
+  test_assert(tu_is(c_int, r.t.t));
+  test_assert(!BInt.cmp(r.v.c_int, BInt.from.i64(arena, 120)));
+}
+// both branches are lowered, much rader to reconcile
+test_fn(interpret_comptime_recursion_low) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
   let r = interpret_source(
       arena,
       fp(

@@ -58,6 +58,7 @@ void irsig_continue(irsig *_sig) {
   return;
 }
 void irsig_return(irsig *_sig, typed_value v) {
+  println("[LOG:ret]  {typed_value}", v);
   if (!_sig->ret) error_print(nullptr, "broke in non-breakable context");
   if (Type_cmp(v.t, _sig->ret->t)) error_print(nullptr, "comptime return wrong type'd value");
   assertMessage(v.v.value, "returning an unknonwn value");
@@ -166,7 +167,14 @@ void interpret_call(irstate st, ir_call c) {
   }
 
   let destination = irstate_find(st, c.d);
-  assertMessage(!Type_cmp(destination->t, result.t), "function returned the wrong type");
+  destination->t.isconst = false;
+
+  assertMessage(
+      !Type_cmp(destination->t, result.t),
+      "function returned the wrong type %s",
+      snprint(stdAlloc, "{Type} != {Type}", destination->t, result.t).ptr
+
+  );
   tu_match_void(
       destination->t.t,
       (c_ast, _, destination->v.c_ast = result.v.c_ast),
@@ -283,8 +291,9 @@ void interpret_op(irstate st, ir inst) {
   );
 }
 typed_value interpret_sig(superscope *ss, scope *s, typed_value *ret) { // rediculous way to implement functions for now
-  interpret_block((irstate){.ss = ss, .s = s, .root = s, .sig = {.ret = ret}}, s);
-  if (ret && ret->v.value) return *ret;
+}
+typed_value interpret(superscope *ss, scope *s) {
+  interpret_block((irstate){.ss = ss, .s = s, .root = s, .sig = {}}, s);
   let result = msList_last(s->values);
   assertMessage(
       result.v.value,
@@ -293,6 +302,33 @@ typed_value interpret_sig(superscope *ss, scope *s, typed_value *ret) { // redic
   );
   return result;
 }
-typed_value interpret(superscope *ss, scope *s) {
-  return interpret_sig(ss, s, nullptr);
+bool try_interpret(superscope *ss, scope *s, ir i) {
+  return tu_match_exp(
+      i,
+      (ir_rawop, ro, ({
+         let l = *scope_find(ss, s, ro.l);
+         let r = *scope_find(ss, s, ro.r);
+         if (!Type_isint(l.t) || !Type_isint(r.t))
+           return false;
+         if (!Type_is_comptime(l.t) || !Type_is_comptime(r.t))
+           return false;
+         false;
+       })),
+      (ir_getptr, ro, false),
+      (ir_getref, ro, false),
+      (ir_putptr, ro, false),
+      (ir_cast, ro, false),
+      (ir_field, ro, false),
+      (ir_call, ro, false),
+      (ir_array, ro, false),
+      (ir_farg, ro, false),
+      (ir_set, ro, false),
+      (ir_block, ro, false),
+      (ir_while, ro, false),
+      (ir_if, ro, false),
+      //
+      (ir_ret, _, false),
+      (ir_break, _, false),
+      (ir_cont, _, false),
+  );
 }

@@ -58,9 +58,6 @@ static inline void scope_bind(superscope *env, scope *s, u32 idx, fptr name);
 u32 lower /*                      */ (superscope *ss, scope *s, ast *a);
 // interprets a scope and yields the result
 typed_value interpret /*          */ (superscope *ss, scope *s);
-// interprets a scope with a return slot; yields the value written by ir_ret, or falls
-// back to the scope's last value if the body never returns
-typed_value interpret_sig /*      */ (superscope *ss, scope *s, typed_value *ret);
 // casts the value at c.l to the integer type of reg(c.d), storing the result at c.d
 typed_value temporary_interpret /*      */ (superscope *ss, scope *s, ast *a) {
   let work = scope_inferior(ss, s);
@@ -71,6 +68,7 @@ typed_value temporary_interpret /*      */ (superscope *ss, scope *s, ast *a) {
     result.v.c_int = BInt.copy(ss->alloc, result.v.c_int);
   return result;
 }
+bool try_interpret(superscope *ss, scope *s, ir i);
 
 typedef enum enum_op {
   enop_call,
@@ -328,7 +326,7 @@ typePrinter(typed_value) {
   tu_match_void(
       in.t.t,
       (c_int, _, in.v.c_int ? USENAMEDPRINTER("bigint", in.v.c_int) : PUTS("??");),
-      (c_ast, _, in.v.c_ast ? USENAMEDPRINTER("astTag", in.v.c_ast->tag) : PUTS("??");),
+      (c_ast, _, in.v.c_ast ? USENAMEDPRINTER("ast", in.v.c_ast) : PUTS("??");),
       (c_type, _, in.v.value ? USETYPEPRINTER(Type, *(Type *)in.v.value) : PUTS("??");),
       (c_fun, _, in.v.value ? PUTS("("), USETYPEPRINTER(u32, in.v.c_fun.fn), USETYPEPRINTER(u32, in.v.c_fun.spec), PUTS(")") : PUTS("??");),
       (default, {

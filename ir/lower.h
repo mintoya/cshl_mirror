@@ -76,7 +76,11 @@ u32 lower(superscope *ss, scope *s, ast *a) {
 
          if (dcl.is_const)
            scope_find(ss, s, value)->t.isconst = true;
-         if (dcl.name) scope_bind(ss, s, value, id_from_ast(ss, s, dcl.name));
+         if (dcl.name) {
+           let nn = id_from_ast(ss, s, dcl.name);
+           scope_bind(ss, s, value, nn);
+           println("[LOG:decl] bound {*:typed_value} to {slice(c8)}", scope_find(ss, s, value), nn);
+         }
          value;
        })),
   );

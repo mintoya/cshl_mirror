@@ -13,12 +13,12 @@ if ~~ @fn (a ~ast),ast,{
 
   @cif((rest."()".opright."()".opleft == "else"), {
     then ~ast~ rest.opleft;
-    else ~ast~ rest.opright."()";
+    else ~ast~ rest.opright."()".opright;
 
     return @qot @if(
       @uqot(cond),
       @uqot(then),
-      @uqot(else.opright)
+      @uqot(else)
     );
   });
 
@@ -30,7 +30,8 @@ if ~~ @fn (a ~ast),ast,{
 
 one ~= 1;
 
-@uqot test ~ast~ if 1 (one = one + 1) else (one = 3);
+test ~ast~ if 1 (one = one + 1) else (one = 3);
+@uqot test;
 
 if' (one == 2) {
   one = 4;

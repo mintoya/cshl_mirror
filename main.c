@@ -88,6 +88,8 @@ cmd_main(
     let env = ss_init(allocator);
     lower(env, env->outermost, ast);
     print_wf(sexplike, "{scope}\n", *env->outermost);
+    // interpret(env,env->outermost);
+    // print_wf(sexplike, "{scope}\n", *env->outermost);
   }
 
   return 0;
