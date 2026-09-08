@@ -27,7 +27,7 @@ typedef struct function {
   ast *retT;
   ast *body;
   msList(function_instance) instances;
-  moxmap(sliceDef(Type), u32) mp;
+  moxmap(sliceDef(typed_value), u32) mp;
 } function;
 struct superscope {
   allocfn alloc;

@@ -6,6 +6,7 @@
 #include "scope.h"
 #include "wheels/macros.h"
 #include "wheels/mytypes.h"
+#include "wheels/print/print_pre.h"
 #include "wheels/sList.h"
 #include <wheels/fptr.h>
 #include <wheels/mylist.h>
@@ -14,11 +15,18 @@
 sliceDef(typed_value);
 sliceDef(Type);
 i8 slice_typed_value_cmp(const void *a, const void *b) {
-  let av = *(const slice(Type) *)a;
-  let bv = *(const slice(Type) *)b;
+  let av = *(const slice(typed_value) *)a;
+  let bv = *(const slice(typed_value) *)b;
   if_decl (let r, icmp(av.len, bv.len)) return r;
-  foreach (let i, range(0, av.len))
-    if_decl (let cm, Type_cmp(av.ptr[i], bv.ptr[i])) return cm;
+  // ngl, switching on all the differences is annoying, strcmp for now
+  foreach (let i, range(0, av.len)) {
+    let sa = snprint(stdAlloc, "{typed_value}", av.ptr[i]);
+    let sb = snprint(stdAlloc, "{typed_value}", bv.ptr[i]);
+    defer { slice_free(stdAlloc, sa); };
+    defer { slice_free(stdAlloc, sb); };
+    if_decl (let cm, fptr_cmp(fp(sa), fp(sb)))
+      return cm;
+  }
   return 0;
 }
 
@@ -48,7 +56,7 @@ u32 lower_function(superscope *ss, scope *s, astPBlock args, ast *retT, ast *bod
       .retT = retT,
       .body = body,
       .instances = msList_init(ss->alloc, function_instance),
-      .mp = moxmap_init(ss->alloc, slice(Type), u32, slice_typed_value_cmp),
+      .mp = moxmap_init(ss->alloc, slice(typed_value), u32, slice_typed_value_cmp),
   });
   // clang-format on
 
@@ -75,9 +83,12 @@ u32 lower_function(superscope *ss, scope *s, astPBlock args, ast *retT, ast *bod
   );
   return res;
 }
-void lower_function_arg(ast *arg) {}
 static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args, u32 lead) {
-  TODO();
+  TODO("function specialization"
+       "in order for functions to work, a function call here should act like "
+       "templates, so a(b,c,d), c and d are comptime , shoud be like a<c,d>(b),"
+       "since c and d are comptime, whenever it's called, it shoud generate a "
+       "version unique to that c&d , also comptime unknown should have a null value");
   let alist = builtin_arg_list(&args);
   let function_value = *scope_find(ss, s, fn);
   let generic_signature = tu_catch(c_fun, function_value.t.t);
