@@ -1,5 +1,5 @@
 #if !defined CC
-  #define CC "ccache","clang"
+  #define CC "ccache", "clang"
 #endif
 
 #if defined(_WIN32)
@@ -15,7 +15,7 @@
 #if __has_include("deps/nob.h/nob.h")
   #include "nob_files/main.h"
 int main(int argc, char **argv) {
-  NOB_GO_REBUILD_URSELF(argc, argv);
+  NOB_GO_REBUILD_URSELF_PLUS(argc, argv, "nob_files/main.h", "nob_files/dependencies.h");
   actualmain(argc, argv);
 }
 #else
