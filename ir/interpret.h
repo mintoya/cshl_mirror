@@ -2,6 +2,7 @@
 #include "common.h"
 #include "scope.h"
 #include "wheels/macros.h"
+#include "wheels/mytypes.h"
 #include "wheels/print/print_pre.h"
 #include "wheels/sList.h"
 #include <string.h>
@@ -16,8 +17,8 @@ typedef struct {
   scope *root;
   irsig sig;
   struct {
-    c_fun func;
-    typeof(value_store[/*mList_len(c_fun)-1*/]) *args;
+    slice(Type) ftype;
+    typeof(value_store[/*ftype.len-1*/]) *args;
   } fnctx;
 } irstate;
 
@@ -134,6 +135,29 @@ void interpret_putptr(irstate st, ir_putptr c) {
 }
 void interpret_call(irstate st, ir_call c) {
   let it = st.ss->functions[c.l.fn - 1].instances[c.l.spec];
+
+  // fnctx
+  let ftype = slice_alloc(st.ss->alloc, Type, c.args.len + 1);
+  defer { slice_free(st.ss->alloc, ftype); };
+  slice_last(ftype) = it.ret;
+  foreach (let it, span(ftype.ptr, ftype.len - 1))
+    *it = irstate_find(st, c.args.ptr[it - ftype.ptr])->t;
+  st.fnctx.ftype = ftype;
+  st.fnctx.args = acreate(st.ss->alloc, value_store[st.fnctx.ftype.len - 1]);
+  defer { adestroy(st.ss->alloc, (value_store(*)[st.fnctx.ftype.len - 1]) st.fnctx.args); };
+  foreach (let it, span(*st.fnctx.args, st.fnctx.ftype.len - 1))
+    *it = irstate_find(st, c.args.ptr[it - *st.fnctx.args])->v;
+  st.sig.ret = irstate_find(st, c.d);
+  //
+
+  let ns = scope_copy(st.ss, it.spec);
+  defer { scope_destroy(st.ss, ns); };
+  interpret_block(st, ns);
+
+  assertMessage(
+      !(Type_cmp(T(tu_of(r_void, {})), st.sig.ret->t) && !st.sig.ret->v.value),
+      "comptime function did not return"
+  );
   TODO();
 }
 void interpret_rawop(irstate st, ir_rawop c) {
@@ -171,8 +195,6 @@ void interpret_rawop(irstate st, ir_rawop c) {
 void interpret_block(irstate st, ir_block c) {
   if (!c) return;
   void interpret_op(irstate, ir);
-  let o = st.s;
-  defer { st.s = o; };
   st.s = c;
   foreach (let i, span(c->values, msList_len(c->values)))
     if (!Type_is_comptime(i->t) && !i->v.value)
@@ -186,9 +208,9 @@ void interpret_block(irstate st, ir_block c) {
   }
 }
 void interpret_farg(irstate st, ir_farg c) {
-  assertMessage(st.fnctx.func && st.fnctx.args);
-  assertMessage(c.l + 1 < mList_len(st.fnctx.func));
-  typed_value v = {mList_arr(st.fnctx.func)[c.l], (*st.fnctx.args)[c.l]};
+  assertMessage(st.fnctx.ftype.len && st.fnctx.args);
+  assertMessage(c.l + 1 < st.fnctx.ftype.len);
+  typed_value v = {st.fnctx.ftype.ptr[c.l], (*st.fnctx.args)[c.l]};
   let d = irstate_find(st, c.d);
 
   assertMessage(!Type_cmp(v.t, d->t));
