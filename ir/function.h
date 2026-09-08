@@ -47,12 +47,13 @@ u32 lower_function(superscope *ss, scope *s, astPBlock args, ast *retT, ast *bod
       .params = params,
       .retT = retT,
       .body = body,
+      .instances = msList_init(ss->alloc, function_instance),
       .mp = moxmap_init(ss->alloc, slice(Type), u32, slice_typed_value_cmp),
   });
   // clang-format on
 
   c_fun signature = mList_init(ss->alloc, mList_iType(signature));
-  let res = scope_add_value(ss, s, TV(T(tu_of(c_fun, signature)), {.c_fun = msList_len(ss->functions)}));
+  let res = scope_add_value(ss, s, TV(T(tu_of(c_fun, signature)), {.c_fun.fn = msList_len(ss->functions)}));
   // generate example signature
   {
     let arg_scope = scope_inferior(ss, s);
@@ -74,21 +75,40 @@ u32 lower_function(superscope *ss, scope *s, astPBlock args, ast *retT, ast *bod
   );
   return res;
 }
-static u32 coerce_type(superscope *ss, scope *s, u32 left, Type to);
-
-static u32 lower_comptime_call(
-    superscope *ss, scope *s, u32 fn, scope *fnscope, function *fstruct, Type retT, slice(Type) sig, slice(u32) iargs
-) {
-  TODO();
-}
-static u32 lower_runtime_call(
-    superscope *ss, scope *s, u32 fn, scope *fnscope, function *fstruct, Type retT, slice(Type) sig, slice(u32) iargs
-) {
-  TODO();
-}
-
+void lower_function_arg(ast *arg) {}
 static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args, u32 lead) {
   TODO();
+  let alist = builtin_arg_list(&args);
+  let function_value = *scope_find(ss, s, fn);
+  let generic_signature = tu_catch(c_fun, function_value.t.t);
+  let function_item = &ss->functions[function_value.v.c_fun.fn - 1];
+  let function_arglist = function_item->params;
+  let value_list = msList_init(ss->alloc, typed_value *);
+
+  let sc = scope_inferior(ss, s);
+  defer { scope_destroy(ss, sc); };
+  usize idx = 0;
+  if (lead) {
+    let index = idx++;
+    let first = mList_arr(generic_signature)[index];
+    if (tu_is(c_any, first.t))
+      scope_bind(ss, sc, lead, id_from_ast(ss, s, tu_catch(astDecl, *function_item->params.ptr[index]).name));
+    if (Type_cmp(first, scope_find(ss, s, lead)->t))
+      // emit a coersion
+      assertMessage(false);
+    msList_push(ss->alloc, value_list, scope_find(ss, s, lead));
+  }
+  foreach (let arg_item, span(alist.ptr, alist.len)) {
+    let index = idx++;
+    let thisitem = mList_arr(generic_signature)[index];
+    let lead = lower(ss, s, *arg_item);
+    if (tu_is(c_any, thisitem.t))
+      scope_bind(ss, sc, lead, id_from_ast(ss, s, tu_catch(astDecl, *function_item->params.ptr[index]).name));
+    if (Type_cmp(thisitem, scope_find(ss, s, lead)->t))
+      // emit a coersion
+      assertMessage(false);
+    msList_push(ss->alloc, value_list, scope_find(ss, s, lead));
+  }
 }
 u32 lower_function_call(superscope *ss, scope *s, u32 fn, ast *args) {
   return lower_function_call_with(ss, s, fn, args, 0);
