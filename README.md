@@ -2,14 +2,8 @@ build commands :
 ```sh
 cc nob.c -o nob
 ./nob
+// prints run instructions
 ```
-on windows, a program cant be deleted if it's running i think? 
-if you get an for that
-also change all the 'nob' to 'nob.exe'
-```sh
-rm nob
-```
-then run it again, and also if you ever modify nob you have to remove and recompile?
 
 # CSHL
 ---
