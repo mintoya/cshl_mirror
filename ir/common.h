@@ -60,11 +60,14 @@ typed_value interpret /*          */ (superscope *ss, scope *s);
 // back to the scope's last value if the body never returns
 typed_value interpret_sig /*      */ (superscope *ss, scope *s, typed_value *ret);
 // casts the value at c.l to the integer type of reg(c.d), storing the result at c.d
-typed_value temporary_interpret /**/ (superscope *ss, scope *s, ast *a) {
+typed_value temporary_interpret /*      */ (superscope *ss, scope *s, ast *a) {
   let work = scope_inferior(ss, s);
   defer { scope_destroy(ss, work); };
   lower(ss, work, a);
-  return interpret(ss, work);
+  let result = interpret(ss, work);
+  if (tu_is(c_int, result.t.t) && result.v.c_int)
+    result.v.c_int = BInt.copy(ss->alloc, result.v.c_int);
+  return result;
 }
 
 typedef enum enum_op {
@@ -243,7 +246,7 @@ static inline u32 ss_compileString(superscope *b, scope *s, fptr in) {
 static inline bigint int_as_bigint(allocfn allocator, typed_value t) {
   assertMessage(!t.t.ptr_level);
   assertMessage(!t.t.isref, "todo");
-  assertMessage(t.v.value, "tried to convert unknown value");
+  assertMessage(t.v.value, "tried to convert unknown value: %s", snprint(stdAlloc, "{typed_value}", t).ptr);
   return tu_match_exp(
       t.t.t,
       (c_int, _, BInt.copy(allocator, t.v.c_int)),
@@ -269,7 +272,6 @@ static inline bigint int_as_bigint(allocfn allocator, typed_value t) {
   );
 }
 static inline void bigint_into_int(superscope *ss, typed_value *t, bigint b) {
-  assertMessage(t->v.value, "cannot convert unknown value");
   tu_match_void(
       t->t.t,
       (c_int, _, {
@@ -297,7 +299,7 @@ static inline void bigint_into_int(superscope *ss, typed_value *t, bigint b) {
               "unhandled integer case , %s",
               snprint(stdAlloc, "{Type}", t->t).ptr
           );
-        assertMessage(false, "should not be called with a non-int");
+        assertMessage(false, "should not be called with a non-int : %s", snprint(stdAlloc, "{*:typed_value}", t).ptr);
       }),
   );
 }
