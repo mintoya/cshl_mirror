@@ -24,8 +24,8 @@ typedef struct {
 
 typed_value *irstate_find(irstate irs, u32 idx) {
   let tc = scope_find(irs.ss, irs.s, idx);
-  if (!(idx > irs.root->start))
-    println("[LOG] ir getting {*:typed_value} from out of scope", tc);
+  // if (!(idx > irs.root->start))
+  //   println("[LOG] ir getting {*:typed_value} from out of scope", tc);
   return tc;
 }
 
@@ -301,34 +301,4 @@ typed_value interpret(superscope *ss, scope *s) {
       snprint(stdAlloc, "{typed_value}", result).ptr
   );
   return result;
-}
-bool try_interpret(superscope *ss, scope *s, ir i) {
-  return tu_match_exp(
-      i,
-      (ir_rawop, ro, ({
-         let l = *scope_find(ss, s, ro.l);
-         let r = *scope_find(ss, s, ro.r);
-         if (!Type_isint(l.t) || !Type_isint(r.t))
-           return false;
-         if (!Type_is_comptime(l.t) || !Type_is_comptime(r.t))
-           return false;
-         false;
-       })),
-      (ir_getptr, ro, false),
-      (ir_getref, ro, false),
-      (ir_putptr, ro, false),
-      (ir_cast, ro, false),
-      (ir_field, ro, false),
-      (ir_call, ro, false),
-      (ir_array, ro, false),
-      (ir_farg, ro, false),
-      (ir_set, ro, false),
-      (ir_block, ro, false),
-      (ir_while, ro, false),
-      (ir_if, ro, false),
-      //
-      (ir_ret, _, false),
-      (ir_break, _, false),
-      (ir_cont, _, false),
-  );
 }

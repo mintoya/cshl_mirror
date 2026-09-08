@@ -68,7 +68,6 @@ typed_value temporary_interpret /*      */ (superscope *ss, scope *s, ast *a) {
     result.v.c_int = BInt.copy(ss->alloc, result.v.c_int);
   return result;
 }
-bool try_interpret(superscope *ss, scope *s, ir i);
 
 typedef enum enum_op {
   enop_call,

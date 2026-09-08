@@ -55,16 +55,6 @@ static u32 lower_builtin_if(superscope *ss, scope *s, ast *args) {
   if (!EQUAL_ANY(list.len, 2, 3)) error_print(args, "@if takes 2-3 args");
   let cnds = scope_inferior(ss, s);
   let cnd = lower_truthy(ss, cnds, list.ptr[0]);
-  let condition = scope_find(ss, cnds, cnd);
-  let compiletime = condition->v.value != nullptr;
-  if (compiletime) {
-    assertMessage(tu_is(r_bool, condition->t.t));
-    bool take_then = *(bool *)condition->v.value;
-    scope_destroy(ss, cnds);
-    if (take_then) lower(ss, s, list.ptr[1]);
-    else if (list.len == 3) lower(ss, s, list.ptr[2]);
-    return scope_add_value(ss, s, TV(T(tu_of(r_void, {}))));
-  }
   let ts = scope_inferior(ss, s);
   lower(ss, ts, list.ptr[1]);
   let fs = list.len == 3 ? scope_inferior(ss, s) : nullptr;

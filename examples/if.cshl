@@ -1,12 +1,7 @@
-a ~= 1;
-@if(a,2,);
-@if(a,{2;}, {3;});
-
-@while( a, a = a - 1);
 ast ~~ @ast();
 any ~~ @any();
 
-if ~~ @fn (a ~ast),ast,{
+if  ~~ @fn (a ~ast),ast,{
   call ~ast~ a."()";
   cond ~ast~ call.opleft;
   rest ~ast~ call.opright;
@@ -27,21 +22,17 @@ if ~~ @fn (a ~ast),ast,{
     @uqot(rest)
   );
 };
-
-one ~= 1;
-
-test ~ast~ if 1 (one = one + 1) else (one = 3);
-@uqot test;
-
-if' (one == 2) {
-  one = 4;
-} else {
-  one = 0;
+cnd ~~ @fn (a ~any,b ~any,c ~(@typeof b)),(@typeof b),{
+  // if' (a) (return b) else (return c);
+  // analogous to
+  @id("if")'((a)((return(b))(else(return(c)))));
 };
 
-cnd ~~ @fn((a ~any,b ~any,c ~(@typeof b)),any,{
-  if' (a) (return b) else (return c);
-});
-
-
-
+one ~= cnd (1),
+  1,
+  0;
+// one == 1
+one = cnd (one),
+  3,
+  2;
+// one == 3

@@ -9,25 +9,49 @@
 #include "wheels/mytypes.h"
 #include "wheels/print/print_pre.h"
 #include "wheels/sList.h"
+#include <string.h>
 #include <wheels/fptr.h>
 #include <wheels/mylist.h>
 #include <wheels/oxmap.h>
 
 sliceDef(typed_value);
 sliceDef(Type);
-i8 slice_typed_value_cmp(const void *a, const void *b) {
-  let av = *(const slice(typed_value) *)a;
-  let bv = *(const slice(typed_value) *)b;
-  if_decl (let r, icmp(av.len, bv.len)) return r;
-  // ngl, switching on all the differences is annoying, strcmp for now
-  foreach (let i, range(0, av.len)) {
-    let sa = snprint(stdAlloc, "{typed_value}", av.ptr[i]);
-    let sb = snprint(stdAlloc, "{typed_value}", bv.ptr[i]);
-    defer { slice_free(stdAlloc, sa); };
-    defer { slice_free(stdAlloc, sb); };
-    if_decl (let cm, fptr_cmp(fp(sa), fp(sb)))
-      return cm;
+
+i8 typed_value_cmp(typed_value a, typed_value b) {
+  if (!memcmp(&a, &b, sizeof(a))) return 0;
+  if_decl (let cmp, Type_cmp(a.t, b.t)) return cmp;
+  assertMessage(Type_is_comptime(a.t) ?: (!a.v.value && !b.v.value), "should have nulled that out");
+  if (!Type_is_comptime(a.t)) return 0;
+  if (a.v.value == b.v.value) return 0;
+  if (a.t.isref) { // recurse on comptime known referances
+    let nt = a.t;
+    nt.isref = false;
+    assertMessage(a.v.value && b.v.value);
+    return typed_value_cmp(
+        (typed_value){nt, *(void **)a.v.value},
+        (typed_value){nt, *(void **)b.v.value}
+    );
   }
+  tu_match_void(
+      a.t.t,
+      (r_void, _, return 0),
+      (builtin, _, return 0), // store no data, and cought in type_cmp
+      (c_int, _, return BInt.cmp(a.v.c_int, b.v.c_int)),
+      (c_fun, _, {
+        return icmp(a.v.c_fun.fn, b.v.c_fun.fn)
+                   ?: icmp(a.v.c_fun.spec, b.v.c_fun.spec);
+      }),
+      (c_type, _, return Type_cmp(*a.v.c_type, *b.v.c_type)),
+      (default),
+  );
+  return memcmp(a.v.value, b.v.value, Type_sizeof(a.t));
+}
+i8 slice_typed_value_cmp_hash(const void *a, const void *b) {
+  let av = *(slice(typed_value) *)a;
+  let bv = *(slice(typed_value) *)b;
+  if_decl (let r, icmp(av.len, bv.len)) return r;
+  foreach (let i, range(0, av.len))
+    if_decl (let cmp, typed_value_cmp(av.ptr[i], bv.ptr[i])) return cmp;
   return 0;
 }
 
@@ -57,7 +81,7 @@ u32 lower_function(superscope *ss, scope *s, astPBlock args, ast *retT, ast *bod
       .retT = retT,
       .body = body,
       .instances = msList_init(ss->alloc, function_instance),
-      .mp = moxmap_init(ss->alloc, slice(typed_value), u32, slice_typed_value_cmp),
+      .mp = moxmap_init(ss->alloc, slice(typed_value), u32, slice_typed_value_cmp_hash),
   });
   // clang-format on
 
@@ -85,25 +109,14 @@ u32 lower_function(superscope *ss, scope *s, astPBlock args, ast *retT, ast *bod
   return res;
 }
 static u32 coerce_type(superscope *ss, scope *s, u32 left, Type to);
-static bool typed_value_equal(typed_value a, typed_value b) {
-  if (Type_cmp(a.t, b.t)) return false;
-  return tu_match_exp(
-      a.t.t,
-      (c_int, _, (!a.v.c_int || !b.v.c_int) ? true : !BInt.cmp(a.v.c_int, b.v.c_int)),
-      (c_ast, _, a.v.c_ast == b.v.c_ast),
-      (c_type, _, (!a.v.c_type && !b.v.c_type) || (a.v.c_type && b.v.c_type && !Type_cmp(*a.v.c_type, *b.v.c_type))),
-      (c_fun, _, a.v.c_fun.fn == b.v.c_fun.fn && a.v.c_fun.spec == b.v.c_fun.spec),
-      (default, a.v.value == b.v.value)
-  );
-}
 static u32 lower_specialized(superscope *ss, scope *s, u32 fn, slice(typed_value) key, slice(u32) aargs) {
   let function_item = &ss->functions[fn - 1];
   foreach (let instance, span(function_item->instances, msList_len(function_item->instances))) {
     if (instance->key_len != key.len) continue;
-    bool equal = true;
-    foreach (let item, span(key.ptr, key.len))
-      equal &= typed_value_equal(*item, instance->key[item - key.ptr]);
-    if (equal) {
+    if (!slice_typed_value_cmp_hash(
+            &key,
+            &(slice(typed_value)){key.len, instance->key}
+        )) {
       let result = scope_add_value(ss, s, TV(instance->ret));
       scope_add_inst(ss, s, (ir)tu_of(ir_call, {.l = {.fn = fn, .spec = instance - function_item->instances}, .d = result, .args = aargs}));
       return result;
@@ -132,7 +145,8 @@ static u32 lower_specialized(superscope *ss, scope *s, u32 fn, slice(typed_value
       value = scope_add_value(ss, spec, TV(param->t));
       scope_add_inst(ss, spec, (ir)tu_of(ir_farg, {.l = index, .d = value}));
     }
-    scope_bind(ss, spec, value, name);  }
+    scope_bind(ss, spec, value, name);
+  }
 
   let ret_value = temporary_interpret(ss, spec, function_item->retT);
   instance.ret = value_asType_loc(ret_value, ast_loc(*function_item->retT));
@@ -141,11 +155,13 @@ static u32 lower_specialized(superscope *ss, scope *s, u32 fn, slice(typed_value
   lower(ss, spec, function_item->body);
 
   let result = scope_add_value(ss, s, TV(instance.ret));
+  // clang-format off
   scope_add_inst(ss, s, (ir)tu_of(ir_call, {
-      .l = {.fn = fn, .spec = spec_number},
-      .d = result,
-      .args = aargs,
+   .l = {.fn = fn, .spec = spec_number},
+   .d = result,
+   .args = aargs,
   }));
+  // clang-format on
   return result;
 }
 static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args, u32 lead) {
@@ -164,9 +180,9 @@ static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args,
   if (lead) {
     let index = idx++;
     let first = mList_arr(generic_signature)[index];
+    lead = coerce_type(ss, s, lead, first);
     if (tu_is(c_any, first.t))
       scope_bind(ss, sc, lead, id_from_ast(ss, s, tu_catch(astDecl, *function_item->params.ptr[index]).name));
-    lead = coerce_type(ss, s, lead, first);
     argptrs.ptr[index] = lead;
     msList_push(ss->alloc, value_list, *scope_find(ss, s, lead));
   }
@@ -174,21 +190,18 @@ static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args,
     let index = idx++;
     let thisitem = mList_arr(generic_signature)[index];
     u32 lead;
-    if (tu_is(c_ast, thisitem.t)) {
-      // AST arguments are syntax, not expressions to interpret.
+    if (tu_is(c_ast, thisitem.t))
       lead = scope_add_value(ss, s, TV_ast(*arg_item));
-    } else if (Type_is_comptime(thisitem)) {
-      // Compile-time numeric arguments must be evaluated while lowering.
+    else if (Type_is_comptime(thisitem)) {
       let evaluated = temporary_interpret(ss, s, *arg_item);
       if (tu_is(c_int, evaluated.t.t))
         evaluated.v.c_int = BInt.copy(ss->alloc, evaluated.v.c_int);
       lead = scope_add_value(ss, s, evaluated);
-    } else {
-      lead = lower(ss, s, *arg_item);
-    }
+    } else lead = lower(ss, s, *arg_item);
+
+    lead = coerce_type(ss, s, lead, thisitem);
     if (tu_is(c_any, thisitem.t))
       scope_bind(ss, sc, lead, id_from_ast(ss, s, tu_catch(astDecl, *function_item->params.ptr[index]).name));
-    lead = coerce_type(ss, s, lead, thisitem);
     msList_push(ss->alloc, value_list, *scope_find(ss, s, lead));
     argptrs.ptr[index] = lead;
   }
@@ -204,6 +217,4 @@ static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args,
       argptrs
   );
 }
-u32 lower_function_call(superscope *ss, scope *s, u32 fn, ast *args) {
-  return lower_function_call_with(ss, s, fn, args, 0);
-}
+u32 lower_function_call(superscope *ss, scope *s, u32 fn, ast *args) { return lower_function_call_with(ss, s, fn, args, 0); }
