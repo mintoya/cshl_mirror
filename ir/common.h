@@ -20,6 +20,8 @@ sliceDef(scope);
 typedef struct {
   Type ret;
   scope *spec;
+  typed_value *key;
+  usize key_len;
 } function_instance;
 
 typedef struct function {
@@ -246,7 +248,7 @@ static inline u32 ss_compileString(superscope *b, scope *s, fptr in) {
 static inline bigint int_as_bigint(allocfn allocator, typed_value t) {
   assertMessage(!t.t.ptr_level);
   assertMessage(!t.t.isref, "todo");
-  assertMessage(t.v.value, "tried to convert unknown value: %s", snprint(stdAlloc, "{typed_value}", t).ptr);
+  assertMessage(t.v.value, "tried to convert unknown value");
   return tu_match_exp(
       t.t.t,
       (c_int, _, BInt.copy(allocator, t.v.c_int)),
@@ -299,7 +301,7 @@ static inline void bigint_into_int(superscope *ss, typed_value *t, bigint b) {
               "unhandled integer case , %s",
               snprint(stdAlloc, "{Type}", t->t).ptr
           );
-        assertMessage(false, "should not be called with a non-int : %s", snprint(stdAlloc, "{*:typed_value}", t).ptr);
+        assertMessage(false, "should not be called with a non-int");
       }),
   );
 }

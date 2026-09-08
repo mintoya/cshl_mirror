@@ -20,11 +20,13 @@ u32 lower_truthy(superscope *ss, scope *s, ast *a) {
       if_decl (let idx, moxmap_get((*info)->named, fp("@truthy")))
         TODO();
   if (Type_isint(t)) {
+    if (tu_is(c_int, t.t))
+      return scope_add_value(ss, s, TV(T(tu_of(r_bool, {})), avalue(ss->alloc, (bool)!!BInt.cmp(v->v.c_int, nullptr))));
     let d = scope_add_value(ss, s, TV(T(tu_of(r_bool, {}))));
     scope_add_inst(ss, s, (ir)tu_of(ir_cast, {.l = l, .d = d}));
     return d;
   } else if (tu_is(c_ast, t.t))
-    return scope_add_value(ss, s, TV(T(tu_of(r_bool, {})), avalue(ss->alloc, (bool)(!v->v.c_ast || tu_is(astEmptyStatement, *v->v.c_ast)))));
+    return scope_add_value(ss, s, TV(T(tu_of(r_bool, {})), avalue(ss->alloc, (bool)(v->v.c_ast && !tu_is(astEmptyStatement, *v->v.c_ast)))));
   else if (tu_is(c_type, t.t))
     return scope_add_value(ss, s, TV(T(tu_of(r_bool, {})), avalue(ss->alloc, (bool)(!v->v.c_type || !Type_cmp(T(tu_of(r_void, {})), *v->v.c_type)))));
   else if (tu_is(r_bool, t.t))
@@ -52,7 +54,17 @@ static u32 lower_builtin_if(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
   if (!EQUAL_ANY(list.len, 2, 3)) error_print(args, "@if takes 2-3 args");
   let cnds = scope_inferior(ss, s);
-  lower_truthy(ss, cnds, list.ptr[0]);
+  let cnd = lower_truthy(ss, cnds, list.ptr[0]);
+  let condition = scope_find(ss, cnds, cnd);
+  let compiletime = condition->v.value != nullptr;
+  if (compiletime) {
+    assertMessage(tu_is(r_bool, condition->t.t));
+    bool take_then = *(bool *)condition->v.value;
+    scope_destroy(ss, cnds);
+    if (take_then) lower(ss, s, list.ptr[1]);
+    else if (list.len == 3) lower(ss, s, list.ptr[2]);
+    return scope_add_value(ss, s, TV(T(tu_of(r_void, {}))));
+  }
   let ts = scope_inferior(ss, s);
   lower(ss, ts, list.ptr[1]);
   let fs = list.len == 3 ? scope_inferior(ss, s) : nullptr;

@@ -218,7 +218,35 @@ typedef enum {
   math_eq,
 } math_operation;
 u32 lower_math(superscope *ss, scope *s, u32 left, u32 right, u32 opNumber, math_operation op) {
-  let lt = scope_find(ss, s, left)->t;
+  let lhs = scope_find(ss, s, left);
+  let rhs_value = scope_find(ss, s, right);
+  let lt = lhs->t;
+  if (Type_is_comptime(lt) && Type_is_comptime(rhs_value->t) && lhs->v.value && rhs_value->v.value) {
+    bigint l = int_as_bigint(ss->alloc, *lhs);
+    bigint r = int_as_bigint(ss->alloc, *rhs_value);
+    bigint result = switch_exp(
+        op,
+        (math_mul, BInt.mul(ss->alloc, l, r)),
+        (math_div, BInt.div(ss->alloc, l, r).div),
+        (math_mod, BInt.div(ss->alloc, l, r).mod),
+        (math_add, BInt.add(ss->alloc, l, r)),
+        (math_sub, BInt.sub(ss->alloc, l, r)),
+        (math_shl, BInt.bit.shift(ss->alloc, l, r)),
+        (math_shr, BInt.bit.shift(ss->alloc, l, BInt.negate(ss->alloc, r))),
+        (math_band, BInt.bit.band(ss->alloc, l, r)),
+        (math_bor, BInt.bit.bor(ss->alloc, l, r)),
+        (math_and, BInt.from.i64(ss->alloc, !!(BInt.cmp(l, nullptr) && BInt.cmp(r, nullptr)))),
+        (math_or, BInt.from.i64(ss->alloc, !!(BInt.cmp(l, nullptr) || BInt.cmp(r, nullptr)))),
+        (math_eq, BInt.from.i64(ss->alloc, !BInt.cmp(l, r))),
+        (math_neq, BInt.from.i64(ss->alloc, !!BInt.cmp(l, r))),
+        (math_les, BInt.from.i64(ss->alloc, BInt.cmp(l, r) < 0)),
+        (math_mor, BInt.from.i64(ss->alloc, BInt.cmp(l, r) > 0)),
+        (math_leq, BInt.from.i64(ss->alloc, BInt.cmp(l, r) <= 0)),
+        (math_moq, BInt.from.i64(ss->alloc, BInt.cmp(l, r) >= 0)),
+        (default, (assertMessage(false, "unsupported compile-time math"), (bigint)nullptr)),
+    );
+    return scope_add_value(ss, s, TV_bigint(result));
+  }
   Type rt;
   switch (op) {
     case math_mor:

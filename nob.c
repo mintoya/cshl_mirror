@@ -1,5 +1,5 @@
 #if !defined CC
-  #define CC "ccache", "clang"
+  #define CC "clang"
 #endif
 
 #if defined(_WIN32)

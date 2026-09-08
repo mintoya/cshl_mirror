@@ -147,18 +147,40 @@ void interpret_call(irstate st, ir_call c) {
   defer { adestroy(st.ss->alloc, (value_store(*)[st.fnctx.ftype.len - 1]) st.fnctx.args); };
   foreach (let it, span(*st.fnctx.args, st.fnctx.ftype.len - 1))
     *it = irstate_find(st, c.args.ptr[it - *st.fnctx.args])->v;
-  st.sig.ret = irstate_find(st, c.d);
-  //
+  typed_value call_ret = TV(it.ret);
+  st.sig.ret = &call_ret;
 
   let ns = scope_copy(st.ss, it.spec);
   defer { scope_destroy(st.ss, ns); };
   interpret_block(st, ns);
 
-  assertMessage(
-      !(Type_cmp(T(tu_of(r_void, {})), st.sig.ret->t) && !st.sig.ret->v.value),
-      "comptime function did not return"
+  typed_value result = {};
+  if (call_ret.v.value) {
+    result = call_ret;
+  } else {
+    result = msList_last(ns->values);
+    assertMessage(
+        !Type_cmp(T(tu_of(r_void, {})), result.t),
+        "comptime function did not return"
+    );
+  }
+
+  let destination = irstate_find(st, c.d);
+  assertMessage(!Type_cmp(destination->t, result.t), "function returned the wrong type");
+  tu_match_void(
+      destination->t.t,
+      (c_ast, _, destination->v.c_ast = result.v.c_ast),
+      (c_int, _, {
+        msList_deInit(st.ss->alloc, destination->v.c_int);
+        destination->v.c_int = BInt.copy(st.ss->alloc, result.v.c_int);
+      }),
+      (c_fun, _, destination->v.c_fun = result.v.c_fun),
+      (c_type, _, destination->v.c_type = result.v.c_type),
+      (builtin, _, assertMessage(false)),
+      (default, {
+        memcpy(irstate_mem(st, c.d), result.v.value, Type_sizeof(destination->t));
+      })
   );
-  TODO();
 }
 void interpret_rawop(irstate st, ir_rawop c) {
   bigint out = nullptr;
@@ -189,8 +211,8 @@ void interpret_rawop(irstate st, ir_rawop c) {
   );
   assertMessage(out);
   out = BInt.copy(st.ss->alloc, out);
-  let d = ir_readthrough(st, c.d);
-  bigint_into_int(st.ss, &d, out);
+  let d = irstate_find(st, c.d);
+  bigint_into_int(st.ss, d, out);
 }
 void interpret_block(irstate st, ir_block c) {
   if (!c) return;
