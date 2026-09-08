@@ -3,6 +3,7 @@
 #include "../type.h"
 #include "common.h"
 // #include "interpret.h"
+#include "lower.h"
 #include "scope.h"
 #include "wheels/macros.h"
 #include "wheels/mytypes.h"
@@ -83,18 +84,21 @@ u32 lower_function(superscope *ss, scope *s, astPBlock args, ast *retT, ast *bod
   );
   return res;
 }
+static u32 coerce_type(superscope *ss, scope *s, u32 left, Type to);
+static u32 lower_specialized(superscope *ss, scope *s, slice(typed_value) key, slice(u32) aargs) {
+  println("[LOG] spec args {slice:typed_value} , argnums {slice:u32}", key, aargs);
+  fflush(stdout);
+  TODO();
+}
 static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args, u32 lead) {
-  TODO("function specialization"
-       "in order for functions to work, a function call here should act like "
-       "templates, so a(b,c,d), c and d are comptime , shoud be like a<c,d>(b),"
-       "since c and d are comptime, whenever it's called, it shoud generate a "
-       "version unique to that c&d , also comptime unknown should have a null value");
   let alist = builtin_arg_list(&args);
   let function_value = *scope_find(ss, s, fn);
   let generic_signature = tu_catch(c_fun, function_value.t.t);
   let function_item = &ss->functions[function_value.v.c_fun.fn - 1];
   let function_arglist = function_item->params;
-  let value_list = msList_init(ss->alloc, typed_value *);
+  let value_list = msList_init(ss->alloc, typed_value);
+  defer { msList_deInit(ss->alloc, value_list); };
+  slice(u32) argptrs = slice_alloc(ss->alloc, u32, mList_len(generic_signature) - 1);
 
   let sc = scope_inferior(ss, s);
   defer { scope_destroy(ss, sc); };
@@ -104,10 +108,9 @@ static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args,
     let first = mList_arr(generic_signature)[index];
     if (tu_is(c_any, first.t))
       scope_bind(ss, sc, lead, id_from_ast(ss, s, tu_catch(astDecl, *function_item->params.ptr[index]).name));
-    if (Type_cmp(first, scope_find(ss, s, lead)->t))
-      // emit a coersion
-      assertMessage(false);
-    msList_push(ss->alloc, value_list, scope_find(ss, s, lead));
+    lead = coerce_type(ss, s, lead, first);
+    argptrs.ptr[index] = lead;
+    msList_push(ss->alloc, value_list, *scope_find(ss, s, lead));
   }
   foreach (let arg_item, span(alist.ptr, alist.len)) {
     let index = idx++;
@@ -115,11 +118,15 @@ static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args,
     let lead = lower(ss, s, *arg_item);
     if (tu_is(c_any, thisitem.t))
       scope_bind(ss, sc, lead, id_from_ast(ss, s, tu_catch(astDecl, *function_item->params.ptr[index]).name));
-    if (Type_cmp(thisitem, scope_find(ss, s, lead)->t))
-      // emit a coersion
-      assertMessage(false);
-    msList_push(ss->alloc, value_list, scope_find(ss, s, lead));
+    lead = coerce_type(ss, s, lead, thisitem);
+    msList_push(ss->alloc, value_list, *scope_find(ss, s, lead));
+    argptrs.ptr[index] = lead;
   }
+  if (mList_len(generic_signature) != msList_len(value_list) + 1)
+    error_print(args, "unexpected arg length");
+  foreach (let l, span(value_list, msList_len(value_list)))
+    l->v.value = (!Type_is_comptime(l->t) && l->v.value) ? nullptr : l->v.value;
+  return lower_specialized(ss, s, ((slice(typed_value)){msList_len(value_list), value_list}), argptrs);
 }
 u32 lower_function_call(superscope *ss, scope *s, u32 fn, ast *args) {
   return lower_function_call_with(ss, s, fn, args, 0);
