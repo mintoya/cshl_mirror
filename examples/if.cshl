@@ -9,32 +9,28 @@ any ~~ @any();
 if ~~ @fn (a ~ast),ast,{
   call ~ast~ a."()";
   cond ~ast~ call.opleft;
-  rest ~ast~ call.opright; // not putting ast in the expected type causes an evaluation of the ast argument
+  rest ~ast~ call.opright;
 
   @cif((rest."()".opright."()".opleft == "else"), {
     then ~ast~ rest.opleft;
     else ~ast~ rest.opright."()";
 
-    @cif(else and (rest.opright."()".opleft == "else"), return @qot @cif(
-            @uqot(cond),
-            @uqot(then),
-            @uqot(else.opright)
-         )
+    return @qot @if(
+      @uqot(cond),
+      @uqot(then),
+      @uqot(else.opright)
     );
   });
 
-  return @qot @cif(
-      @uqot(cond),
-      @uqot(rest)
+  return @qot @if(
+    @uqot(cond),
+    @uqot(rest)
   );
 };
 
-
 one ~= 1;
 
-test ~ast~ if 1 (one = one + 1) else (one = 3);
-
-@uqot test;
+@uqot test ~ast~ if 1 (one = one + 1) else (one = 3);
 
 if' (one == 2) {
   one = 4;
@@ -45,3 +41,6 @@ if' (one == 2) {
 cnd ~~ @fn((a ~any,b ~any,c ~(@typeof b)),any,{
   if' (a) (return b) else (return c);
 });
+
+
+
