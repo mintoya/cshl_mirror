@@ -92,7 +92,10 @@ void scope_destroy(superscope *b, scope *s) {
   adestroy(b->alloc, s);
 }
 u32 scope_add_value(superscope *env, scope *s, typed_value v) {
-  msList_push(env->alloc, s->values, (typed_value){*ss_getType(env, v.t), v.v});
+  v.t = *ss_getType(env, v.t);
+  if (tu_is(c_int, v.t.t) && v.v.c_int) // explicitly destroyed in scope_destroy
+    v.v.c_int = BInt.copy(env->alloc, v.v.c_int);
+  msList_push(env->alloc, s->values, v);
   return msList_len(s->values) + s->start;
 }
 static inline void scope_add_inst(superscope *env, scope *s, ir i) { msList_push(env->alloc, s->instructions, i); }
