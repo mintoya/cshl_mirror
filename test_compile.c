@@ -151,6 +151,59 @@ test_fn(interpret_runtime_recursion) {
   test_inteq(*(i32 *)r.v.value, 10);
 }
 
+test_fn(if_cshl) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "ast ~~ @ast();"
+          "any ~~ @any();"
+          ""
+          "if  ~~ @fn (a ~ast),ast,{"
+          "  call ~ast~ a.\"()\";"
+          "  cond ~ast~ call.opleft;"
+          "  rest ~ast~ call.opright;"
+          ""
+          "  @cif((rest.\"()\".opright.\"()\".opleft == \"else\"), {"
+          "    then ~ast~ rest.opleft;"
+          "    else ~ast~ rest.opright.\"()\".opright;"
+          ""
+          "    return @qot @if("
+          "      @uqot(cond),"
+          "      @uqot(then),"
+          "      @uqot(else)"
+          "    );"
+          "  });"
+          ""
+          "  return @qot @if("
+          "    @uqot(cond),"
+          "    @uqot(rest)"
+          "  );"
+          "};"
+          "cnd ~~ @fn (a ~any,b ~any,c ~(@typeof b)),(@typeof b),{"
+          "  if' (a) (return b) else (return c);"
+          "};"
+          ""
+          "one ~= cnd (1),"
+          "  1,"
+          "  0;"
+          "// one == 1"
+          "one = cnd (one),"
+          "  3,"
+          "  2;"
+          "// one == 3"
+          "one;"
+      )
+  );
+
+  println("[if_cshl] r {typed_value} {bigint}", r, r.v.c_int);
+  test_assert(tu_is(c_int, r.t.t));
+  test_assert(!BInt.cmp(r.v.c_int, BInt.from.i64(arena, 3)));
+}
+
+
 test_fn(bool_bigint_roundtrip) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
