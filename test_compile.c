@@ -192,11 +192,11 @@ test_fn(if_cshl) {
           "one ~= cnd (1),"
           "  1,"
           "  0;"
-          "// one == 1"
+          "// one == 1\n"
           "one = cnd (one),"
           "  3,"
           "  2;"
-          "// one == 3"
+          "// one == 3\n"
           "one;"
       )
   );

@@ -32,9 +32,6 @@ scope *scope_inferior(superscope *b, scope *s) {
   scope_add_value(b, res, TV(T(tu_of(r_void, {}))));
   return res;
 }
-// deep-copies a scope tree: child scopes embedded in instructions must point at
-// the copy too, or a copied activation resolves values through the original
-// scope's storage instead of its own
 static scope *scope_copy_deep(superscope *ss, scope *s, scope *parent) {
   if (!s) return nullptr;
   // oxmap_copy asserts on empty maps, so mint a fresh one for those
@@ -52,29 +49,20 @@ static scope *scope_copy_deep(superscope *ss, scope *s, scope *parent) {
           .start = s->start,
       })
   );
+  // the copy shares bigint pointers with the original, but scope_destroy frees
+  // them, so give the copy its own copies
+  foreach (let v, span(res->values, msList_len(res->values)))
+    if (tu_is(c_int, v->t.t) && !v->t.isref && v->v.c_int)
+      v->v.c_int = BInt.copy(ss->alloc, v->v.c_int);
+  let rec = scope_copy_deep;
   foreach (let i, span(res->instructions, msList_len(res->instructions))) {
-    switch (i->tag) {
-      case ir_block_enum: {
-        let b = tu_catch(ir_block, *i);
-        *i = (ir)tu_of(ir_block, scope_copy_deep(ss, b, res));
-        break;
-      }
-      case ir_if_enum: {
-        let f = tu_catch(ir_if, *i);
-        *i = (ir)tu_of(
-            ir_if,
-            {.cnd = scope_copy_deep(ss, f.cnd, res), .t = scope_copy_deep(ss, f.t, res), .f = scope_copy_deep(ss, f.f, res)}
-        );
-        break;
-      }
-      case ir_while_enum: {
-        let w = tu_catch(ir_while, *i);
-        *i = (ir)tu_of(ir_while, {.cnd = scope_copy_deep(ss, w.cnd, res), .body = scope_copy_deep(ss, w.body, res)});
-        break;
-      }
-      default:
-        break;
-    }
+    *i = tu_match_exp(
+        *i,
+        (ir_block, b, (ir)tu_of(ir_block, rec(ss, b, res))),
+        (ir_if, f, (ir)tu_of(ir_if, {.cnd = rec(ss, f.cnd, res), .t = rec(ss, f.t, res), .f = rec(ss, f.f, res)})),
+        (ir_while, w, (ir)tu_of(ir_while, {.cnd = rec(ss, w.cnd, res), .body = rec(ss, w.body, res)})),
+        (default, *i)
+    );
   }
   return res;
 }
