@@ -86,7 +86,7 @@ cmd_main(
 
   if (execute) {
     let env = ss_init(allocator);
-    lower(env, env->outermost, ast);
+    catch_errcall((lower, (env, env->outermost, ast)), (e, _), (err_panic(e), (u32)0));
     print_wf(sexplike, "{scope}\n", *env->outermost);
     // interpret(env,env->outermost);
     // print_wf(sexplike, "{scope}\n", *env->outermost);

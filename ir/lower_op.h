@@ -7,18 +7,18 @@
 #include "wheels/macros.h"
 #include "wheels/mytypes.h"
 #include <string.h>
-u32 lower_call_extra(superscope *ss, scope *s, u32 left, u32 first, ast *args) {
+u32 lower_call_extra errs(superscope *ss, scope *s, u32 left, u32 first, ast *args) {
   let l = scope_find(ss, s, left);
   iflet_tu (let fn, c_fun, l->t.t)
-    return lower_function_call_with(ss, s, left, args, first);
+    return try_err(lower_function_call_with, (ss, s, left, args, first));
   error_print(args, "unsupported : call on {*:typed_value}", l);
 }
-u32 lower_call(superscope *ss, scope *s, u32 left, ast *args) {
+u32 lower_call errs(superscope *ss, scope *s, u32 left, ast *args) {
   let l = scope_find(ss, s, left);
   iflet_tu (let builtin, builtin, l->t.t)
-    return lower_builtin(ss, s, builtin, args);
+    return try_err(lower_builtin, (ss, s, builtin, args));
   iflet_tu (let fn, c_fun, l->t.t)
-    return lower_function_call(ss, s, left, args);
+    return try_err(lower_function_call, (ss, s, left, args));
   error_print(args, "unsupported call on {*:typed_value}", l);
 }
 tu_def(
@@ -27,7 +27,7 @@ tu_def(
     (astStrLit, astString),
     (astNumLit, astNumber),
 );
-u32 lower_overload_possible(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
+u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
   let t = scope_find(ss, s, left)->t;
   if (t.ptr_level > 1) return 0;
   let result = tu_match_exp(
@@ -39,7 +39,7 @@ u32 lower_overload_possible(superscope *ss, scope *s, u32 left, ast *right, u32 
          let block = tu_catch(astABlock, *right, error_at(*right, "array does not support this call"));
          if (sentList_len(block.items) != 1) error_at(*right, "expected [N]");
          let d = scope_add_value(ss, s, TV(T(*arr.t, .isref = true)));
-         let r = lower(ss, s, block.items[0]);
+         let r = try_err(lower, (ss, s, block.items[0]));
          if (!Type_isint(scope_find(ss, s, r)->t)) error_print(*right, "index into array with non-integer");
          scope_add_inst(ss, s, (ir)tu_of(ir_array, {.d = d, .r = r, .l = left}));
          d;
@@ -102,7 +102,7 @@ u32 lower_overload_possible(superscope *ss, scope *s, u32 left, ast *right, u32 
            // ast == ast is identity; id/number/string nodes compare their
            // spelling when the other side is a string
            let self = scope_find(ss, s, left)->v.c_ast;
-           let other = scope_find(ss, s, lower(ss, s, right));
+           let other = scope_find(ss, s, try_err(lower, (ss, s, right)));
            bool res = false;
            iflet_tu (let arr, r_arr, other->t.t) {
              if (self) {
@@ -146,12 +146,12 @@ r_struct find_inner_struct(TypeTree t) {
       (default, (r_struct) nullptr)
   );
 }
-u32 lower_dot(superscope *ss, scope *s, u32 left, ast *right, astLit lit) {
+u32 lower_dot errs(superscope *ss, scope *s, u32 left, ast *right, astLit lit) {
   let l = scope_find(ss, s, left);
   let name = astLit_str(lit);
 
   if (tu_is(c_type, l->t.t)) {
-    let target = value_asType_loc(*l, ast_loc(*right));
+    let target = try_err(value_asType, (*l));
     iflet_tu (let tag, r_tag, target.t)
       if_decl (let info, moxmap_get(ss->type_info, tag.name))
         if_decl (let idx, moxmap_get((*info)->named, name))
@@ -243,7 +243,7 @@ u32 lower_math(superscope *ss, scope *s, u32 left, u32 right, math_operation op)
   scope_add_inst(ss, s, (ir)tu_of(ir_rawop, {.r = left, .l = right, .d = d, .o = opNumber}));
   return d;
 }
-u32 lower_op(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
+u32 lower_op errs(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
   // these are not overloadable
   // dot probably coming soon
   switch_tuple(
@@ -254,7 +254,7 @@ u32 lower_op(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
         let pipscope = scope_inferior(ss, s);
         scope_add_inst(ss, s, (ir)tu_of(ir_block, pipscope));
         scope_bind(ss, pipscope, left, fp("_"));
-        lower(ss, pipscope, right);
+        try_err(lower, (ss, pipscope, right));
         scope_yield(ss, pipscope, result);
 
         return result;
@@ -264,11 +264,12 @@ u32 lower_op(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
          // a'b
          // ->
          // @uqot a @qot b
-         let argument = scope_find(ss, s, lower_builtin_qot(ss, s, right));
+         let argument = scope_find(ss, s, try_err(lower_builtin_qot, (ss, s, right)));
          if (Type_cmp(TV_ast(nullptr).t, argument->t)) error_print(right, "expected ast, got {Type}", argument->t);
-         let result = scope_find(ss, s, lower_call(ss, s, left, argument->v.c_ast));
+         let result = scope_find(ss, s, try_err(lower_call, (ss, s, left, argument->v.c_ast)));
          if (Type_cmp(TV_ast(nullptr).t, result->t)) error_print(right, "expected ast, got {Type}", argument->t);
-         lower_builtin_uqot(ss, s, result->v.c_ast);
+         assertMessage(result->v.c_ast, "macro call didn't materialize an ast");
+         return try_err(lower, (ss, s, result->v.c_ast));
        })),
       (default, ),
   );
@@ -276,19 +277,19 @@ u32 lower_op(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
   switch_tuple(
       op_as_enum(opNumber),
       (enop_set, {
-        scope_add_inst(ss, s, (ir)tu_of(ir_set, {.d = left, .l = lower(ss, s, right)}));
+        scope_add_inst(ss, s, (ir)tu_of(ir_set, {.d = left, .l = try_err(lower, (ss, s, right))}));
         return left;
       }),
       (default, ),
   );
-  if_decl (let ovl, lower_overload_possible(ss, s, left, right, opNumber)) return ovl;
+  if_decl (let ovl, try_err(lower_overload_possible, (ss, s, left, right, opNumber))) return ovl;
   let res = switch_exp(
       (op_as_enum(opNumber)),
       (enop_pipe /*   */, (assertMessage(false, "unreachable"), (u32)0)),
       (enop_colon /*  */, (assertMessage(false, "unreachable"), (u32)0)),
       (enop_set /*    */, (assertMessage(false, "unreachable"), (u32)0)),
       (enop_iexpand /**/, (assertMessage(false, "unreachable"), (u32)0)),
-      (enop_call, lower_call(ss, s, left, right)),
+      (enop_call, try_err(lower_call, (ss, s, left, right))),
       (enop_dot, ({
          P$(tu_match_exp(
                 *right,
@@ -297,26 +298,26 @@ u32 lower_op(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
                 (astNumber, num, (astLit)tu_of(astNumLit, num)),
                 (default, (assertMessage(false, "non-overloaded dot only works on literals"), (astLit){}))
             ),
-            lower_dot(ss, s, left, right, $));
+            try_err(lower_dot, (ss, s, left, right, $)));
        })),
       // operators are handled, so it should just be math now
-      (enop_mul, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_mul)),
-      (enop_div, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_div)),
-      (enop_mod, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_mod)),
-      (enop_plus, /*    */ lower_math(ss, s, left, lower(ss, s, right), math_add)),
-      (enop_minus, /*   */ lower_math(ss, s, left, lower(ss, s, right), math_sub)),
-      (enop_shr, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_shr)),
-      (enop_shl, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_shl)),
-      (enop_oand, /*    */ lower_math(ss, s, left, lower(ss, s, right), math_and)),
-      (enop_oor, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_or)),
-      (enop_oband, /*   */ lower_math(ss, s, left, lower(ss, s, right), math_band)),
-      (enop_obor, /*    */ lower_math(ss, s, left, lower(ss, s, right), math_bor)),
-      (enop_les, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_les)),
-      (enop_mor, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_mor)),
-      (enop_moq, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_moq)),
-      (enop_eq, /*      */ lower_math(ss, s, left, lower(ss, s, right), math_eq)),
-      (enop_neq, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_neq)),
-      (enop_leq, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_leq)),
+      (enop_mul, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right)), math_mul)),
+      (enop_div, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right)), math_div)),
+      (enop_mod, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right)), math_mod)),
+      (enop_plus, /*    */ lower_math(ss, s, left, try_err(lower, (ss, s, right)), math_add)),
+      (enop_minus, /*   */ lower_math(ss, s, left, try_err(lower, (ss, s, right)), math_sub)),
+      (enop_shr, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right)), math_shr)),
+      (enop_shl, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right)), math_shl)),
+      (enop_oand, /*    */ lower_math(ss, s, left, try_err(lower, (ss, s, right)), math_and)),
+      (enop_oor, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right)), math_or)),
+      (enop_oband, /*   */ lower_math(ss, s, left, try_err(lower, (ss, s, right)), math_band)),
+      (enop_obor, /*    */ lower_math(ss, s, left, try_err(lower, (ss, s, right)), math_bor)),
+      (enop_les, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right)), math_les)),
+      (enop_mor, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right)), math_mor)),
+      (enop_moq, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right)), math_moq)),
+      (enop_eq, /*      */ lower_math(ss, s, left, try_err(lower, (ss, s, right)), math_eq)),
+      (enop_neq, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right)), math_neq)),
+      (enop_leq, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right)), math_leq)),
   );
   if (!res) error_print(right, "something went wrong {} , {} , {ast}", left, opNumber, right);
   return res;

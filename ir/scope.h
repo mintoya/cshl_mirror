@@ -87,8 +87,12 @@ u32 scope_add_value(superscope *env, scope *s, typed_value v) {
   return msList_len(s->values) + s->start;
 }
 static inline void scope_add_inst(superscope *env, scope *s, ir i) {
-  // if (!try_interpret(env, s, i))
-  msList_push(env->alloc, s->instructions, i);
+  if (!catch_errcall(
+          (try_interpret, (env, s, i)),
+          (_, __),
+          (println("[ERROR] try_interpret encountered an error"), false)
+      ))
+    msList_push(env->alloc, s->instructions, i);
 }
 static inline void scope_bind(superscope *env, scope *s, u32 idx, fptr name) {
   if (moxmap_get(s->named, name)) error_print(name.ptr, "already bound {slice(c8)}", name);
@@ -135,6 +139,12 @@ static inline u32 ss_get_named(superscope *env, scope *s, fptr n) {
   let res = scope_add_value(env, s, TV(Type_ref(vo->t)));
   scope_add_inst(env, s, (ir)tu_of(ir_getref, {.d = res, .l = val}));
   return res;
+}
+// for assignment targets: the bound register itself, no copy/ref, so writes stick
+static inline u32 ss_get_named_mut(superscope *env, scope *s, fptr n) {
+  let val = ss_get_named_failable_noref(env, s, n);
+  if (!val) error_print(n.ptr, "unbound identifier {slice(c8)}", n);
+  return val;
 }
 
 TypeTree *ss_getTypeTree(superscope *ss, TypeTree t) {

@@ -3,8 +3,8 @@
 #include "ir/lower.h"
 static typed_value interpret_source(allocfn arena, fptr src) {
   let env = ss_init(arena);
-  lower(env, env->outermost, parse_source(arena, src));
-  return interpret(env, env->outermost);
+  catch_errcall((lower, (env, env->outermost, parse_source(arena, src))), (e, _), (err_panic(e), (u32)0));
+  return catch_errcall((interpret, (env, env->outermost)), (e, _), (err_panic(e), (typed_value){}));
 }
 
 test_fn(interpret_literal_int) {

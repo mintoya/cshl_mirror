@@ -7,9 +7,13 @@
 #include "wheels/sList.h"
 #include <string.h>
 typedef struct {
-  bool * /*       */ brk;
-  bool * /*       */ cnt;
-  typed_value * /**/ ret;
+  enum : u8 {
+    ir_brk_normal = 0,
+    ir_brk_break = 1,
+    ir_brk_continue = 2
+  } *
+      brk;
+  typed_value *ret;
 } irsig;
 typedef struct {
   superscope *ss;
@@ -47,46 +51,42 @@ static r_struct ir_find_struct(TypeTree t) {
   return tu_match_exp(t, (r_struct, r, r), (r_tag, r, ir_find_struct(*r.t)), (default, (r_struct) nullptr));
 }
 
-void irsig_break(irsig *_sig) {
-  if (!_sig->brk) error_print(nullptr, "broke in non-breakable context");
-  *_sig->brk = 1;
+void irsig_break errs(irsig *_sig) {
+  if (!_sig->brk) return_err("BROKE_NOT_BREAKABLE");
+  *_sig->brk = ir_brk_break;
   return;
 }
-void irsig_continue(irsig *_sig) {
-  if (!_sig->cnt) error_print(nullptr, "broke in non-breakable context");
-  *_sig->cnt = 1;
+void irsig_continue errs(irsig *_sig) {
+  if (!_sig->brk) return_err("BROKE_NOT_BREAKABLE");
+  *_sig->brk = ir_brk_continue;
   return;
 }
-void irsig_return(irsig *_sig, typed_value v) {
+void irsig_return errs(irsig *_sig, typed_value v) {
   println("[LOG:ret]  {typed_value}", v);
-  if (!_sig->ret) error_print(nullptr, "broke in non-breakable context");
-  if (Type_cmp(v.t, _sig->ret->t)) error_print(nullptr, "comptime return wrong type'd value");
-  assertMessage(v.v.value, "returning an unknonwn value");
+  if (!_sig->ret) return_err("RETURN_NOT_RETURNABLE");
+  if (Type_cmp(v.t, _sig->ret->t)) return_err("RETURN_WRONG_TYPE");
+  if (!v.v.value) return_err("RETURN_UNKNOWN");
   _sig->ret->v = v.v;
   return;
 }
-void interpret_ret(irstate st, ir_ret c) {
-  // bare-id returns lower as references; unfold them to the pointee's storage
-  let x = ir_readthrough(st, c);
-  irsig_return(&st.sig, x);
-}
-void interpret_break(irstate st, ir_break c) { return irsig_break(&st.sig); }
-void interpret_cont(irstate st, ir_cont c) { return irsig_continue(&st.sig); }
-void interpret_set(irstate st, ir_set c) {
+void interpret_op errs(irstate st, ir inst);
+void interpret_ret errs(irstate st, ir_ret c) { try_err(irsig_return, (&st.sig, ir_readthrough(st, c))); }
+void interpret_break errs(irstate st, ir_break c) { try_err(irsig_break, (&st.sig)); }
+void interpret_cont errs(irstate st, ir_cont c) { try_err(irsig_continue, (&st.sig)); }
+void interpret_set errs(irstate st, ir_set c) {
   let d = irstate_find(st, c.d);
   let l = irstate_find(st, c.l);
-  void *src = irstate_mem(st, c.l);
   tu_match_void(
       d->t.t,
       (c_ast, _, d->v.c_ast = l->v.value),
       (c_int, _, d->v.c_int = BInt.copy(st.ss->alloc, l->v.c_int)),
-      (builtin, _, assertMessage(false)),
+      (builtin, _, return_err("SET_BUILTIN")),
       (c_fun, _, d->v.c_fun = l->v.c_fun),
       (c_type, _, d->v.c_type = l->v.c_type),
       (default, {
         Type dt = d->t;
         dt.isref = false;
-        memcpy(irstate_mem(st, c.d), src, Type_sizeof(dt));
+        memcpy(irstate_mem(st, c.d), irstate_mem(st, c.l), Type_sizeof(dt));
       })
   );
 }
@@ -103,24 +103,25 @@ void interpret_cast(irstate st, ir_cast c) {
   else bigint_into_int(st.ss, &t, b);
   d->v = t.v;
 }
-bool istrue(typed_value t) {
-  assertMessage(!Type_cmp(T(tu_of(r_bool, {})), t.t));
+bool istrue errs(typed_value t) {
+  if (Type_cmp(T(tu_of(r_bool, {})), t.t))
+    return_err("TRUTHINESS_NON_BOOL"); // truthiness should be handled by now
   return *(bool *)t.v.value;
 }
-void interpret_block(irstate st, ir_block c);
-void interpret_if(irstate st, ir_if c) {
-  if (istrue(interpret(st.ss, c.cnd)))
-    interpret_block(st, c.t);
-  else interpret_block(st, c.f);
+void interpret_block errs(irstate st, ir_block c);
+void interpret_if errs(irstate st, ir_if c) {
+  if (try_err(istrue, (try_err(interpret, (st.ss, c.cnd)))))
+    try_err(interpret_block, (st, c.t));
+  else try_err(interpret_block, (st, c.f));
 }
-void interpret_while(irstate st, ir_while c) {
-  bool brk = false, cnt = false;
-  st.sig.brk = &brk, st.sig.cnt = &cnt;
-  while (istrue(interpret(st.ss, c.cnd))) {
-    brk = false, cnt = false;
-    interpret_block(st, c.body);
-    if (brk) return;
-    if (cnt) continue;
+void interpret_while errs(irstate st, ir_while c) {
+  ptrstype(itypeof(irsig, brk)) brk = 0;
+  st.sig.brk = &brk;
+  while (try_err(istrue, (try_err(interpret, (st.ss, c.cnd))))) {
+    brk = ir_brk_normal;
+    try_err(interpret_block, (st, c.body));
+    if (brk == ir_brk_break) break;
+    if (brk == ir_brk_continue) continue;
     if (st.sig.ret && st.sig.ret->v.value) return;
   }
 }
@@ -134,7 +135,7 @@ void interpret_putptr(irstate st, ir_putptr c) {
   let d = irstate_find(st, c.d);
   d->v.value = *(void **)ir_readthrough(st, c.l).v.value;
 }
-void interpret_call(irstate st, ir_call c) {
+void interpret_call errs(irstate st, ir_call c) {
   let it = st.ss->functions[c.l.fn - 1].instances[c.l.spec];
 
   // fnctx
@@ -153,28 +154,22 @@ void interpret_call(irstate st, ir_call c) {
 
   let ns = scope_copy(st.ss, it.spec);
   defer { scope_destroy(st.ss, ns); };
-  interpret_block(st, ns);
+  try_err(interpret_block, (st, ns));
 
   typed_value result = {};
   if (call_ret.v.value) {
     result = call_ret;
   } else {
+    if (Type_cmp(T(tu_of(r_void, {})), result.t))
+      return_err("NO_RETURN_NONVOID");
     result = msList_last(ns->values);
-    assertMessage(
-        !Type_cmp(T(tu_of(r_void, {})), result.t),
-        "comptime function did not return"
-    );
   }
 
   let destination = irstate_find(st, c.d);
   destination->t.isconst = false;
 
-  assertMessage(
-      !Type_cmp(destination->t, result.t),
-      "function returned the wrong type %s",
-      snprint(stdAlloc, "{Type} != {Type}", destination->t, result.t).ptr
-
-  );
+  if (Type_cmp(destination->t, result.t))
+    return_err_extras("RETURN_WRONG_TYPE", snprint(stdAlloc, "{Type} != {Type}", destination->t, result.t).ptr);
   tu_match_void(
       destination->t.t,
       (c_ast, _, destination->v.c_ast = result.v.c_ast),
@@ -184,13 +179,13 @@ void interpret_call(irstate st, ir_call c) {
       }),
       (c_fun, _, destination->v.c_fun = result.v.c_fun),
       (c_type, _, destination->v.c_type = result.v.c_type),
-      (builtin, _, assertMessage(false)),
+      (builtin, _, return_err("SET_BUILTIN")),
       (default, {
         memcpy(irstate_mem(st, c.d), result.v.value, Type_sizeof(destination->t));
       })
   );
 }
-void interpret_rawop(irstate st, ir_rawop c) {
+void interpret_rawop errs(irstate st, ir_rawop c) {
   bigint out = nullptr;
   allocfn al = arena_new_ext(st.ss->alloc, 1024);
   defer { arena_cleanup(al); };
@@ -215,40 +210,38 @@ void interpret_rawop(irstate st, ir_rawop c) {
       (enop_mor /*  */, BInt.from.i64(al, BInt.cmp(lhs, rhs) > 0)),
       (enop_leq /*  */, BInt.from.i64(al, BInt.cmp(lhs, rhs) <= 0)),
       (enop_moq /*  */, BInt.from.i64(al, BInt.cmp(lhs, rhs) >= 0)),
-      (default, (assertMessage(false, "unsupported rawop"), (bigint) nullptr)),
+      (default, (return_err("UNSUPPORTED_INSTRUCTION"), (bigint) nullptr)),
   );
-  assertMessage(out);
+  if (!out) return_err("MATH_UNKNOWN_RESULT");
   out = BInt.copy(st.ss->alloc, out);
   let d = irstate_find(st, c.d);
   bigint_into_int(st.ss, d, out);
 }
-void interpret_block(irstate st, ir_block c) {
+void interpret_block errs(irstate st, ir_block c) {
   if (!c) return;
-  void interpret_op(irstate, ir);
+
   st.s = c;
   foreach (let i, span(c->values, msList_len(c->values)))
     if (!Type_is_comptime(i->t) && !i->v.value)
       if_decl (let s, Type_sizeof(i->t))
         i->v.value = acreate(st.ss->alloc, u8[s]);
   foreach (let i, span(c->instructions, msList_len(c->instructions))) {
-    interpret_op(st, *i);
+    try_err(interpret_op, (st, *i));
     if (st.sig.brk && *st.sig.brk) return;
-    if (st.sig.cnt && *st.sig.cnt) return;
     if (st.sig.ret && st.sig.ret->v.value) return;
   }
 }
-void interpret_farg(irstate st, ir_farg c) {
-  assertMessage(st.fnctx.ftype.len && st.fnctx.args);
-  assertMessage(c.l + 1 < st.fnctx.ftype.len);
+void interpret_farg errs(irstate st, ir_farg c) {
+  if (!(st.fnctx.ftype.len && st.fnctx.args)) return_err("INVALID_FUNCTION");
+  if (!(c.l + 1 < st.fnctx.ftype.len)) return_err("FUNCTION_ARG_OOB");
   typed_value v = {st.fnctx.ftype.ptr[c.l], (*st.fnctx.args)[c.l]};
   let d = irstate_find(st, c.d);
-
-  assertMessage(!Type_cmp(v.t, d->t));
+  if (Type_cmp(v.t, d->t)) return_err("FUNCTION_WRONG_RETURN");
   tu_match_void(
       d->t.t,
       (c_ast, _, d->v.c_ast = v.v.value),
       (c_int, _, d->v.c_int = BInt.copy(st.ss->alloc, v.v.c_int)),
-      (builtin, _, assertMessage(false)),
+      (builtin, _, return_err("SET_BUILTIN")),
       (c_fun, _, d->v.c_fun = v.v.c_fun),
       (c_type, _, d->v.c_type = v.v.c_type),
       (default, memcpy(irstate_mem(st, c.d), v.v.value, Type_sizeof(d->t)))
@@ -262,42 +255,85 @@ void interpret_array(irstate st, ir_array c) {
   // no bounds checking, matching the lowerer; a zero-length array has nothing to check against
   *(void **)irstate_mem(st, c.d) = (u8 *)l.v.value + *(usize *)idx * Type_sizeof(T(*arr.t));
 }
-void interpret_field(irstate st, ir_field c) {
+void interpret_field errs(irstate st, ir_field c) {
   let l = ir_readthrough(st, c.l);
   let strct = ir_find_struct(l.t.t);
-  assertMessage(strct, "field access on non-struct (bitfields unsupported)");
+  if (!strct) return_err("FIELD_ACESS");
   let item = mList_arr(strct)[c.i];
   *(void **)irstate_mem(st, c.d) = (u8 *)l.v.value + item.offset;
 }
-void interpret_op(irstate st, ir inst) {
+void interpret_op errs(irstate st, ir inst) {
   tu_match_void(
       inst,
-      (ir_if, /*    */ op, interpret_if /*    */ (st, op)),
-      (ir_while, /* */ op, interpret_while /* */ (st, op)),
+      (ir_if, /*    */ op, try_err(interpret_if, /*    */ (st, op))),
+      (ir_while, /* */ op, try_err(interpret_while, /* */ (st, op))),
+      (ir_set, /*   */ op, try_err(interpret_set, /*   */ (st, op))),
+      (ir_call, /*  */ op, try_err(interpret_call, /*  */ (st, op))),
+      (ir_block, /* */ op, try_err(interpret_block, /* */ (st, op))),
+      (ir_field, /* */ op, try_err(interpret_field, /* */ (st, op))),
+      (ir_farg, /*  */ op, try_err(interpret_farg, /*  */ (st, op))),
+      (ir_ret, /*   */ op, try_err(interpret_ret, /*   */ (st, op))),
+      (ir_break, /* */ op, try_err(interpret_break, /* */ (st, op))),
+      (ir_cont, /*  */ op, try_err(interpret_cont, /*  */ (st, op))),
+      (ir_rawop, /* */ op, try_err(interpret_rawop, /* */ (st, op))),
       (ir_getref, /**/ op, interpret_getref /**/ (st, op)),
       (ir_getptr, /**/ op, interpret_getptr /**/ (st, op)),
       (ir_putptr, /**/ op, interpret_putptr /**/ (st, op)),
       (ir_cast, /*  */ op, interpret_cast /*  */ (st, op)),
-      (ir_set, /*   */ op, interpret_set /*   */ (st, op);),
-      (ir_call, /*  */ op, interpret_call /*  */ (st, op)),
-      (ir_rawop, /* */ op, interpret_rawop /* */ (st, op)),
-      (ir_farg, /*  */ op, interpret_farg /*  */ (st, op)),
-      (ir_ret, /*   */ op, interpret_ret /*   */ (st, op)),
-      (ir_break, /* */ op, interpret_break /* */ (st, op)),
-      (ir_cont, /*  */ op, interpret_cont /*  */ (st, op)),
-      (ir_block, /* */ op, interpret_block /* */ (st, op)),
       (ir_array, /* */ op, interpret_array /* */ (st, op)),
-      (ir_field, /* */ op, interpret_field /* */ (st, op)),
   );
 }
-typed_value interpret_sig(superscope *ss, scope *s, typed_value *ret) { // rediculous way to implement functions for now
+
+static inline bool try_reg_known errs(superscope *ss, scope *s, u32 idx) {
+  let it = scope_find(ss, s, idx);
+  if (Type_is_comptime(it->t) && !it->v.value && Type_cmp(it->t, TV_ast(0).t))
+    return_err("COMPTIME_UNKNOWN");
+  return Type_is_comptime(it->t) && it->v.value;
 }
-typed_value interpret(superscope *ss, scope *s) {
-  interpret_block((irstate){.ss = ss, .s = s, .root = s, .sig = {}}, s);
+bool try_interpret errs(superscope *ss, scope *s, ir inst) {
+  irstate st = {.ss = ss, .s = s, .root = s, .sig = {}};
+  let fold = tu_match_exp(
+      inst,
+      (ir_rawop, c, (bool)(try_err(try_reg_known, (ss, s, c.l)) && try_err(try_reg_known, (ss, s, c.r)))),
+      (ir_set, c, try_err(try_reg_known, (ss, s, c.l))),
+      (ir_call, c, ({
+         let it = &ss->functions[c.l.fn - 1].instances[c.l.spec];
+         if (!Type_is_comptime(it->ret)) return false;
+         foreach (let a, span(c.args.ptr, c.args.len))
+           if (!try_err(try_reg_known, (ss, s, *a))) return false;
+         true;
+       })),
+      (ir_cast, _, false),
+      (ir_farg, _, false),
+      (ir_getref, _, false),
+      (ir_getptr, _, false),
+      (ir_putptr, _, false),
+      (ir_field, _, false),
+      (ir_array, _, false),
+      (ir_block, _, false),
+      (ir_ret, _, false),
+      (ir_if, _, false),
+      (ir_while, _, false),
+      (ir_break, _, false),
+      (ir_cont, _, false),
+  );
+  if (!fold) return false;
+  tu_match_void(
+      inst,
+      (ir_rawop, c, {
+        let d = irstate_find(st, c.d);
+        if (!Type_is_comptime(d->t) && !d->v.value) irstate_mem(st, c.d);
+      }),
+      (default),
+  );
+  try_err(interpret_op, (st, inst));
+  return true;
+}
+typed_value interpret errs(superscope *ss, scope *s) {
+  try_err(interpret_block, ((irstate){.ss = ss, .s = s, .root = s, .sig = {}}, s));
   let result = msList_last(s->values);
-  assertMessage(
-      result.v.value,
-      "interpreting ir yielded an unknown value, %s",
+  if (!result.v.value) return_err_extras(
+      "YIELD_EMPTY",
       snprint(stdAlloc, "{typed_value}", result).ptr
   );
   return result;

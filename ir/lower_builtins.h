@@ -3,16 +3,17 @@
 #include "function.h"
 #include "scope.h"
 #include "wheels/macros.h"
-
-static u32 lower_builtin_fn(superscope *ss, scope *s, ast *args) {
+#include "wheels/print/print_pre.h"
+static const char *const ARG_COUNT_ERROR = "WRONG_ARG_COUNT";
+static u32 lower_builtin_fn errs(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
-  if (list.len != 3) error_print(args, "@fn takes 3 args");
-  let p = tu_catch(astPBlock, *list.ptr[0], error_print(list.ptr[0], "expected a parenthesized list"));
-  return lower_function(ss, s, p, list.ptr[1], list.ptr[2]);
+  if (list.len != 3) return_err(ARG_COUNT_ERROR);
+  let p = tu_catch(astPBlock, *list.ptr[0], return_err("EXPECTED_PBLOCK"));
+  return try_err(lower_function, (ss, s, p, list.ptr[1], list.ptr[2]));
 }
 static u32 lower_builtin_closure(superscope *ss, scope *s, ast *args) { TODO(); }
-u32 lower_truthy(superscope *ss, scope *s, ast *a) {
-  let l = lower(ss, s, a);
+u32 lower_truthy errs(superscope *ss, scope *s, ast *a) {
+  let l = try_err(lower, (ss, s, a));
   let v = scope_find(ss, s, l);
   let t = v->t;
   iflet_tu (let tag, r_tag, t.t)
@@ -31,51 +32,51 @@ u32 lower_truthy(superscope *ss, scope *s, ast *a) {
     return scope_add_value(ss, s, TV(T(tu_of(r_bool, {})), avalue(ss->alloc, (bool)(!v->v.c_type || !Type_cmp(T(tu_of(r_void, {})), *v->v.c_type)))));
   else if (tu_is(r_bool, t.t))
     return l;
-  else error_print(a, "no way to extract truthyness from {Type}", t);
+  else return_err_extras("NOT_TRUTHY", snprint(stdAlloc, "no way to extract truthiess from {Type}", t).ptr);
 }
-static u32 lower_builtin_cif(superscope *ss, scope *s, ast *args) {
+static u32 lower_builtin_cif errs(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
-  if (!EQUAL_ANY(list.len, 2, 3)) error_print(args, "@if takes 2-3 args");
+  if (!EQUAL_ANY(list.len, 2, 3)) return_err(ARG_COUNT_ERROR);
   let value = ({
     let ns = scope_inferior(ss, s);
     defer { scope_destroy(ss, ns); };
-    lower_truthy(ss, ns, list.ptr[0]);
-    interpret(ss, ns);
+    try_err(lower_truthy, (ss, ns, list.ptr[0]));
+    try_err(interpret, (ss, ns));
   });
   assertMessage(tu_is(r_bool, value.t.t));
   assertMessage(value.v.value);
 
-  if (!!*(bool *)value.v.value) lower(ss, s, list.ptr[1]);
-  else if (list.len == 3) lower(ss, s, list.ptr[2]);
+  if (!!*(bool *)value.v.value) try_err(lower, (ss, s, list.ptr[1]));
+  else if (list.len == 3) try_err(lower, (ss, s, list.ptr[2]));
 
   return scope_add_value(ss, s, TV(T(tu_of(r_void, {}))));
 }
-static u32 lower_builtin_if(superscope *ss, scope *s, ast *args) {
+static u32 lower_builtin_if errs(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
-  if (!EQUAL_ANY(list.len, 2, 3)) error_print(args, "@if takes 2-3 args");
+  if (!EQUAL_ANY(list.len, 2, 3)) return_err(ARG_COUNT_ERROR);
   let cnds = scope_inferior(ss, s);
-  let cnd = lower_truthy(ss, cnds, list.ptr[0]);
+  let cnd = try_err(lower_truthy, (ss, cnds, list.ptr[0]));
   let ts = scope_inferior(ss, s);
-  lower(ss, ts, list.ptr[1]);
+  try_err(lower, (ss, ts, list.ptr[1]));
   let fs = list.len == 3 ? scope_inferior(ss, s) : nullptr;
-  if (fs) lower(ss, fs, list.ptr[2]);
+  if (fs) try_err(lower, (ss, fs, list.ptr[2]));
   scope_add_inst(ss, s, (ir)tu_of(ir_if, {.cnd = cnds, .t = ts, .f = fs}));
   return scope_add_value(ss, s, TV(T(tu_of(r_void, {}))));
 }
-static u32 lower_builtin_while(superscope *ss, scope *s, ast *args) {
+static u32 lower_builtin_while errs(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
-  if (!EQUAL_ANY(list.len, 1, 2)) error_print(args, "@while takes 1-2 args");
+  if (!EQUAL_ANY(list.len, 1, 2)) return_err(ARG_COUNT_ERROR);
   let cnds = scope_inferior(ss, s);
-  lower_truthy(ss, cnds, list.ptr[0]);
+  try_err(lower_truthy, (ss, cnds, list.ptr[0]));
   let cs = list.len == 2 ? scope_inferior(ss, s) : nullptr;
-  if (list.len == 2) lower(ss, cs, list.ptr[1]);
+  if (list.len == 2) try_err(lower, (ss, cs, list.ptr[1]));
   scope_add_inst(ss, s, (ir)tu_of(ir_while, {.cnd = cnds, .body = cs}));
   return scope_add_value(ss, s, TV(T(tu_of(r_void, {}))));
 }
-static u32 lower_builtin_at(superscope *ss, scope *s, ast *args) {
+static u32 lower_builtin_at errs(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
-  if (list.len != 1) error_print(args, "@at(arg) takes exactly one argument");
-  let l = lower(ss, s, list.ptr[0]);
+  if (list.len != 1) return_err(ARG_COUNT_ERROR);
+  let l = try_err(lower, (ss, s, list.ptr[0]));
   let t = scope_find(ss, s, l)->t;
   if (!t.ptr_level) error_print(args, "@at expects a reference or pointer, got {Type}", t);
   Type inner = t;
@@ -84,44 +85,44 @@ static u32 lower_builtin_at(superscope *ss, scope *s, ast *args) {
   scope_add_inst(ss, s, (ir)tu_of(ir_putptr, {.l = l, .d = d}));
   return d;
 }
-static u32 lower_builtin_where(superscope *ss, scope *s, ast *args) {
+static u32 lower_builtin_where errs(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
-  if (list.len != 1) error_print(args, "@where takes one arg");
-  let l = lower(ss, s, list.ptr[0]);
+  if (list.len != 1) return_err(ARG_COUNT_ERROR);
+  let l = try_err(lower, (ss, s, list.ptr[0]));
   let t = scope_find(ss, s, l)->t;
   let d = scope_add_value(ss, s, TV(Type_ptr(t)));
   scope_add_inst(ss, s, (ir)tu_of(ir_getptr, {.l = l, .d = d}));
   return d;
 }
-static u32 lower_builtin_ref(superscope *ss, scope *s, ast *args) {
+static u32 lower_builtin_ref errs(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
-  if (list.len != 1) error_print(args, "@ref takes one arg");
-  let l = lower(ss, s, list.ptr[0]);
+  if (list.len != 1) return_err(ARG_COUNT_ERROR);
+  let l = try_err(lower, (ss, s, list.ptr[0]));
   let t = scope_find(ss, s, l)->t;
   let d = scope_add_value(ss, s, TV(Type_ref(t)));
   scope_add_inst(ss, s, (ir)tu_of(ir_getref, {.l = l, .d = d}));
   return d;
 }
 
-static u32 lower_builtin_return(superscope *ss, scope *s, ast *args) {
+static u32 lower_builtin_return errs(superscope *ss, scope *s, ast *args) {
   // TODO enforce return type
   let list = builtin_arg_list(&args);
-  if (list.len > 1) error_print(args, "return dont take args");
-  let val = list.len ? lower(ss, s, list.ptr[0]) : scope_add_value(ss, s, void_value);
+  if (list.len > 1) return_err(ARG_COUNT_ERROR);
+  let val = list.len ? try_err(lower, (ss, s, list.ptr[0])) : scope_add_value(ss, s, void_value);
   scope_add_inst(ss, s, (ir)tu_of(ir_ret, val));
   return scope_add_value(ss, s, void_value);
 }
 
-static u32 lower_builtin_id(superscope *ss, scope *s, ast *args) {
-  let str = temporary_interpret(ss, s, args);
-  let arr = tu_catchr(r_arr, str.t.t, error_print(args, "id takes an array of i8"));
-  if (tu_catchr(r_sint, arr.t[0], error_print(args, "id takes an array of i8")) != 8)
-    error_print(args, "id takes an array of i8");
+static u32 lower_builtin_id errs(superscope *ss, scope *s, ast *args) {
+  let str = try_err(temporary_interpret, (ss, s, args));
+  let arr = tu_catchr(r_arr, str.t.t, return_err("ID_TYPE_ERROR"));
+  if (tu_catchr(r_sint, arr.t[0], return_err("ID_TYPE_ERROR")) != 8)
+    return_err("ID_TYPE_ERROR");
   let copy = slice_clone(ss->alloc, ((fptr){arr.count, (u8 *)str.v.value}));
   return scope_add_value(ss, s, (typed_value){T(tu_of(c_ast, {})), avalue(ss->alloc, (ast)tu_of(astId, copy))});
 }
 
-static astptr qot_walk(superscope *ss, scope *s, astptr node) {
+static astptr qot_walk errs(superscope *ss, scope *s, astptr node) {
   // as long as asts are immutable
   if (!node) return avalue(ss->alloc, (ast)tu_of(astEmptyStatement, {}));
   let nd = *node;
@@ -132,9 +133,9 @@ static astptr qot_walk(superscope *ss, scope *s, astptr node) {
         let args = op.right;
         let list = builtin_arg_list(&args);
         assertMessage(list.len == 1, "@uqot takes exactly one argument");
-        let tv = temporary_interpret(ss, s, list.ptr[0]);
-        if (!tu_is(c_ast, tv.t.t)) error_print(node, "tried to unquote a non-ast");
-        if (!tv.v.c_ast) error_print(node, "@uqot got a null ast?");
+        let tv = try_err(temporary_interpret, (ss, s, list.ptr[0]));
+        if (!tu_is(c_ast, tv.t.t)) return_err("UNQUOTE_TYPE_ERROR");
+        if (!tv.v.c_ast) return_err("UNQUOTE_UNKNOWN");
         return tv.v.c_ast;
       }
     }
@@ -147,17 +148,17 @@ static astptr qot_walk(superscope *ss, scope *s, astptr node) {
       (astNumber, _, node),
       (astString, _, node),
       (astDecl, decl, ({
-         let name = qot_walk(ss, s, decl.name);
-         let type = qot_walk(ss, s, decl.type);
-         let value = qot_walk(ss, s, decl.value);
+         let name = try_err(qot_walk, (ss, s, decl.name));
+         let type = try_err(qot_walk, (ss, s, decl.type));
+         let value = try_err(qot_walk, (ss, s, decl.value));
          let res = node;
          if (name != decl.name || type != decl.type || value != decl.value)
            res = avalue(ss->alloc, (ast)tu_of(astDecl, {.name = name, .type = type, .value = value, .is_const = decl.is_const}));
          res;
        })),
       (astOp, op, ({
-         let left = qot_walk(ss, s, op.left);
-         let right = qot_walk(ss, s, op.right);
+         let left = try_err(qot_walk, (ss, s, op.left));
+         let right = try_err(qot_walk, (ss, s, op.right));
          let res = node;
          if (left != op.left || right != op.right)
            res = avalue(ss->alloc, (ast)tu_of(astOp, {.left = left, .right = right, .number_rep = op.number_rep}));
@@ -169,7 +170,7 @@ static astptr qot_walk(superscope *ss, scope *s, astptr node) {
          let new_stmts = *acreate(ss->alloc, astptr[len + 1]);
          bool changed = false;
          foreach (let i, range(0, len)) {
-           new_stmts[i] = qot_walk(ss, s, stmts[0][i]);
+           new_stmts[i] = try_err(qot_walk, (ss, s, stmts[0][i]));
            changed = changed || (new_stmts[i] != stmts[0][i]);
          }
          let res = node;
@@ -185,7 +186,7 @@ static astptr qot_walk(superscope *ss, scope *s, astptr node) {
          let new_stmts = *acreate(ss->alloc, astptr[len + 1]);
          bool changed = false;
          foreach (let i, range(0, len)) {
-           new_stmts[i] = qot_walk(ss, s, stmts[0][i]);
+           new_stmts[i] = try_err(qot_walk, (ss, s, stmts[0][i]));
            changed = changed || (new_stmts[i] != stmts[0][i]);
          }
          let res = node;
@@ -201,7 +202,7 @@ static astptr qot_walk(superscope *ss, scope *s, astptr node) {
          let new_stmts = *acreate(ss->alloc, astptr[len + 1]);
          bool changed = false;
          foreach (let i, range(0, len)) {
-           new_stmts[i] = qot_walk(ss, s, items[0][i]);
+           new_stmts[i] = try_err(qot_walk, (ss, s, items[0][i]));
            changed = changed || (new_stmts[i] != items[0][i]);
          }
          let res = node;
@@ -213,28 +214,28 @@ static astptr qot_walk(superscope *ss, scope *s, astptr node) {
        }))
   );
 }
-static u32 lower_builtin_qot(superscope *ss, scope *s, ast *args) {
+static u32 lower_builtin_qot errs(superscope *ss, scope *s, ast *args) {
   ast *arg = args;
   let list = builtin_arg_list(&args);
   if (list.len == 0) arg = ({static ast ex = tu_of(astEmptyStatement, {}); &ex; });
   else if (list.len == 1) arg = list.ptr[0];
-  else error_print(args, "qot takes at most 1 arg");
+  else return_err(ARG_COUNT_ERROR);
   assertMessage(arg);
-  return scope_add_value(ss, s, (typed_value){T(tu_of(c_ast, {})), qot_walk(ss, s, arg)});
+  return scope_add_value(ss, s, (typed_value){T(tu_of(c_ast, {})), try_err(qot_walk, (ss, s, arg))});
 }
-static u32 lower_builtin_uqot(superscope *ss, scope *s, ast *args) {
+static u32 lower_builtin_uqot errs(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
-  if (list.len != 1) error_print(args, "@uqot(arg) takes one argument");
-  let tv = temporary_interpret(ss, s, list.ptr[0]);
+  if (list.len != 1) return_err(ARG_COUNT_ERROR);
+  let tv = try_err(temporary_interpret, (ss, s, list.ptr[0]));
   if (!tu_is(c_ast, tv.t.t)) error_print(args, "tried to unquote a non-ast");
   assertMessage(tv.v.c_ast, "@uqot argument is null?");
-  return lower(ss, s, tv.v.c_ast);
+  return try_err(lower, (ss, s, tv.v.c_ast));
 }
 
-static u32 lower_builtin_reft(superscope *ss, scope *s, ast *args) {
+static u32 lower_builtin_reft errs(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
   if (list.len != 1) error_print(args, "@reft(arg) takes exactly one argument");
-  Type inner = value_asType_loc(temporary_interpret(ss, s, list.ptr[0]), ast_loc(*args));
+  Type inner = try_err(value_asType, (try_err(temporary_interpret, (ss, s, list.ptr[0]))));
   return scope_add_value(ss, s, Type_asValue(ss, Type_ref(inner)));
 }
 static u32 lower_builtin_bare_type(superscope *ss, scope *s, ast *args, Type t) {
@@ -242,21 +243,23 @@ static u32 lower_builtin_bare_type(superscope *ss, scope *s, ast *args, Type t) 
   assertMessage(list.len == 0, "@(type)() takes no arguments");
   return scope_add_value(ss, s, Type_asValue(ss, t));
 }
-static u32 lower_builtin_decor(superscope *ss, scope *s, ast *args, bool is_const, bool is_volatile) {
+static u32 lower_builtin_decor errs(superscope *ss, scope *s, ast *args, bool is_const, bool is_volatile) {
   let list = builtin_arg_list(&args);
   if (list.len != 1) error_print(args, "@const//volatile(T) takes exactly one argument");
-  Type inner = value_asType_loc(temporary_interpret(ss, s, list.ptr[0]), ast_loc(*args));
+  Type inner = try_err(value_asType, (try_err(temporary_interpret, (ss, s, list.ptr[0]))));
   inner.isconst |= is_const;
   inner.isvolatile |= is_volatile;
   return scope_add_value(ss, s, Type_asValue(ss, inner));
 }
-static u32 lower_builtin_intty(superscope *ss, scope *s, ast *args, bool is_signed) {
+static u32 lower_builtin_intty errs(superscope *ss, scope *s, ast *args, bool is_signed) {
   let list = builtin_arg_list(&args);
   if (list.len != 1) error_print(args, "@sint//uint(N) takes exactly one argument");
   bigint largest_int = BInt.from.i64(ss->alloc, (u16)~0);
   defer { msList_deInit(ss->alloc, largest_int); };
-  bigint bigbits = int_as_bigint(ss->alloc, temporary_interpret(ss, s, list.ptr[0]));
-  defer { msList_deInit(ss->alloc, bigbits); };
+  bigint bigbits = int_as_bigint(ss->alloc, try_err(temporary_interpret, (ss, s, list.ptr[0])));
+  defer {
+    msList_deInit(ss->alloc, bigbits);
+  };
   if (bigint_cmp(bigbits, nullptr) <= 0) error_print(args, "integer width must be positive");
   if (bigint_cmp(bigbits, largest_int) > 0) error_print(args, "integer width too large");
   return P$(
@@ -264,36 +267,36 @@ static u32 lower_builtin_intty(superscope *ss, scope *s, ast *args, bool is_sign
       scope_add_value(ss, s, Type_asValue(ss, $))
   );
 }
-static u32 lower_builtin_typeof(superscope *ss, scope *s, ast *args) {
-  return scope_add_value(ss, s, Type_asValue(ss, scope_find(ss, s, lower(ss, s, args))->t));
+static u32 lower_builtin_typeof errs(superscope *ss, scope *s, ast *args) {
+  return scope_add_value(ss, s, Type_asValue(ss, scope_find(ss, s, try_err(lower, (ss, s, args)))->t));
 }
-static u32 lower_builtin_arrof(superscope *ss, scope *s, ast *args) {
+static u32 lower_builtin_arrof errs(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
   assertMessage(list.len == 2, "@arrof(N, T) takes exactly two arguments");
-  let count_tv = int_as_bigint(ss->alloc, temporary_interpret(ss, s, list.ptr[0]));
+  let count_tv = int_as_bigint(ss->alloc, try_err(temporary_interpret, (ss, s, list.ptr[0])));
   defer { msList_deInit(ss->alloc, count_tv); };
   bigint_expand(ss->alloc, &count_tv, sizeof(usize) / sizeof(bigint_unit) + 1);
 
-  Type elem = value_asType_loc(temporary_interpret(ss, s, list.ptr[1]), ast_loc(*args));
+  Type elem = try_err(value_asType, (try_err(temporary_interpret, (ss, s, list.ptr[1]))));
   Type arr = T(tu_of(r_arr, {ss_getTypeTree(ss, elem.t), *(usize *)count_tv}));
   return scope_add_value(ss, s, Type_asValue(ss, arr));
 }
-static u32 lower_builtin_ptrof(superscope *ss, scope *s, ast *args) {
+static u32 lower_builtin_ptrof errs(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
   if (list.len != 1) error_print(args, "@ptrof takes one argument");
-  Type inner = value_asType_loc(temporary_interpret(ss, s, list.ptr[0]), ast_loc(*args));
+  Type inner = try_err(value_asType, (try_err(temporary_interpret, (ss, s, list.ptr[0]))));
   return scope_add_value(ss, s, Type_asValue(ss, Type_ptr(inner)));
 }
-static u32 lower_builtin_sizeof(superscope *ss, scope *s, ast *args) {
+static u32 lower_builtin_sizeof errs(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
   if (list.len != 1) error_print(args, "@sizeof(T) takes exactly one argument");
-  let t = value_asType_loc(temporary_interpret(ss, s, list.ptr[0]), ast_loc(*args));
+  let t = try_err(value_asType, (try_err(temporary_interpret, (ss, s, list.ptr[0]))));
   return scope_add_value(ss, s, TV_bigint(BInt.from.i64(ss->alloc, Type_sizeof(t))));
 }
-static u32 lower_builtin_alignof(superscope *ss, scope *s, ast *args) {
+static u32 lower_builtin_alignof errs(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
   if (list.len != 1) error_print(args, "@alignof(T) takes exactly one argument");
-  let t = value_asType_loc(temporary_interpret(ss, s, list.ptr[0]), ast_loc(*args));
+  let t = try_err(value_asType, (try_err(temporary_interpret, (ss, s, list.ptr[0]))));
   return scope_add_value(ss, s, TV_bigint(BInt.from.i64(ss->alloc, Type_alignof(t))));
 }
 static r_struct find_struct_typetree(TypeTree t) {
@@ -304,11 +307,11 @@ static r_struct find_struct_typetree(TypeTree t) {
       (default, (r_struct) nullptr)
   );
 }
-static u32 lower_builtin_offsetof(superscope *ss, scope *s, ast *args) {
+static u32 lower_builtin_offsetof errs(superscope *ss, scope *s, ast *args) {
   let list = builtin_arg_list(&args);
   if (list.len != 2) error_print(args, "@offsetof(T, member) takes exactly two arguments");
-  let t = value_asType_loc(temporary_interpret(ss, s, list.ptr[0]), ast_loc(*args));
-  let name = id_from_ast(ss, s, list.ptr[1]);
+  let t = try_err(value_asType, (try_err(temporary_interpret, (ss, s, list.ptr[0]))));
+  let name = try_err(id_from_ast, (ss, s, list.ptr[1]));
   let st = find_struct_typetree(t.t);
   if (!st) error_print(args, "@offsetof expects a struct type, got {Type}", t);
   foreach (let item, mList_iter(st))
@@ -324,7 +327,7 @@ static fptr unique_type_name(superscope *ss) {
   return fp(str);
 }
 
-static u32 lower_builtin_struct(superscope *ss, scope *s, ast *args) {
+static u32 lower_builtin_struct errs(superscope *ss, scope *s, ast *args) {
   let _struct = mList_init(ss->alloc, r_struct_item);
   // clang-format off
   let _this = ss_getTypeTree(ss,(TypeTree)tu_of(r_tag,{
@@ -347,19 +350,19 @@ static u32 lower_builtin_struct(superscope *ss, scope *s, ast *args) {
     let stmt = *node;
     let dcl = tu_catch(astDecl, *stmt, error_print(stmt, "struct member must be a decl"));
     if (!dcl.name) error_print(stmt, "struct member needs a name");
-    let name = id_from_ast(ss, working_scope, dcl.name);
+    let name = try_err(id_from_ast, (ss, working_scope, dcl.name));
 
     typed_value bound = {};
     if (dcl.type) {
-      bound.t = value_asType_loc(temporary_interpret(ss, working_scope, dcl.type), ast_loc(*dcl.type));
+      bound.t = try_err(value_asType, (try_err(temporary_interpret, (ss, working_scope, dcl.type))));
       if (tu_is(c_type, bound.t.t) && dcl.value) {
-        bound = temporary_interpret(ss, working_scope, dcl.value);
+        bound = try_err(temporary_interpret, (ss, working_scope, dcl.value));
         if (!tu_is(c_type, bound.t.t))
           error_print(stmt, "member {slice(c8)} has a type but its value is not a type", name);
       } else bound = TV(*ss_getType(ss, bound.t));
     } else {
       if (!dcl.value) error_print(stmt, "struct member {slice(c8)} needs a type or a value", name);
-      bound = temporary_interpret(ss, working_scope, dcl.value);
+      bound = try_err(temporary_interpret, (ss, working_scope, dcl.value));
       if (!Type_is_comptime(bound.t))
         error_print(stmt, "non-comptime struct member {slice(c8)} needs a type", name);
     }
@@ -396,42 +399,42 @@ static u32 lower_builtin_continue(superscope *ss, scope *s, ast *args) {
   return scope_add_value(ss, s, void_value);
 }
 
-static u32 lower_builtin(superscope *ss, scope *s, builtin_id builtin, ast *args) {
+static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, ast *args) {
   return switch_exp(
       builtin,
-      (builtin_fn, /*      */ lower_builtin_fn(ss, s, args)),
+      (builtin_fn, /*      */ try_err(lower_builtin_fn, (ss, s, args))),
       (builtin_closure, /* */ lower_builtin_closure(ss, s, args)),
-      (builtin_if, /*      */ lower_builtin_if(ss, s, args)),
-      (builtin_cif, /*     */ lower_builtin_cif(ss, s, args)),
-      (builtin_while, /*   */ lower_builtin_while(ss, s, args)),
-      (builtin_return, /*  */ lower_builtin_return(ss, s, args)),
+      (builtin_if, /*      */ try_err(lower_builtin_if, (ss, s, args))),
+      (builtin_cif, /*     */ try_err(lower_builtin_cif, (ss, s, args))),
+      (builtin_while, /*   */ try_err(lower_builtin_while, (ss, s, args))),
+      (builtin_return, /*  */ try_err(lower_builtin_return, (ss, s, args))),
       (builtin_break, /*   */ lower_builtin_break(ss, s, args)),
       (builtin_continue, /**/ lower_builtin_continue(ss, s, args)),
-      (builtin__id, /*     */ lower_builtin_id(ss, s, args)),
+      (builtin__id, /*     */ try_err(lower_builtin_id, (ss, s, args))),
       (builtin_ast, /*     */ lower_builtin_bare_type(ss, s, args, T(tu_of(c_ast, {})))),
       (builtin_any, /*     */ lower_builtin_bare_type(ss, s, args, T(tu_of(c_any, {})))),
       (builtin_bool, /*    */ lower_builtin_bare_type(ss, s, args, T(tu_of(r_bool, {})))),
       (builtin_void, /*    */ lower_builtin_bare_type(ss, s, args, T(tu_of(r_void, {})))),
       (builtin_int, /*     */ lower_builtin_bare_type(ss, s, args, T(tu_of(c_int, {})))),
       (builtin_type, /*    */ lower_builtin_bare_type(ss, s, args, T(tu_of(c_type, {})))),
-      (builtin_const, /*   */ lower_builtin_decor(ss, s, args, true, false)),
-      (builtin_volatile, /**/ lower_builtin_decor(ss, s, args, false, true)),
-      (builtin_sint, /*    */ lower_builtin_intty(ss, s, args, true)),
-      (builtin_uint, /*    */ lower_builtin_intty(ss, s, args, false)),
-      (builtin_typeof, /*  */ lower_builtin_typeof(ss, s, args)),
-      (builtin_arrof, /*   */ lower_builtin_arrof(ss, s, args)),
-      (builtin_ptrof, /*   */ lower_builtin_ptrof(ss, s, args)),
-      (builtin_sizeof, /*  */ lower_builtin_sizeof(ss, s, args)),
-      (builtin_alignof, /* */ lower_builtin_alignof(ss, s, args)),
-      (builtin_offsetof, /**/ lower_builtin_offsetof(ss, s, args)),
-      (builtin_struct, /*  */ lower_builtin_struct(ss, s, args)),
+      (builtin_const, /*   */ try_err(lower_builtin_decor, (ss, s, args, true, false))),
+      (builtin_volatile, /**/ try_err(lower_builtin_decor, (ss, s, args, false, true))),
+      (builtin_sint, /*    */ try_err(lower_builtin_intty, (ss, s, args, true))),
+      (builtin_uint, /*    */ try_err(lower_builtin_intty, (ss, s, args, false))),
+      (builtin_typeof, /*  */ try_err(lower_builtin_typeof, (ss, s, args))),
+      (builtin_arrof, /*   */ try_err(lower_builtin_arrof, (ss, s, args))),
+      (builtin_ptrof, /*   */ try_err(lower_builtin_ptrof, (ss, s, args))),
+      (builtin_sizeof, /*  */ try_err(lower_builtin_sizeof, (ss, s, args))),
+      (builtin_alignof, /* */ try_err(lower_builtin_alignof, (ss, s, args))),
+      (builtin_offsetof, /**/ try_err(lower_builtin_offsetof, (ss, s, args))),
+      (builtin_struct, /*  */ try_err(lower_builtin_struct, (ss, s, args))),
       (builtin__this, /*   */ lower_builtin_this(ss, s, args)),
-      (builtin_qot, /*     */ lower_builtin_qot(ss, s, args)),
-      (builtin_uqot, /*    */ lower_builtin_uqot(ss, s, args)),
-      (builtin_at, /*      */ lower_builtin_at(ss, s, args)),
-      (builtin_where, /*   */ lower_builtin_where(ss, s, args)),
-      (builtin_ref, /*     */ lower_builtin_ref(ss, s, args)),
-      (builtin_reft, /*    */ lower_builtin_reft(ss, s, args)),
+      (builtin_qot, /*     */ try_err(lower_builtin_qot, (ss, s, args))),
+      (builtin_uqot, /*    */ try_err(lower_builtin_uqot, (ss, s, args))),
+      (builtin_at, /*      */ try_err(lower_builtin_at, (ss, s, args))),
+      (builtin_where, /*   */ try_err(lower_builtin_where, (ss, s, args))),
+      (builtin_ref, /*     */ try_err(lower_builtin_ref, (ss, s, args))),
+      (builtin_reft, /*    */ try_err(lower_builtin_reft, (ss, s, args))),
   );
   assertMessage(false, "unhandled builtin %u", builtin);
 }

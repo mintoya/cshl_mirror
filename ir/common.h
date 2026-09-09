@@ -1,6 +1,7 @@
 #pragma once
 #include "../type.h"
 #include "ir.h"
+#include "wheels/errable.h"
 #include <string.h>
 #include <wheels/bigint.h>
 #include <wheels/macros.h>
@@ -55,17 +56,20 @@ static inline void scope_bind(superscope *env, scope *s, u32 idx, fptr name);
 #define TV(...) ((typed_value){__VA_ARGS__})
 
 // lowers an ast and gives you the resulting value's index. all instructions go into scope s
-u32 lower /*                      */ (superscope *ss, scope *s, ast *a);
+u32 lower errs /*                      */ (superscope *ss, scope *s, ast *a);
 // interprets a scope and yields the result
-typed_value interpret /*          */ (superscope *ss, scope *s);
-// casts the value at c.l to the integer type of reg(c.d), storing the result at c.d
-typed_value temporary_interpret /*      */ (superscope *ss, scope *s, ast *a) {
+typed_value interpret errs /*          */ (superscope *ss, scope *s);
+// if true inst was interpreted
+bool try_interpret errs /*             */ (superscope *ss, scope *s, ir inst);
+
+#define allocates(...) (__VA_ARGS__)
+typed_value temporary_interpret errs(superscope *ss, scope *s, ast *a) {
   let work = scope_inferior(ss, s);
   defer { scope_destroy(ss, work); };
-  lower(ss, work, a);
-  let result = interpret(ss, work);
+  try_err(lower, (ss, work, a));
+  let result = try_err(interpret, (ss, work));
   if (tu_is(c_int, result.t.t) && result.v.c_int)
-    result.v.c_int = BInt.copy(ss->alloc, result.v.c_int);
+    result.v.c_int = BInt.copy(ss->alloc, result.v.c_int); // lift it into this scope
   return result;
 }
 
@@ -207,10 +211,11 @@ static inline bool Type_isint(Type t) {
          );
 }
 
-static inline Type value_asType_loc(typed_value t, u8 *location) {
-  if (!tu_is(c_type, t.t.t)) error_print(location, "tried to get type from {Type}", t.t);
-  if (!t.v.value) error_print(location, "use of unknown type");
-  return *(Type *)t.v.value;
+static inline Type value_asType errs(typed_value t) {
+  if (!tu_is(c_type, t.t.t))
+    return_err_extras("TYPE IS NOT VALUE", snprint(stdAlloc, "tried to get type from {Type}", t.t).ptr);
+  if (!t.v.c_type) return_err("UNKNOWN TYPE");
+  return *t.v.c_type;
 }
 static inline typed_value Type_asValue(superscope *s, Type t) { return TV_type(ss_getType(s, t)); }
 static inline fptr string_escape(allocfn allocator, fptr in) {
@@ -336,11 +341,11 @@ static inline slice(astptr) builtin_arg_list(ast **args) {
     return slice_stat(slice(astptr), *sentList_vla(block.stmts));
   return (slice(astptr)){1, args};
 }
-static inline fptr id_from_ast(superscope *ss, scope *s, ast *name) {
+static inline fptr id_from_ast errs(superscope *ss, scope *s, ast *name) {
   iflet_tu (let id, astId, *name) return id;
-  let tv = temporary_interpret(ss, s, name);
+  let tv = try_err(temporary_interpret, (ss, s, name));
   if (!tu_is(c_ast, tv.t.t) || !tv.v.c_ast || !tu_is(astId, *tv.v.c_ast))
-    error_print(name, "expected ast identifier");
+    return_err("ID_REQUIRES_ASTID");
   return tu_catch(astId, *tv.v.c_ast);
 }
 

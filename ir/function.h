@@ -55,12 +55,12 @@ i8 slice_typed_value_cmp_hash(const void *a, const void *b) {
   return 0;
 }
 
-static inline Type function_item_type(superscope *ss, scope *s, ast *item) {
+static inline Type function_item_type errs(superscope *ss, scope *s, ast *item) {
   let decl = tu_catch(astDecl, *item, error_print(item, "function parameter must be a decl"));
   if (!decl.name) error_print(item, "function parameter needs a name");
   if (!decl.type) error_print(item, "function parameter needs a type");
-  let name = id_from_ast(ss, s, decl.name);
-  let t = value_asType_loc(temporary_interpret(ss, s, decl.type), ast_loc(*decl.type));
+  let name = try_err(id_from_ast, (ss, s, decl.name));
+  let t = try_err(value_asType, (try_err(temporary_interpret, (ss, s, decl.type))));
 
   typed_value placeholder;
   if (Type_is_comptime(t)) {
@@ -73,7 +73,7 @@ static inline Type function_item_type(superscope *ss, scope *s, ast *item) {
   return t;
 }
 
-u32 lower_function(superscope *ss, scope *s, astPBlock args, ast *retT, ast *body) {
+u32 lower_function errs(superscope *ss, scope *s, astPBlock args, ast *retT, ast *body) {
   let params = slice_stat(slice(astptr), *sentList_vla(args.stmts));
   // clang-format off
   msList_push(ss->alloc, ss->functions, {
@@ -91,8 +91,8 @@ u32 lower_function(superscope *ss, scope *s, astPBlock args, ast *retT, ast *bod
   // generate example signature
   {
     foreach (let p, span(params.ptr, params.len))
-      mList_push(signature, function_item_type(ss, arg_scope, *p));
-    mList_push(signature, value_asType_loc(temporary_interpret(ss, arg_scope, retT), ast_loc(*retT)));
+      mList_push(signature, try_err(function_item_type, (ss, arg_scope, *p)));
+    mList_push(signature, try_err(value_asType, (try_err(temporary_interpret, (ss, arg_scope, retT)))));
   }
   let temp = (ast)tu_of(astPBlock, args);
   println(
@@ -108,7 +108,7 @@ u32 lower_function(superscope *ss, scope *s, astPBlock args, ast *retT, ast *bod
   return res;
 }
 static u32 coerce_type(superscope *ss, scope *s, u32 left, Type to);
-static u32 lower_specialized(superscope *ss, scope *s, u32 fn, slice(typed_value) key, slice(u32) aargs) {
+static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_value) key, slice(u32) aargs) {
   let function_item = &ss->functions[fn - 1];
   foreach (let instance, span(function_item->instances, msList_len(function_item->instances))) {
     if (instance->key_len != key.len) continue;
@@ -136,7 +136,7 @@ static u32 lower_specialized(superscope *ss, scope *s, u32 fn, slice(typed_value
   foreach (let param, span(key.ptr, key.len)) {
     let index = param - key.ptr;
     let item = tu_catch(astDecl, *function_item->params.ptr[index]);
-    let name = id_from_ast(ss, spec, item.name);
+    let name = try_err(id_from_ast, (ss, spec, item.name));
     u32 value;
     if (Type_is_comptime(param->t)) {
       value = scope_add_value(ss, spec, *param);
@@ -147,11 +147,11 @@ static u32 lower_specialized(superscope *ss, scope *s, u32 fn, slice(typed_value
     scope_bind(ss, spec, value, name);
   }
 
-  let ret_value = temporary_interpret(ss, spec, function_item->retT);
-  instance.ret = value_asType_loc(ret_value, ast_loc(*function_item->retT));
+  let ret_value = try_err(temporary_interpret, (ss, spec, function_item->retT));
+  instance.ret = try_err(value_asType, (ret_value));
   function_item->instances[spec_number].ret = instance.ret;
 
-  lower(ss, spec, function_item->body);
+  try_err(lower, (ss, spec, function_item->body));
 
   let result = scope_add_value(ss, s, TV(instance.ret));
   // clang-format off
@@ -163,7 +163,7 @@ static u32 lower_specialized(superscope *ss, scope *s, u32 fn, slice(typed_value
   // clang-format on
   return result;
 }
-static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args, u32 lead) {
+static u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, ast *args, u32 lead) {
   let alist = builtin_arg_list(&args);
   let function_value = *scope_find(ss, s, fn);
   let generic_signature = tu_catch(c_fun, function_value.t.t);
@@ -187,7 +187,7 @@ static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args,
     u32 lead;
     if (tu_is(c_ast, thisitem.t))
       lead = scope_add_value(ss, s, TV_ast(*arg_item));
-    else lead = lower(ss, s, *arg_item);
+    else lead = try_err(lower, (ss, s, *arg_item));
 
     lead = coerce_type(ss, s, lead, thisitem);
     msList_push(ss->alloc, value_list, *scope_find(ss, s, lead));
@@ -197,12 +197,12 @@ static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args,
     error_print(args, "unexpected arg length");
   foreach (let l, span(value_list, msList_len(value_list)))
     l->v.value = (!Type_is_comptime(l->t) && l->v.value) ? nullptr : l->v.value;
-  return lower_specialized(
+  return try_err(lower_specialized, (
       ss,
       s,
       function_value.v.c_fun.fn,
       ((slice(typed_value)){msList_len(value_list), value_list}),
       argptrs
-  );
+  ));
 }
-u32 lower_function_call(superscope *ss, scope *s, u32 fn, ast *args) { return lower_function_call_with(ss, s, fn, args, 0); }
+u32 lower_function_call errs(superscope *ss, scope *s, u32 fn, ast *args) { return try_err(lower_function_call_with, (ss, s, fn, args, 0)); }
