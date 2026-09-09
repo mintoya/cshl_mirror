@@ -23,9 +23,7 @@ if  ~~ @fn (a ~ast),ast,{
   );
 };
 cnd ~~ @fn (a ~any,b ~any,c ~(@typeof b)),(@typeof b),{
-  // if' (a) (return b) else (return c);
-  // analogous to
-  @id("if")'((a)((return(b))(else(return(c)))));
+  if' (a) (return b) else (return c);
 };
 
 one ~= cnd (1),

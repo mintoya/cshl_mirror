@@ -166,6 +166,34 @@ static inline enum_op op_as_enum(u32 opn) {
          : opn == opNumbers.iexpand ? enop_iexpand
                                     : (assertMessage(false, "Unknown operator %x", opn), 0);
 }
+static inline u32 enum_as_op(enum_op en) {
+  return switch_exp(
+      en,
+      (enop_dot /*    */, opNumbers.dot),
+      (enop_colon /*  */, opNumbers.colon),
+      (enop_mul /*    */, opNumbers.mul),
+      (enop_div /*    */, opNumbers.div),
+      (enop_mod /*    */, opNumbers.mod),
+      (enop_plus /*   */, opNumbers.plus),
+      (enop_minus /*  */, opNumbers.minus),
+      (enop_oand /*   */, opNumbers.oand),
+      (enop_oor /*    */, opNumbers.oor),
+      (enop_oband /*  */, opNumbers.oband),
+      (enop_obor /*   */, opNumbers.obor),
+      (enop_shr /*    */, opNumbers.shr),
+      (enop_shl /*    */, opNumbers.shl),
+      (enop_mor /*    */, opNumbers.mor),
+      (enop_les /*    */, opNumbers.les),
+      (enop_moq /*    */, opNumbers.moq),
+      (enop_leq /*    */, opNumbers.leq),
+      (enop_eq /*     */, opNumbers.eq),
+      (enop_neq /*    */, opNumbers.neq),
+      (enop_pipe /*   */, opNumbers.pipe),
+      (enop_set /*    */, opNumbers.set),
+      (enop_iexpand /**/, opNumbers.iexpand),
+      (enop_call /*   */, opNumbers.call)
+  );
+}
 
 static inline bool Type_isint(Type t) {
   return !t.ptr_level &&

@@ -197,27 +197,26 @@ u32 lower_dot(superscope *ss, scope *s, u32 left, ast *right, astLit lit) {
   error_print(*right, "{Type} has no member {slice(c8)}", l->t, name);
 }
 typedef enum {
-  math_mul,
-  math_div,
-  math_mod,
-  math_add,
-  math_sub,
-  math_shr,
-  math_shl,
-
-  math_and,
-  math_or,
-  math_band,
-  math_bor,
-
-  math_mor,
-  math_les,
-  math_moq,
-  math_leq,
-  math_neq,
-  math_eq,
+  math_mul = enop_mul,
+  math_div = enop_div,
+  math_mod = enop_mod,
+  math_add = enop_plus,
+  math_sub = enop_minus,
+  math_shr = enop_shr,
+  math_shl = enop_shl,
+  math_and = enop_oand,
+  math_or = enop_oor,
+  math_band = enop_oband,
+  math_bor = enop_obor,
+  math_mor = enop_mor,
+  math_les = enop_les,
+  math_moq = enop_moq,
+  math_leq = enop_leq,
+  math_neq = enop_neq,
+  math_eq = enop_eq,
 } math_operation;
-u32 lower_math(superscope *ss, scope *s, u32 left, u32 right, u32 opNumber, math_operation op) {
+u32 lower_math(superscope *ss, scope *s, u32 left, u32 right, math_operation op) {
+  let opNumber = enum_as_op((enum_op)op);
   let lhs = scope_find(ss, s, left);
   let rhs_value = scope_find(ss, s, right);
   let lt = lhs->t;
@@ -261,6 +260,16 @@ u32 lower_op(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
         return result;
       }),
       (enop_colon, assertMessage(false, "unreachable")),
+      (enop_iexpand, ({
+         // a'b
+         // ->
+         // @uqot a @qot b
+         let argument = scope_find(ss, s, lower_builtin_qot(ss, s, right));
+         if (Type_cmp(TV_ast(nullptr).t, argument->t)) error_print(right, "expected ast, got {Type}", argument->t);
+         let result = scope_find(ss, s, lower_call(ss, s, left, argument->v.c_ast));
+         if (Type_cmp(TV_ast(nullptr).t, result->t)) error_print(right, "expected ast, got {Type}", argument->t);
+         lower_builtin_uqot(ss, s, result->v.c_ast);
+       })),
       (default, ),
   );
   // mask out so that copy constructor stuff can be applied later
@@ -275,11 +284,11 @@ u32 lower_op(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
   if_decl (let ovl, lower_overload_possible(ss, s, left, right, opNumber)) return ovl;
   let res = switch_exp(
       (op_as_enum(opNumber)),
-      (enop_pipe, (assertMessage(false, "unreachable"), (u32)0)),
-      (enop_colon, (assertMessage(false, "unreachable"), (u32)0)),
-      (enop_set, (assertMessage(false, "unreachable"), (u32)0)),
+      (enop_pipe /*   */, (assertMessage(false, "unreachable"), (u32)0)),
+      (enop_colon /*  */, (assertMessage(false, "unreachable"), (u32)0)),
+      (enop_set /*    */, (assertMessage(false, "unreachable"), (u32)0)),
+      (enop_iexpand /**/, (assertMessage(false, "unreachable"), (u32)0)),
       (enop_call, lower_call(ss, s, left, right)),
-      (enop_iexpand, lower_call(ss, s, left, right)),
       (enop_dot, ({
          P$(tu_match_exp(
                 *right,
@@ -291,23 +300,23 @@ u32 lower_op(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
             lower_dot(ss, s, left, right, $));
        })),
       // operators are handled, so it should just be math now
-      (enop_mul, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_mul)),
-      (enop_div, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_div)),
-      (enop_mod, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_mod)),
-      (enop_plus, /*    */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_add)),
-      (enop_minus, /*   */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_sub)),
-      (enop_shr, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_shr)),
-      (enop_shl, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_shl)),
-      (enop_oand, /*    */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_and)),
-      (enop_oor, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_or)),
-      (enop_oband, /*   */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_band)),
-      (enop_obor, /*    */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_bor)),
-      (enop_les, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_les)),
-      (enop_mor, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_mor)),
-      (enop_moq, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_moq)),
-      (enop_eq, /*      */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_eq)),
-      (enop_neq, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_neq)),
-      (enop_leq, /*     */ lower_math(ss, s, left, lower(ss, s, right), opNumber, math_leq)),
+      (enop_mul, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_mul)),
+      (enop_div, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_div)),
+      (enop_mod, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_mod)),
+      (enop_plus, /*    */ lower_math(ss, s, left, lower(ss, s, right), math_add)),
+      (enop_minus, /*   */ lower_math(ss, s, left, lower(ss, s, right), math_sub)),
+      (enop_shr, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_shr)),
+      (enop_shl, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_shl)),
+      (enop_oand, /*    */ lower_math(ss, s, left, lower(ss, s, right), math_and)),
+      (enop_oor, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_or)),
+      (enop_oband, /*   */ lower_math(ss, s, left, lower(ss, s, right), math_band)),
+      (enop_obor, /*    */ lower_math(ss, s, left, lower(ss, s, right), math_bor)),
+      (enop_les, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_les)),
+      (enop_mor, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_mor)),
+      (enop_moq, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_moq)),
+      (enop_eq, /*      */ lower_math(ss, s, left, lower(ss, s, right), math_eq)),
+      (enop_neq, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_neq)),
+      (enop_leq, /*     */ lower_math(ss, s, left, lower(ss, s, right), math_leq)),
   );
   if (!res) error_print(right, "something went wrong {} , {} , {ast}", left, opNumber, right);
   return res;
