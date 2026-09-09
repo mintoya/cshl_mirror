@@ -85,12 +85,11 @@ u32 lower_function(superscope *ss, scope *s, astPBlock args, ast *retT, ast *bod
   });
   // clang-format on
 
+  let arg_scope = scope_inferior(ss, s);
   c_fun signature = mList_init(ss->alloc, mList_iType(signature));
   let res = scope_add_value(ss, s, TV(T(tu_of(c_fun, signature)), {.c_fun.fn = msList_len(ss->functions)}));
   // generate example signature
   {
-    let arg_scope = scope_inferior(ss, s);
-    defer { scope_destroy(ss, arg_scope); };
     foreach (let p, span(params.ptr, params.len))
       mList_push(signature, function_item_type(ss, arg_scope, *p));
     mList_push(signature, value_asType_loc(temporary_interpret(ss, arg_scope, retT), ast_loc(*retT)));
@@ -174,15 +173,11 @@ static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args,
   defer { msList_deInit(ss->alloc, value_list); };
   slice(u32) argptrs = slice_alloc(ss->alloc, u32, mList_len(generic_signature) - 1);
 
-  let sc = scope_inferior(ss, s);
-  defer { scope_destroy(ss, sc); };
   usize idx = 0;
   if (lead) {
     let index = idx++;
     let first = mList_arr(generic_signature)[index];
     lead = coerce_type(ss, s, lead, first);
-    if (tu_is(c_any, first.t))
-      scope_bind(ss, sc, lead, id_from_ast(ss, s, tu_catch(astDecl, *function_item->params.ptr[index]).name));
     argptrs.ptr[index] = lead;
     msList_push(ss->alloc, value_list, *scope_find(ss, s, lead));
   }
@@ -192,16 +187,9 @@ static u32 lower_function_call_with(superscope *ss, scope *s, u32 fn, ast *args,
     u32 lead;
     if (tu_is(c_ast, thisitem.t))
       lead = scope_add_value(ss, s, TV_ast(*arg_item));
-    else if (Type_is_comptime(thisitem)) {
-      let evaluated = temporary_interpret(ss, s, *arg_item);
-      if (tu_is(c_int, evaluated.t.t))
-        evaluated.v.c_int = BInt.copy(ss->alloc, evaluated.v.c_int);
-      lead = scope_add_value(ss, s, evaluated);
-    } else lead = lower(ss, s, *arg_item);
+    else lead = lower(ss, s, *arg_item);
 
     lead = coerce_type(ss, s, lead, thisitem);
-    if (tu_is(c_any, thisitem.t))
-      scope_bind(ss, sc, lead, id_from_ast(ss, s, tu_catch(astDecl, *function_item->params.ptr[index]).name));
     msList_push(ss->alloc, value_list, *scope_find(ss, s, lead));
     argptrs.ptr[index] = lead;
   }
