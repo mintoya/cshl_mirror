@@ -94,7 +94,7 @@ int build_main(int nargs, char **args) {
   return !cmd_run_sync(runcmd);
 }
 
-int build_tests() {
+int build_tests(int nargs, char **args) {
   if (!mkdir_if_not_exists("build")) return false;
 
   Procs p = build_compiler();
@@ -119,6 +119,8 @@ int build_tests() {
 
   Cmd runcmd = {};
   cmd_append(&runcmd, "./build/tests" EXTENSION);
+  for (int i = 0; i < nargs; i++)
+    cmd_append(&runcmd, args[i]);
   return !cmd_run_sync(runcmd);
 }
 
@@ -143,7 +145,7 @@ int actualmain(int argc, char **argv) {
   if (!strcmp(subcmd, "help")) return (usage(program), 0);
 
   if (!strcmp(subcmd, "test"))
-    return build_tests();
+    return build_tests(argc, argv);
   else if (!strcmp(subcmd, "run"))
     return build_main(argc, argv);
 
