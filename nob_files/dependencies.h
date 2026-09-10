@@ -8,8 +8,10 @@
   #define CC "clang"
 #endif
 #if defined(_WIN32)
+  #define PREFIX ""
   #define EXTENSION ".exe"
 #else
+  #define PREFIX "./"
   #define EXTENSION ""
 #endif
 #if __has_include(<unistd.h> )
@@ -61,7 +63,14 @@ int main(int argc, char **argv) {
     return puts("chdir failed idk"), 1;
   if (system(strcats_space(((char[256]){}), CC, "-o", "nob" EXTENSION, "nob.c", "-w")))
     return puts("failed to run nob for wheels dependency"), 1;
-  return execl("nob" EXTENSION, "nob" EXTENSION, NULL);
-  printf("done cloning dependencies, re-run nob");
-  return 0;
+  if (system(PREFIX "nob" EXTENSION)) return 1;
+  if (chdir("../.."))
+    return puts("chdir failed idk"), 1;
+
+  char cmd[100] = {};
+  strcats_space(cmd, PREFIX "nob" EXTENSION);
+  for (int i = 1; i < argc; i++)
+    strcats_space(cmd, argv[i]);
+  printf("done cloning dependencies , rerunning");
+  return system(cmd);
 }
