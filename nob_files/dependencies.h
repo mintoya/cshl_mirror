@@ -51,6 +51,11 @@ int main(int argc, char **argv) {
     puts("Failed to rename self\n");
     return 1;
   }
+  // wheels is nob now
+  if (system(strcats_space(((char[1024]){}), CC, "-o", "deps/wheels/nob" EXTENSION, "deps/wheels/nob.c"))) {
+    puts("failed compile dependency nob\n");
+    return 1;
+  }
   if (system(strcats_space(((char[1024]){}), CC, "-o", "nob" EXTENSION, "nob.c"))) {
     puts("Failed to recompile self\n");
     return 1;
