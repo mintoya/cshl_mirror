@@ -1,18 +1,20 @@
 #include "ast.h"
 #include "wheels/allocator.h"
 #include "wheels/macros.h"
+#include <assert.h>
 #include <string.h>
+#include <threads.h>
 #include <tree-sitter/lib/include/tree_sitter/api.h>
 
 extern const TSLanguage *tree_sitter_cshl(void);
 
 static ast null_ast() { return (ast)tu_of(astNull, {}); }
 
-typedef struct {
-  u32 byte;
-} parse_err_info;
-
-static void parse_err_print(void *userdata) { fprintf(stdout, "Syntax error at byte %u", ((parse_err_info *)userdata)->byte); }
+static void __attribute__((noreturn)) printerr_point(void *userdata) {
+  let epoint = (TSPoint *)&userdata;
+  fprintf(stdout, "Syntax error at byte line %u colun %u", epoint->row, epoint->column);
+  assertMessage(false);
+}
 
 static srcpos register_pos(poslist *plist, u32 fileIndex, TSNode n) {
   u32 start = ts_node_start_byte(n);
@@ -21,8 +23,10 @@ static srcpos register_pos(poslist *plist, u32 fileIndex, TSNode n) {
 }
 
 static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u32 fileIndex, const u8 *source, TSNode ts_node) {
+  static thread_local TSPoint error_location;
+  static_assert(sizeof(TSPoint) == sizeof(itypeof(err_t, userdata)));
   if (ts_node_is_null(ts_node) || !ts_node_is_named(ts_node) || ts_node_is_error(ts_node) || ts_node_is_missing(ts_node))
-    return_err_print("PARSE_ERROR", parse_err_print, avalue(allocator, ((parse_err_info){.byte = ts_node_start_byte(ts_node)})));
+    return_err_print("PARSE_ERROR", printerr_point, (error_location = ts_node_start_point(ts_node), *(void **)&error_location));
 
   let type = ts_node_type(ts_node);
 
