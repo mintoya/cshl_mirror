@@ -24,7 +24,7 @@ typedef struct {
   filelist flist;
 } srcpos_full;
 
-fptr fp_from_srcpos(srcpos_full pos) {
+static inline fptr fp_from_srcpos(srcpos_full pos) {
   if (!pos.pidx || pos.pidx > pos.plist.len) return nullFptr;
   let p = sglist_get(pos.plist, pos.pidx - 1);
   if (!p.fidx || p.fidx > pos.flist.len) return nullFptr;

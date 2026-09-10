@@ -95,7 +95,7 @@ static inline void scope_add_inst(superscope *env, scope *s, ir i) {
     msList_push(env->alloc, s->instructions, i);
 }
 static inline void scope_bind(superscope *env, scope *s, u32 idx, fptr name) {
-  if (moxmap_get(s->named, name)) error_print(name.ptr, "already bound {slice(c8)}", name);
+  if (moxmap_get(s->named, name)) ss_error_at_ptr(env, name.ptr, snprint(env->alloc, "already bound {slice(c8)}", name));
   assertMessage(idx <= msList_len(s->values) + s->start, "%zu <= %zu + %zu", idx, msList_len(s->values), s->start);
   moxmap_set(s->named, name, idx);
 }
@@ -132,7 +132,7 @@ static inline u32 ss_get_named_failable_noref(superscope *env, scope *s, fptr n)
 }
 static inline u32 ss_get_named(superscope *env, scope *s, fptr n) {
   let val = ss_get_named_failable_noref(env, s, n);
-  if (!val) error_print(n.ptr, "unbound identifier {slice(c8)}", n);
+  if (!val) ss_error_at_ptr(env, n.ptr, snprint(env->alloc, "unbound identifier {slice(c8)}", n));
   let vo = scope_find(env, s, val);
   if (vo->t.isref) return val;
   if (Type_is_comptime(vo->t)) return scope_add_value(env, s, *vo);
@@ -143,7 +143,7 @@ static inline u32 ss_get_named(superscope *env, scope *s, fptr n) {
 // for assignment targets: the bound register itself, no copy/ref, so writes stick
 static inline u32 ss_get_named_mut(superscope *env, scope *s, fptr n) {
   let val = ss_get_named_failable_noref(env, s, n);
-  if (!val) error_print(n.ptr, "unbound identifier {slice(c8)}", n);
+  if (!val) ss_error_at_ptr(env, n.ptr, snprint(env->alloc, "unbound identifier {slice(c8)}", n));
   return val;
 }
 

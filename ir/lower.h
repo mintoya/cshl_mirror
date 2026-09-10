@@ -23,75 +23,84 @@ static u32 coerce_type(superscope *ss, scope *s, u32 left, Type to) {
   println("coersing {Type} to {Type}", ot, to);
   return dest;
 }
-u32 lower_op_wrap errs(superscope *ss, scope *s, ast *left, ast *right, u32 number) {
-  if (number == opNumbers.call && tu_or(astOp, *left, {}).number_rep == opNumbers.colon) {
-    let colon = tu_catch(astOp, *left);
-    let a = try_err(lower, (ss, s, colon.left));
-    let c = try_err(lower_op, (ss, s, a, colon.right, opNumbers.dot));
+u32 lower_op_wrap errs(superscope *ss, scope *s, astidx left, astidx right, u32 number) {
+  if (number == opNumbers.call && tu_or(astOp, ast2_at(&ss->asts, left), {}).number_rep == opNumbers.colon) {
+    let left_node = ast2_at(&ss->asts, left);
+    let colon = tu_catch(astOp, left_node);
+    let a = try_err(lower, (ss, s, ast2_child(&ss->asts, colon.left_right)));
+    let c = try_err(lower_op, (ss, s, a, ast2_child(&ss->asts, colon.left_right + 1), opNumbers.dot));
     return try_err(lower_call_extra, (ss, s, c, a, right));
   }
-  if (number == opNumbers.set && tu_is(astId, *left)) {
+  if (number == opNumbers.set && tu_is(astId, ast2_at(&ss->asts, left))) {
     // assignment to a plain name: write through to the bound register, so
     // comptime vars actually get updated (ss_get_named would copy the value)
-    let dst = ss_get_named_mut(ss, s, tu_catch(astId, *left));
+    let left_node = ast2_at(&ss->asts, left);
+    let dst = ss_get_named_mut(ss, s, ast2_text(ss, tu_catch(astId, left_node)));
     scope_add_inst(ss, s, (ir)tu_of(ir_set, {.d = dst, .l = try_err(lower, (ss, s, right))}));
     return dst;
   }
   return try_err(lower_op, (ss, s, try_err(lower, (ss, s, left)), right, number));
 }
-u32 lower errs(superscope *ss, scope *s, ast *a) {
+u32 lower errs(superscope *ss, scope *s, astidx a) {
   if (!a) return (println("[WARNING] null ast in lower"), scope_add_value(ss, s, void_value));
   let res = tu_match_exp(
-      *a,
-      (astEmptyStatement, _, scope_add_value(ss, s, void_value)),
-      (astOp, op, try_err(lower_op_wrap, (ss, s, op.left, op.right, op.number_rep))),
-      (astId, id, ss_get_named(ss, s, id)),
-      (astNumber, n, ss_compileInt(ss, s, n)),
-      (astString, f, ss_compileString(ss, s, f)),
+      ast2_at(&ss->asts, a),
+      (astNull, _, (return_err("ENCOUNTERED_NULL_AST"), (u32)0)),
+      (astEmpty, _, scope_add_value(ss, s, void_value)),
+      (astOp, op, try_err(lower_op_wrap, (ss, s, ast2_child(&ss->asts, op.left_right), ast2_child(&ss->asts, op.left_right + 1), op.number_rep))),
+      (astId, id, ss_get_named(ss, s, ast2_text(ss, id))),
+      (astNumber, n, ss_compileInt(ss, s, ast2_text(ss, n))),
+      (astString, f, ss_compileString(ss, s, ast2_text(ss, f))),
       (astPBlock, pb, ({
-         if (countof(*sentList_vla(pb.stmts)) != 1)
+         let stmts = ast2_block_children(ss->alloc, &ss->asts, pb.start);
+         if (stmts.len != 1)
            return_err("TUPLE");
          // (a ~= 1); -> {a ~= 1;}; //leak decls on pourpose
          // lower(ss, s, &(ast)tu_of(astBBlock, {.loc = pb.loc, .stmts = pb.stmts}));
          // or
          // (a ~= 1); -> a ~= 1;
-         try_err(lower, (ss, s, pb.stmts[0]));
+         try_err(lower, (ss, s, stmts.ptr[0]));
        })),
       (astBBlock, bb, ({
          let res = scope_add_value(ss, s, TV(T(tu_of(c_any, {}))));
          let sc = scope_inferior(ss, s);
          scope_add_inst(ss, s, (ir)tu_of(ir_block, sc));
-         foreach (let s, vlap(sentList_vla(bb.stmts)))
-           try_err(lower, (ss, sc, s));
+         let stmts = ast2_block_children(ss->alloc, &ss->asts, bb.start);
+         foreach (let s, span(stmts.ptr, stmts.len))
+           try_err(lower, (ss, sc, *s));
          scope_yield(ss, sc, res);
          res;
        })),
       (astABlock, _, (return_err("LONE_AB"), (u32)0)),
       (astDecl, dcl, ({
          let type = T(tu_of(c_any, {}));
-         if (dcl.type) {
-           let t = try_err(temporary_interpret, (ss, s, dcl.type));            type = try_err(value_asType, (ss, t));
+         astidx name_idx = ast2_child(&ss->asts, dcl.name_type_value);
+         astidx type_idx = ast2_child(&ss->asts, dcl.name_type_value + 1);
+         astidx value_idx = ast2_child(&ss->asts, dcl.name_type_value + 2);
+         if (type_idx) {
+           let t = try_err(temporary_interpret, (ss, s, type_idx));
+           type = try_err(value_asType, (ss, t));
          }
          u32 value = 0;
-         if (dcl.value) {
-           value = try_err(lower, (ss, s, dcl.value));
+         if (value_idx) {
+           value = try_err(lower, (ss, s, value_idx));
            assertMessage(value);
          } else {
-           if (!dcl.type) return_err_extras("DECL_NO_TYPE_OR_VALUE", ss_errprint(ss, a, "must have type or value").ptr);
+           if (!type_idx) return_err_extras("DECL_NO_TYPE_OR_VALUE", ss_errprint(ss, a, "must have type or value").ptr);
            value = scope_add_value(ss, s, TV(type));
          }
          value = coerce_type(ss, s, value, type);
 
-         if (dcl.is_const)
+         if (dcl.isconst)
            scope_find(ss, s, value)->t.isconst = true;
-         if (dcl.name) {
-           let nn = try_err(id_from_ast, (ss, s, dcl.name));
+         if (name_idx) {
+           let nn = try_err(id_from_ast, (ss, s, name_idx));
            scope_bind(ss, s, value, nn);
            println("[LOG:decl] bound {*:typed_value} to {slice(c8)}", scope_find(ss, s, value), nn);
          }
          value;
        })),
   );
-  if (!res) return_err_extras("STATEMENT_NULL", ss_errprint(ss, a, "{ast} resulted in null somehow", a).ptr);
+  if (!res) return_err_extras("STATEMENT_NULL", ss_errprint(ss, a, "{astidx_full} resulted in null somehow", ast2_full(ss, a)).ptr);
   return res;
 }

@@ -78,7 +78,7 @@ void interpret_set errs(irstate st, ir_set c) {
   let l = irstate_find(st, c.l);
   tu_match_void(
       d->t.t,
-      (c_ast, _, d->v.c_ast = l->v.value),
+      (c_ast, _, d->v.c_ast = (astidx)(usize)l->v.value),
       (c_int, _, d->v.c_int = BInt.copy(st.ss->alloc, l->v.c_int)),
       (builtin, _, return_err("SET_BUILTIN")),
       (c_fun, _, d->v.c_fun = l->v.c_fun),
@@ -239,7 +239,7 @@ void interpret_farg errs(irstate st, ir_farg c) {
   if (Type_cmp(v.t, d->t)) return_err("FUNCTION_WRONG_RETURN");
   tu_match_void(
       d->t.t,
-      (c_ast, _, d->v.c_ast = v.v.value),
+      (c_ast, _, d->v.c_ast = (astidx)(usize)v.v.value),
       (c_int, _, d->v.c_int = BInt.copy(st.ss->alloc, v.v.c_int)),
       (builtin, _, return_err("SET_BUILTIN")),
       (c_fun, _, d->v.c_fun = v.v.c_fun),

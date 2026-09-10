@@ -14,6 +14,21 @@
 #include "ir/interpret.h"
 #include "ir/lower.h"
 
+astidx_full parse_source2 errs(allocfn out_allocator, fptr input, const char *filename);
+
+static fptr read_file(allocfn allocator, const char *filename) {
+  FILE *fileptr = fopen(filename, "rb");
+  assertMessage(fileptr);
+  defer { fclose(fileptr); };
+  fseek(fileptr, 0, SEEK_END);
+  usize len = ftell(fileptr);
+  fseek(fileptr, 0, SEEK_SET);
+  let resp = acreate(allocator, u8[len ?: 1]);
+  usize len2 = fread(resp, sizeof(u8), len, fileptr);
+  assertMessage(len2 == len);
+  return (fptr){len, *resp};
+}
+
 // { util
 fptr *filectx = nullptr;
 __attribute__((noreturn)) void(error_at)(u8 *location, fptr message) {
@@ -72,22 +87,25 @@ cmd_main(
       slice_free(allocator, buffer);
   };
 
-  buffer = readFileAlloc(allocator, args[1]);
+  buffer = read_file(allocator, args[1]);
   filectx = &buffer;
   if (echo_file)
     println("file : \n{slice(c8)}\n", buffer);
   println("(log) after fread : {dbga_stats}", debugAllocator_stats(allocator));
 
-  let ast = catch_errcall((parse_source, (allocator, buffer)), (e, _), (err_panic(e), nullptr));
+  let ctx = catch_errcall((parse_source2, (allocator, buffer, args[1])), (e, _), (err_panic(e), (astidx_full){}));
   println("(log) after ast : {dbga_stats}", debugAllocator_stats(allocator));
 
   if (echo_ast)
-    print_wfO(sexplike, nullptr, "{ast}\n", ast);
+    print_wfO(sexplike, nullptr, "{astidx_full}\n", ctx);
 
   if (execute) {
     let env = ss_init(allocator);
     env->file = buffer;
-    catch_errcall((lower, (env, env->outermost, ast)), (e, _), (err_panic(e), (u32)0));
+    env->asts = ctx.alist;
+    env->plist = ctx.plist;
+    env->flist = ctx.flist;
+    catch_errcall((lower, (env, env->outermost, ctx.idx)), (e, _), (err_panic(e), (u32)0));
     print_wf(sexplike, "{scope}\n", *env->outermost);
     // interpret(env,env->outermost);
     // print_wf(sexplike, "{scope}\n", *env->outermost);

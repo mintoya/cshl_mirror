@@ -83,7 +83,7 @@ tu_def( // type
     (c_any /*        */, struct {}),
     (c_int /*        */, typeof(bigint[0])),
     (c_type /*       */, typeof(Type *[0])),
-    (c_ast /*        */, typeof(ast *[0])),
+    (c_ast /*        */, typeof(astidx[0])),
     // something else
     (c_fun /*       */, mList(Type)),
     (r_closure /*    */, struct { c_fun captures, args; }),
@@ -100,13 +100,13 @@ struct Type {
 };
 typedef union {
   void *value;
-  struct c_fun_struct{
+  struct c_fun_struct {
     u32 fn;
     u32 spec;
   } c_fun; // function index in list + 1
-  arrstype(c_int) c_int;
-  arrstype(c_ast) c_ast;
-  arrstype(c_type) c_type;
+  arrstype(itypeof(TypeTree, c_int)) c_int;
+  arrstype(itypeof(TypeTree, c_ast)) c_ast; // index into the ast2 arena, 0 = null
+  arrstype(itypeof(TypeTree, c_type)) c_type;
 } value_store;
 
 typedef struct typed_value {
@@ -417,7 +417,7 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printe
         PUTS("(s,");
         foreach (let type, span(mList_arr(st), mList_len(st))) {
           if (type != mList_arr(st)) PUTS(",");
-          USETYPEPRINTER(id_str, type->name);
+          USENAMEDPRINTER("slice(c8)", type->name);
           Type_is_comptime(type->t)
               ? PUTS("~")
               : (PUTS("@"), USETYPEPRINTER(usize, type->offset), PUTS("="));
@@ -430,7 +430,7 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printe
         PUTS("(bf,");
         foreach (let type, span(mList_arr(st), mList_len(st))) {
           if (type != mList_arr(st)) PUTS(",");
-          USETYPEPRINTER(id_str, type->name), PUTS(":");
+          USENAMEDPRINTER("slice(c8)", type->name), PUTS(":");
           USETYPEPRINTER(usize, type->width), PUTS("~");
           typePrinterWorker(type->t, visitedmap, _ctx);
         }

@@ -1,5 +1,4 @@
 #pragma once
-#include "../ast.h"
 #include "../type.h"
 #include "common.h"
 // #include "interpret.h"
@@ -55,12 +54,15 @@ i8 slice_typed_value_cmp_hash(const void *a, const void *b) {
   return 0;
 }
 
-static inline Type function_item_type errs(superscope *ss, scope *s, ast *item) {
-  let decl = tu_catch(astDecl, *item, return_err("PARAM_NOT_DECL"));
-  if (!decl.name) return_err("PARAM_NO_NAME");
-  if (!decl.type) return_err("PARAM_NO_TYPE");
-  let name = try_err(id_from_ast, (ss, s, decl.name));
-  let t = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, decl.type))));
+static inline Type function_item_type errs(superscope *ss, scope *s, astidx item) {
+  let item_node = ast2_at(&ss->asts, item);
+  let decl = tu_catch(astDecl, item_node, return_err("PARAM_NOT_DECL"));
+  let name_idx = ast2_child(&ss->asts, decl.name_type_value);
+  let type_idx = ast2_child(&ss->asts, decl.name_type_value + 1);
+  if (!name_idx) return_err("PARAM_NO_NAME");
+  if (!type_idx) return_err("PARAM_NO_TYPE");
+  let name = try_err(id_from_ast, (ss, s, name_idx));
+  let t = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, type_idx))));
 
   typed_value placeholder;
   if (Type_is_comptime(t)) {
@@ -73,8 +75,10 @@ static inline Type function_item_type errs(superscope *ss, scope *s, ast *item) 
   return t;
 }
 
-u32 lower_function errs(superscope *ss, scope *s, astPBlock args, ast *retT, ast *body) {
-  let params = slice_stat(slice(astptr), *sentList_vla(args.stmts));
+u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, astidx body) {
+  let args_node = ast2_at(&ss->asts, args);
+  let pblock = tu_catch(astPBlock, args_node);
+  let params = ast2_block_children(ss->alloc, &ss->asts, pblock.start);
   // clang-format off
   msList_push(ss->alloc, ss->functions, {
       .params = params,
@@ -94,15 +98,14 @@ u32 lower_function errs(superscope *ss, scope *s, astPBlock args, ast *retT, ast
       mList_push(signature, try_err(function_item_type, (ss, arg_scope, *p)));
     mList_push(signature, try_err(value_asType, (ss, try_err(temporary_interpret, (ss, arg_scope, retT)))));
   }
-  let temp = (ast)tu_of(astPBlock, args);
   println(
       "[LOG]generating function from \n"
-      "args : {ast} \n"
-      "return:{ast}\n"
+      "args : {astidx_full} \n"
+      "return:{astidx_full}\n"
       "to {slice : Type}",
 
-      &temp,
-      retT,
+      ast2_full(ss, args),
+      ast2_full(ss, retT),
       ((slice(Type)){mList_len(signature), mList_arr(signature)})
   );
   return res;
@@ -135,8 +138,9 @@ static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_
 
   foreach (let param, span(key.ptr, key.len)) {
     let index = param - key.ptr;
-    let item = tu_catch(astDecl, *function_item->params.ptr[index]);
-    let name = try_err(id_from_ast, (ss, spec, item.name));
+    let item_node = ast2_at(&ss->asts, function_item->params.ptr[index]);
+    let item = tu_catch(astDecl, item_node);
+    let name = try_err(id_from_ast, (ss, spec, ast2_child(&ss->asts, item.name_type_value)));
     u32 value;
     if (Type_is_comptime(param->t)) {
       value = scope_add_value(ss, spec, *param);
@@ -163,8 +167,8 @@ static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_
   // clang-format on
   return result;
 }
-static u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, ast *args, u32 lead) {
-  let alist = builtin_arg_list(&args);
+static u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astidx args, u32 lead) {
+  let alist = builtin_arg_list(ss->alloc, &ss->asts, args);
   let function_value = *scope_find(ss, s, fn);
   let generic_signature = tu_catch(c_fun, function_value.t.t);
   let function_item = &ss->functions[function_value.v.c_fun.fn - 1];
@@ -205,4 +209,4 @@ static u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, ast *
       argptrs
   ));
 }
-u32 lower_function_call errs(superscope *ss, scope *s, u32 fn, ast *args) { return try_err(lower_function_call_with, (ss, s, fn, args, 0)); }
+u32 lower_function_call errs(superscope *ss, scope *s, u32 fn, astidx args) { return try_err(lower_function_call_with, (ss, s, fn, args, 0)); }
