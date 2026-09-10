@@ -19,6 +19,16 @@ extern const TSLanguage *tree_sitter_cshl(void);
 
 static ast null_ast() { return (ast)tu_of(astNull, {}); }
 
+// payload for PARSE_ERROR : the byte offset of the offending node. handlers
+// render it however they want via the callback (see parse_err_print below).
+typedef struct {
+  u32 byte;
+} parse_err_info;
+
+static void parse_err_print(void *userdata) {
+  fprintf(stdout, "Syntax error at byte %u", ((parse_err_info *)userdata)->byte);
+}
+
 // register the byte range of a ts node as a srcpos (1-based index into plist)
 static srcpos register_pos(poslist *plist, u32 fileIndex, TSNode n) {
   u32 start = ts_node_start_byte(n);
@@ -31,7 +41,7 @@ static srcpos register_pos(poslist *plist, u32 fileIndex, TSNode n) {
 // its parent stores by value.
 static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u32 fileIndex, const u8 *source, TSNode ts_node) {
   if (ts_node_is_null(ts_node) || !ts_node_is_named(ts_node) || ts_node_is_error(ts_node) || ts_node_is_missing(ts_node))
-    return_err_extras("PARSE_ERROR", snprint(allocator, "Syntax error at byte {}", ts_node_start_byte(ts_node)).ptr);
+    return_err_print("PARSE_ERROR", parse_err_print, avalue(allocator, ((parse_err_info){.byte = ts_node_start_byte(ts_node)})));
 
   let type = ts_node_type(ts_node);
 
