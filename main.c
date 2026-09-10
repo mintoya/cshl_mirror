@@ -101,7 +101,6 @@ cmd_main(
 
   if (execute) {
     let env = ss_init(allocator);
-    env->file = buffer;
     env->asts = ctx.alist;
     env->plist = ctx.plist;
     env->flist = ctx.flist;

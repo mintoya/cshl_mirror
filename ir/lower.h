@@ -32,10 +32,8 @@ u32 lower_op_wrap errs(superscope *ss, scope *s, astidx left, astidx right, u32 
     return try_err(lower_call_extra, (ss, s, c, a, right));
   }
   if (number == opNumbers.set && tu_is(astId, ast2_at(&ss->asts, left))) {
-    // assignment to a plain name: write through to the bound register, so
-    // comptime vars actually get updated (ss_get_named would copy the value)
     let left_node = ast2_at(&ss->asts, left);
-    let dst = ss_get_named_mut(ss, s, ast2_text(ss, tu_catch(astId, left_node)));
+    let dst = try_err(ss_get_named_mut, (ss, s, ast2_text(ss, tu_catch(astId, left_node))));
     scope_add_inst(ss, s, (ir)tu_of(ir_set, {.d = dst, .l = try_err(lower, (ss, s, right))}));
     return dst;
   }
@@ -48,17 +46,17 @@ u32 lower errs(superscope *ss, scope *s, astidx a) {
       (astNull, _, (return_err("ENCOUNTERED_NULL_AST"), (u32)0)),
       (astEmpty, _, scope_add_value(ss, s, void_value)),
       (astOp, op, try_err(lower_op_wrap, (ss, s, ast2_child(&ss->asts, op.left_right), ast2_child(&ss->asts, op.left_right + 1), op.number_rep))),
-      (astId, id, ss_get_named(ss, s, ast2_text(ss, id))),
+      (astId, id, try_err(ss_get_named, (ss, s, ast2_text(ss, id)))),
       (astNumber, n, ss_compileInt(ss, s, ast2_text(ss, n))),
       (astString, f, ss_compileString(ss, s, ast2_text(ss, f))),
       (astPBlock, pb, ({
          let stmts = ast2_block_children(ss->alloc, &ss->asts, pb.start);
          if (stmts.len != 1)
            return_err("TUPLE");
-         // (a ~= 1); -> {a ~= 1;}; //leak decls on pourpose
+         // (a ~= 1); -> {a ~= 1;};
          // lower(ss, s, &(ast)tu_of(astBBlock, {.loc = pb.loc, .stmts = pb.stmts}));
          // or
-         // (a ~= 1); -> a ~= 1;
+         // (a ~= 1); -> a ~= 1;//leak decls on pourpose
          try_err(lower, (ss, s, stmts.ptr[0]));
        })),
       (astBBlock, bb, ({
@@ -86,7 +84,7 @@ u32 lower errs(superscope *ss, scope *s, astidx a) {
            value = try_err(lower, (ss, s, value_idx));
            assertMessage(value);
          } else {
-           if (!type_idx) return_err_extras("DECL_NO_TYPE_OR_VALUE", ss_errprint(ss, a, "must have type or value").ptr);
+           if (!type_idx) return_err("DECL_NO_TYPE_OR_VALUE");
            value = scope_add_value(ss, s, TV(type));
          }
          value = coerce_type(ss, s, value, type);
@@ -101,6 +99,8 @@ u32 lower errs(superscope *ss, scope *s, astidx a) {
          value;
        })),
   );
-  if (!res) return_err_extras("STATEMENT_NULL", ss_errprint(ss, a, "{astidx_full} resulted in null somehow", ast2_full(ss, a)).ptr);
+  res
+      ? (void)({ return res; })
+      : return_err("STATEMENT_NULL");
   return res;
 }

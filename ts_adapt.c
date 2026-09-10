@@ -12,7 +12,7 @@ static ast null_ast() { return (ast)tu_of(astNull, {}); }
 
 static void __attribute__((noreturn)) printerr_point(void *userdata) {
   let epoint = (TSPoint *)&userdata;
-  fprintf(stdout, "Syntax error at byte line %u colun %u", epoint->row, epoint->column);
+  fprintf(stderr, "Syntax error at byte line %u colun %u", epoint->row, epoint->column);
   assertMessage(false);
 }
 
@@ -24,9 +24,9 @@ static srcpos register_pos(poslist *plist, u32 fileIndex, TSNode n) {
 
 static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u32 fileIndex, const u8 *source, TSNode ts_node) {
   static thread_local TSPoint error_location;
-  static_assert(sizeof(TSPoint) == sizeof(itypeof(err_t, userdata)));
+  static_assert(sizeof(TSPoint) == sizeof(itypeof(err_t, fnd)));
   if (ts_node_is_null(ts_node) || !ts_node_is_named(ts_node) || ts_node_is_error(ts_node) || ts_node_is_missing(ts_node))
-    return_err_print("PARSE_ERROR", printerr_point, (error_location = ts_node_start_point(ts_node), *(void **)&error_location));
+    return_err_extras("PARSE_ERROR", printerr_point, (error_location = ts_node_start_point(ts_node), *(void **)&error_location));
 
   let type = ts_node_type(ts_node);
 

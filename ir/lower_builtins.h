@@ -33,7 +33,7 @@ u32 lower_truthy errs(superscope *ss, scope *s, astidx a) {
     return scope_add_value(ss, s, TV(T(tu_of(r_bool, {})), avalue(ss->alloc, (bool)(!v->v.c_type || !Type_cmp(T(tu_of(r_void, {})), *v->v.c_type)))));
   else if (tu_is(r_bool, t.t))
     return l;
-  else return_err_extras("NOT_TRUTHY", ss_errprint(ss, nullptr, "no way to extract truthiess from {Type}", t).ptr);
+  else return_err("NOT_TRUTHY");
 }
 static u32 lower_builtin_cif errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->alloc, &ss->asts, args);
@@ -79,7 +79,7 @@ static u32 lower_builtin_at errs(superscope *ss, scope *s, astidx args) {
   if (list.len != 1) return_err(ARG_COUNT_ERROR);
   let l = try_err(lower, (ss, s, list.ptr[0]));
   let t = scope_find(ss, s, l)->t;
-  if (!t.ptr_level) return_err_extras("AT_NOT_REF", ss_errprint(ss, args, "@at expects a reference or pointer, got {Type}", t).ptr);
+  if (!t.ptr_level) return_err("AT_NOT_REF");
   Type inner = t;
   inner.ptr_level--;
   let d = scope_add_value(ss, s, TV(inner));
@@ -252,7 +252,7 @@ static astidx qot_walk errs(superscope *ss, scope *s, astidx node) {
 static u32 lower_builtin_qot errs(superscope *ss, scope *s, astidx args) {
   astidx arg = args;
   let list = builtin_arg_list(ss->alloc, &ss->asts, args);
-  if (list.len == 0) arg = ast2_make_empty(ss);
+  if (!list.len) arg = ast2_make_empty(ss);
   else if (list.len == 1) arg = list.ptr[0];
   else return_err(ARG_COUNT_ERROR);
   assertMessage(arg);
@@ -295,8 +295,8 @@ static u32 lower_builtin_intty errs(superscope *ss, scope *s, astidx args, bool 
   defer {
     msList_deInit(ss->alloc, bigbits);
   };
-  if (bigint_cmp(bigbits, nullptr) <= 0) return_err_extras("BAD_INT_WIDTH", ss_errprint(ss, args, "integer width must be positive").ptr);
-  if (bigint_cmp(bigbits, largest_int) > 0) return_err_extras("BAD_INT_WIDTH", ss_errprint(ss, args, "integer width too large").ptr);
+  if (bigint_cmp(bigbits, nullptr) <= 0) return_err("BAD_INT_WIDTH");
+  if (bigint_cmp(bigbits, largest_int) > 0) return_err("BAD_INT_WIDTH");
   return P$(
       (is_signed ? T(tu_of(r_sint, *(u16 *)bigbits)) : T(tu_of(r_uint, *(u16 *)bigbits))),
       scope_add_value(ss, s, Type_asValue(ss, $))
@@ -348,11 +348,11 @@ static u32 lower_builtin_offsetof errs(superscope *ss, scope *s, astidx args) {
   let t = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.ptr[0]))));
   let name = try_err(id_from_ast, (ss, s, list.ptr[1]));
   let st = find_struct_typetree(t.t);
-  if (!st) return_err_extras("OFFSETOF_NOT_STRUCT", ss_errprint(ss, args, "@offsetof expects a struct type, got {Type}", t).ptr);
+  if (!st) return_err("OFFSETOF_NOT_STRUCT");
   foreach (let item, mList_iter(st))
     if (fptr_eq(item.name, name))
       return scope_add_value(ss, s, TV_bigint(BInt.from.i64(ss->alloc, item.offset)));
-  return_err_extras("NO_MEMBER", ss_errprint(ss, args, "{Type} has no member {slice(c8)}", t, name).ptr);
+  return_err("NO_MEMBER");
 }
 
 static fptr unique_type_name(superscope *ss) {
@@ -398,13 +398,13 @@ static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
       if (tu_is(c_type, bound.t.t) && value_idx) {
         bound = try_err(temporary_interpret, (ss, working_scope, value_idx));
         if (!tu_is(c_type, bound.t.t))
-          return_err_extras("STRUCT_MEMBER_NOT_TYPE", ss_errprint(ss, stmt, "member {slice(c8)} has a type but its value is not a type", name).ptr);
+          return_err("STRUCT_MEMBER_NOT_TYPE");
       } else bound = TV(*ss_getType(ss, bound.t));
     } else {
-      if (!value_idx) return_err_extras("STRUCT_MEMBER_NO_TYPE_OR_VALUE", ss_errprint(ss, stmt, "struct member {slice(c8)} needs a type or a value", name).ptr);
+      if (!value_idx) return_err("STRUCT_MEMBER_NO_TYPE_OR_VALUE");
       bound = try_err(temporary_interpret, (ss, working_scope, value_idx));
       if (!Type_is_comptime(bound.t))
-        return_err_extras("STRUCT_MEMBER_RUNTIME", ss_errprint(ss, stmt, "non-comptime struct member {slice(c8)} needs a type", name).ptr);
+        return_err("STRUCT_MEMBER_RUNTIME");
     }
 
     if (dcl.isconst)
@@ -425,7 +425,7 @@ static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
 }
 static u32 lower_builtin_this errs(superscope *ss, scope *s, astidx args) {
   if (builtin_arg_list(ss->alloc, &ss->asts, args).len) return_err(ARG_COUNT_ERROR);
-  if (!msList_len(ss->thisstack)) return_err_extras("THIS_OUTSIDE_STRUCT", ss_errprint(ss, args, "@this() used outside of a struct definition").ptr);
+  if (!msList_len(ss->thisstack)) return_err("THIS_OUTSIDE_STRUCT");
   return scope_add_value(ss, s, (typed_value){T(tu_of(c_type, {})), msList_last(ss->thisstack)});
 }
 static u32 lower_builtin_break errs(superscope *ss, scope *s, astidx args) {

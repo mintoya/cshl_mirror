@@ -5,17 +5,13 @@
 astidx_full parse_source2 errs(allocfn out_allocator, fptr input, const char *filename);
 
 static typed_value interpret_source(allocfn arena, fptr src, astidx_full *ctx_out) {
-  let env = ss_init(arena);
   let ctx = catch_errcall((parse_source2, (arena, src, nullptr)), (e, _), (err_panic(e), (astidx_full){}));
-  env->file = src;
-  env->asts = ctx.alist;
-  env->plist = ctx.plist;
-  env->flist = ctx.flist;
+  let env = ss_init(arena, ctx);
   catch_errcall((lower, (env, env->outermost, ctx.idx)), (e, _), (err_panic(e), (u32)0));
   let res = catch_errcall((interpret, (env, env->outermost)), (e, _), (err_panic(e), (typed_value){}));
   if (ctx_out) {
     *ctx_out = ctx;
-    ctx_out->alist = env->asts; // the arena may have grown (synthetic asts), take the live list
+    ctx_out->alist = env->asts;
   }
   return res;
 }
@@ -229,7 +225,7 @@ test_fn(if_cshl) {
 test_fn(bool_bigint_roundtrip) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let env = ss_init(arena);
+  let env = ss_init(arena, (astidx_full){});
 
   u8 *mem = *acreate(arena, u8[1]);
   let tv = TV(T(tu_of(r_bool, {})), mem);
@@ -323,12 +319,8 @@ test_fn(ast_dot_kind_check) {
 //
 
 static err_t lower_source_err(allocfn arena, fptr src) {
-  let env = ss_init(arena);
-  let ctx = catch_errcall((parse_source2, (arena, src, nullptr)), (e, _), (err_panic(e), (astidx_full){}));
-  env->file = src;
-  env->asts = ctx.alist;
-  env->plist = ctx.plist;
-  env->flist = ctx.flist;
+  let ctx = catch_errcall((parse_source2, (arena, src, nullptr)), (e, _), (({ return e; }), (astidx_full){}));
+  let env = ss_init(arena, ctx);
   return call_err(lower, (env, env->outermost, ctx.idx)).err;
 }
 
@@ -401,24 +393,8 @@ test_fn(lower_error_lone_ab) {
 test_fn(interpret_error_yield_empty) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let env = ss_init(arena);
+  let env = ss_init(arena, (astidx_full){});
   let e = call_err(interpret, (env, env->outermost)).err;
   test_assert(e.err_code);
   test_assert(!strcmp(e.err_code, "YIELD_EMPTY"));
 }
-
-// test_fn(parse_error_syntax) {
-//   let arena = arena_new_ext(allocator, 1 << 16);
-//   defer { arena_cleanup(arena); };
-//   let e = call_err(parse_source2, (arena, fp("1 + ;"), nullptr)).err;
-//   test_assert(e.err_code);
-//   test_assert(!strcmp(e.err_code, "PARSE_ERROR"));
-//   // PARSE_ERROR carries a render callback + userdata instead of a preformatted string
-//   test_assert(e.render != nullptr);
-//   test_assert(e.userdata != nullptr);
-//   char *buf = nullptr;
-//   size_t buflen = 0;
-//   e.render(e.userdata);
-//   test_assert(buf && strstr(buf, "Syntax error at byte") != nullptr);
-//   free(buf);
-// }

@@ -11,7 +11,7 @@ u32 lower_call_extra errs(superscope *ss, scope *s, u32 left, u32 first, astidx 
   let l = scope_find(ss, s, left);
   iflet_tu (let fn, c_fun, l->t.t)
     return try_err(lower_function_call_with, (ss, s, left, args, first));
-  return_err_extras("UNSUPPORTED_CALL", ss_errprint(ss, args, "unsupported : call on {*:typed_value}", l).ptr);
+  return_err("UNSUPPORTED_CALL");
 }
 u32 lower_call errs(superscope *ss, scope *s, u32 left, astidx args) {
   let l = scope_find(ss, s, left);
@@ -19,7 +19,7 @@ u32 lower_call errs(superscope *ss, scope *s, u32 left, astidx args) {
     return try_err(lower_builtin, (ss, s, builtin, args));
   iflet_tu (let fn, c_fun, l->t.t)
     return try_err(lower_function_call, (ss, s, left, args));
-  return_err_extras("UNSUPPORTED_CALL", ss_errprint(ss, args, "unsupported call on {*:typed_value}", l).ptr);
+  return_err("UNSUPPORTED_CALL");
 }
 tu_def(
     (astLit, u8),
@@ -161,10 +161,10 @@ u32 lower_dot errs(superscope *ss, scope *s, u32 left, astidx right, astLit lit)
       if_decl (let info, moxmap_get(ss->type_info, tag.name))
         if_decl (let idx, moxmap_get((*info)->named, name))
           return scope_add_value(ss, s, *scope_find(ss, *info, *idx));
-    return_err_extras("NO_MEMBER", ss_errprint(ss, right, "{Type} has no member {slice(c8)}", target, name).ptr);
+    return_err("NO_MEMBER");
   }
 
-  if (l->t.ptr_level > 1) return_err_extras("DOT_UNSUPPORTED", ss_errprint(ss, right, "{Type} does not support dot", l->t).ptr);
+  if (l->t.ptr_level > 1) return_err("DOT_UNSUPPORTED");
 
   iflet_tu (let tag, r_tag, l->t.t)
     if_decl (let info, moxmap_get(ss->type_info, tag.name))
@@ -176,7 +176,7 @@ u32 lower_dot errs(superscope *ss, scope *s, u32 left, astidx right, astLit lit)
     foreach (let item, mList_iter(st)) {
       if (fptr_eq(item.name, name)) {
         if (Type_is_comptime(item.t))
-          return_err_extras("NO_STORAGE", ss_errprint(ss, right, "{slice(c8)} has no storage; its type has no name to look it up by", name).ptr);
+          return_err("NO_STORAGE");
         Type rt = item.t;
         rt.isref = true;
         let d = scope_add_value(ss, s, TV(rt));
@@ -199,7 +199,7 @@ u32 lower_dot errs(superscope *ss, scope *s, u32 left, astidx right, astLit lit)
     }
   }
 
-  return_err_extras("NO_MEMBER", ss_errprint(ss, right, "{Type} has no member {slice(c8)}", l->t, name).ptr);
+  return_err("NO_MEMBER");
 }
 typedef enum {
   math_mul = enop_mul,
@@ -270,9 +270,9 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
          // ->
          // @uqot a @qot b
          let argument = scope_find(ss, s, try_err(lower_builtin_qot, (ss, s, right)));
-         if (Type_cmp(TV_ast(0).t, argument->t)) return_err_extras("EXPECTED_AST", ss_errprint(ss, right, "expected ast, got {Type}", argument->t).ptr);
+         if (Type_cmp(TV_ast(0).t, argument->t)) return_err("EXPECTED_AST");
          let result = scope_find(ss, s, try_err(lower_call, (ss, s, left, argument->v.c_ast)));
-         if (Type_cmp(TV_ast(0).t, result->t)) return_err_extras("EXPECTED_AST", ss_errprint(ss, right, "expected ast, got {Type}", argument->t).ptr);
+         if (Type_cmp(TV_ast(0).t, result->t)) return_err("EXPECTED_AST");
          if (!result->v.c_ast) return_err("EXPECTED_AST");
          return try_err(lower, (ss, s, result->v.c_ast));
        })),
@@ -324,6 +324,6 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
       (enop_neq, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right)), math_neq)),
       (enop_leq, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right)), math_leq)),
   );
-  if (!res) return_err_extras("LOWER_FAILED", ss_errprint(ss, right, "something went wrong {} , {} , {astidx_full}", left, opNumber, ast2_full(ss, right)).ptr);
+  if (!res) return_err("LOWER_FAILED");
   return res;
 }

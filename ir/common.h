@@ -35,14 +35,11 @@ typedef struct function {
 struct superscope {
   allocfn alloc;
 
-  fptr file;        // source buffer, error locations are stored as offsets into it
-  usize errloc;     // byte offset of the last ss_errprint location, (usize)-1 if none
-  slice(c8) errmsg; // reserved error-message slot, reused by ss_errprint
-
-  // the ast2 arena everything lives in, plus the tables srcpos resolve against
-  astlist asts;
-  poslist plist;
-  filelist flist;
+  struct {
+    astlist asts;
+    poslist plist;
+    filelist flist;
+  };
 
   moxmap(void *, usize) pointers;
   moxmap(TypeTree, TypeTree *) typetrees;
@@ -59,7 +56,6 @@ struct superscope {
 // see ast.h. nodes are stored by value; compound nodes reference consecutive
 // child slots, so all navigation goes through these helpers.
 //
-extern __attribute__((noreturn)) void error_at(u8 *location, fptr message);
 
 // the node at idx, astNull for 0 (or out of range)
 static inline ast ast2_at(astlist *al, astidx idx) {
@@ -84,22 +80,14 @@ static inline usize ast2_errloc(superscope *ss, astidx idx) {
   if (!p || p > ss->plist.len) return (usize)-1;
   return sglist_get(ss->plist, p - 1).offset;
 }
-// report an error at a node's location and exit (used where errs isn't available)
-static inline __attribute__((noreturn)) void ss_error_at(superscope *ss, astidx loc, slice(c8) message) {
-  usize off = ast2_errloc(ss, loc);
-  error_at(ss->file.ptr + (off == (usize)-1 ? 0 : off), (fptr){message.len, (u8 *)message.ptr});
-}
-// report an error at a raw source pointer (identifiers etc) and exit
-static inline __attribute__((noreturn)) void ss_error_at_ptr(superscope *ss, u8 *loc, slice(c8) message) {
-  error_at(loc ?: ss->file.ptr, (fptr){message.len, (u8 *)message.ptr});
-}
-// the 1-based child indices of a block's run (allocated in alloc)
 static inline slice(astidx) ast2_block_children(allocfn alloc, astlist *al, astidx start) {
   usize n = 0;
-  for (astidx i = start; !tu_is(astNull, ast2_at(al, i)); i++) n++;
+  for (astidx i = start; !tu_is(astNull, ast2_at(al, i)); i++)
+    n++;
   let res = *acreate(alloc, astidx[n ?: 1]);
   usize k = 0;
-  for (astidx i = start; !tu_is(astNull, ast2_at(al, i)); i++) res[k++] = i;
+  for (astidx i = start; !tu_is(astNull, ast2_at(al, i)); i++)
+    res[k++] = i;
   return (slice(astidx)){k, res};
 }
 // a fresh astEmpty node (the "nothing here" sentinel asts return from dot lookups)
@@ -115,26 +103,6 @@ static inline astidx ast2_make_id(superscope *ss, fptr text) {
   sglist_push(ss->asts, (ast)tu_of(astId, (srcpos)ss->plist.len));
   return (astidx)ss->asts.len;
 }
-// formats an error message into the superscope's reserved slot, freeing the
-// previous message if any, and returns it. messages live in ss->alloc instead
-// of stdAlloc, and the slot is reused so they don't pile up. loc is optional
-// (nullable) and, when given, its byte offset within ss->file is recorded in
-// ss->errloc (resolving it to line/col is left to the caller, later).
-#define ss_errprint(ss, loc, fmt, ...) ({                                         \
-  let _ss = (ss);                                                                 \
-  if (_ss->errmsg.ptr) slice_free(_ss->alloc, _ss->errmsg);                       \
-  let _body = snprint(_ss->alloc, fmt __VA_OPT__(, ) __VA_ARGS__);                \
-  _ss->errloc = match_type(                                                       \
-      (loc),                                                                      \
-      (typeof(nullptr), _l, (usize)-1),                                           \
-      (astidx, _l, _l ? ast2_errloc(_ss, _l) : (usize)-1),                        \
-      (char *, _l, _l ? (usize)((u8 *)_l - _ss->file.ptr) : (usize)-1),           \
-      (u8 *, _l, _l ? (usize)(_l - _ss->file.ptr) : (usize)-1),                   \
-      (default, (usize)-1)                                                        \
-  );                                                                              \
-  _ss->errmsg = _body;                                                            \
-  _ss->errmsg;                                                                    \
-})
 
 scope *scope_inferior(superscope *b, scope *s);
 void scope_destroy(superscope *b, scope *s);
@@ -305,7 +273,7 @@ static inline bool Type_isint(Type t) {
 
 static inline Type value_asType errs(superscope *ss, typed_value t) {
   if (!tu_is(c_type, t.t.t))
-    return_err_extras("TYPE IS NOT VALUE", ss_errprint(ss, nullptr, "tried to get type from {Type}", t.t).ptr);
+    return_err("TYPE IS NOT VALUE");
   if (!t.v.c_type) return_err("UNKNOWN TYPE");
   return *t.v.c_type;
 }

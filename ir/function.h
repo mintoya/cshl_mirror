@@ -198,15 +198,9 @@ static u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astid
     argptrs.ptr[index] = lead;
   }
   if (mList_len(generic_signature) != msList_len(value_list) + 1)
-    return_err_extras("WRONG_ARG_COUNT", ss_errprint(ss, args, "expected {} args, got {}", mList_len(generic_signature) - 1, msList_len(value_list)).ptr);
+    return_err("WRONG_ARG_COUNT");
   foreach (let l, span(value_list, msList_len(value_list)))
     l->v.value = (!Type_is_comptime(l->t) && l->v.value) ? nullptr : l->v.value;
-  return try_err(lower_specialized, (
-      ss,
-      s,
-      function_value.v.c_fun.fn,
-      ((slice(typed_value)){msList_len(value_list), value_list}),
-      argptrs
-  ));
+  return try_err(lower_specialized, (ss, s, function_value.v.c_fun.fn, ((slice(typed_value)){msList_len(value_list), value_list}), argptrs));
 }
 u32 lower_function_call errs(superscope *ss, scope *s, u32 fn, astidx args) { return try_err(lower_function_call_with, (ss, s, fn, args, 0)); }
