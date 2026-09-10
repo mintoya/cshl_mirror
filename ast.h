@@ -5,10 +5,23 @@
 #include <assert.h>
 #include <wheels/errable.h>
 
+static inline fptr read_file(allocfn allocator, const char *filename) {
+  FILE *fileptr = fopen(filename, "rb");
+  assertMessage(fileptr);
+  defer { fclose(fileptr); };
+  fseek(fileptr, 0, SEEK_END);
+  usize len = ftell(fileptr);
+  fseek(fileptr, 0, SEEK_SET);
+  let resp = acreate(allocator, u8[len ?: 1]);
+  usize len2 = fread(resp, sizeof(u8), len, fileptr);
+  assertMessage(len2 == len);
+  return (fptr){len, *resp};
+}
+
 typedef u32 astidx;
 sliceDef(astidx);
 typedef struct
-    //__attribute__((packed))
+    // __attribute__((packed))
     ast ast;
 typedef sglist(ast) astlist;
 
@@ -176,3 +189,4 @@ typePrinter(astidx_full) {
       }),
   );
 }
+

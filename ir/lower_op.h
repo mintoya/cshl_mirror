@@ -28,7 +28,7 @@ tu_def(
     (astNumLit, srcpos),
 );
 static inline fptr astLit_str(superscope *ss, astLit l) {
-  return tu_match_exp(l, (astIdLit, l, ast2_text(ss, l)), (astStrLit, l, ast2_text(ss, l)), (astNumLit, l, ast2_text(ss, l)));
+  return tu_match_exp(l, (astIdLit, l, ast_text(ss, l)), (astStrLit, l, ast_text(ss, l)), (astNumLit, l, ast_text(ss, l)));
 }
 u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber) {
   let t = scope_find(ss, s, left)->t;
@@ -39,12 +39,12 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx righ
       (r_arr, arr, ({ // array index
                       // no bounds checking, because there is no pointer arithmatic
          if (opNumber != opNumbers.call) return_err("ARRAY_NO_OP");
-         let right_node = ast2_at(&ss->asts, right);
-         let block = tu_catch(astABlock, right_node, return_err("ARRAY_NEEDS_ABLOCK"));
-         let items = ast2_block_children(ss->alloc, &ss->asts, block.start);
+         let right_node = ast_at(ss->asts, right);
+         (void)tu_catch(astABlock, right_node, return_err("ARRAY_NEEDS_ABLOCK"));
+         let items = ast_block_children(ss->asts, right);
          if (items.len != 1) return_err("ARRAY_INDEX_ONE_ARG");
          let d = scope_add_value(ss, s, TV(T(*arr.t, .isref = true)));
-         let r = try_err(lower, (ss, s, items.ptr[0]));
+         let r = try_err(lower, (ss, s, items.start));
          if (!Type_isint(scope_find(ss, s, r)->t)) return_err("ARRAY_INDEX_NON_INT");
          scope_add_inst(ss, s, (ir)tu_of(ir_array, {.d = d, .r = r, .l = left}));
          d;
@@ -64,12 +64,12 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx righ
          u32 ovl = 0;
          if (opNumber == opNumbers.dot) {
            let self = scope_find(ss, s, left)->v.c_ast;
-           let right_node = ast2_at(&ss->asts, right);
+           let right_node = ast_at(ss->asts, right);
            iflet_tu (let m, astString, right_node) {
-             let ms = ast2_text(ss, m);
+             let ms = ast_text(ss, m);
              astidx res = 0;
-             if (self && tu_is(astOp, ast2_at(&ss->asts, self)) && ms.len >= 2 && ms.ptr[0] == '"' && ms.ptr[ms.len - 1] == '"') {
-               let self_node = ast2_at(&ss->asts, self);
+             if (self && tu_is(astOp, ast_at(ss->asts, self)) && ms.len >= 2 && ms.ptr[0] == '"' && ms.ptr[ms.len - 1] == '"') {
+               let self_node = ast_at(ss->asts, self);
                let op = tu_catch(astOp, self_node);
                union {
                  u32 n;
@@ -78,18 +78,18 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx righ
                memcpy(spelling.s, ms.ptr + 1, ms.len - 2);
                if (op.number_rep == spelling.n) res = self;
              }
-             ovl = scope_add_value(ss, s, TV_ast(res ?: ast2_make_empty(ss)));
+             ovl = scope_add_value(ss, s, TV_ast(res ?: ast_make_empty(ss)));
            } else iflet_tu (let m, astId, right_node) {
-             let ms = ast2_text(ss, m);
+             let ms = ast_text(ss, m);
              astidx res = 0;
              if (self)
-               iflet_tu (let op, astOp, ast2_at(&ss->asts, self)) {
-                 if (fptr_eq(ms, "opleft")) res = ast2_child(&ss->asts, op.left_right);
-                 else if (fptr_eq(ms, "opright")) res = ast2_child(&ss->asts, op.left_right + 1);
+               iflet_tu (let op, astOp, ast_at(ss->asts, self)) {
+                 if (fptr_eq(ms, "opleft")) res = ast_child(ss->asts, op.left_right);
+                 else if (fptr_eq(ms, "opright")) res = ast_child(ss->asts, op.left_right + 1);
                }
              if (!res && self)
                res = tu_match_exp(
-                   ast2_at(&ss->asts, self),
+                   ast_at(ss->asts, self),
                    (astOp, _, /*    */ fptr_eq(ms, "op") /*    */ ? self : (astidx)0),
                    (astId, _, /*    */ fptr_eq(ms, "id") /*    */ ? self : (astidx)0),
                    (astDecl, _, /*  */ fptr_eq(ms, "decl") /*  */ ? self : (astidx)0),
@@ -101,7 +101,7 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx righ
                    (astEmpty, _, (astidx)0),
                    (astNull, _, (astidx)0),
                );
-             ovl = scope_add_value(ss, s, TV_ast(res ?: ast2_make_empty(ss)));
+             ovl = scope_add_value(ss, s, TV_ast(res ?: ast_make_empty(ss)));
            }
          } else if (opNumber == opNumbers.eq) {
            // "checking against string for id. for asts, do it like java":
@@ -113,10 +113,10 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx righ
            iflet_tu (let arr, r_arr, other->t.t) {
              if (self) {
                fptr spelling = tu_match_exp(
-                   ast2_at(&ss->asts, self),
-                   (astId, id, /*     */ ast2_text(ss, id)),
-                   (astNumber, num, /*  */ ast2_text(ss, num)),
-                   (astString, str, /*  */ ast2_text(ss, str)),
+                   ast_at(ss->asts, self),
+                   (astId, id, /*     */ ast_text(ss, id)),
+                   (astNumber, num, /*  */ ast_text(ss, num)),
+                   (astString, str, /*  */ ast_text(ss, str)),
                    (default, (fptr){})
                );
                if (spelling.len && spelling.ptr[0] == '"') // string nodes still carry their quotes
@@ -297,7 +297,7 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
       (enop_call, try_err(lower_call, (ss, s, left, right))),
       (enop_dot, ({
          P$(tu_match_exp(
-                ast2_at(&ss->asts, right),
+                ast_at(ss->asts, right),
                 (astId, id, (astLit)tu_of(astIdLit, id)),
                 (astString, str, (astLit)tu_of(astStrLit, str)),
                 (astNumber, num, (astLit)tu_of(astNumLit, num)),

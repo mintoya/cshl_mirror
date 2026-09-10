@@ -14,50 +14,16 @@
 #include "ir/interpret.h"
 #include "ir/lower.h"
 
-astidx_full parse_source2 errs(allocfn out_allocator, fptr input, const char *filename);
-
-static fptr read_file(allocfn allocator, const char *filename) {
-  FILE *fileptr = fopen(filename, "rb");
-  assertMessage(fileptr);
-  defer { fclose(fileptr); };
-  fseek(fileptr, 0, SEEK_END);
-  usize len = ftell(fileptr);
-  fseek(fileptr, 0, SEEK_SET);
-  let resp = acreate(allocator, u8[len ?: 1]);
-  usize len2 = fread(resp, sizeof(u8), len, fileptr);
-  assertMessage(len2 == len);
-  return (fptr){len, *resp};
-}
+astidx_full parse_source errs(allocfn out_allocator, fptr input, const char *filename);
 
 // { util
-fptr *filectx = nullptr;
-__attribute__((noreturn)) void(error_at)(u8 *location, fptr message) {
-  assertMessage(filectx);
-  usize loc = (u8 *)location - filectx->ptr;
-  usize line = 0;
-  usize col = 0;
-  if (loc <= filectx->len) {
-    usize i = 0, k = 0;
-    for (; k < loc; k++) {
-      if (filectx[0].ptr[k] == '\n') {
-        line++;
-        i = 0;
-        continue;
-      }
-      i++;
-    }
-    col = i;
-  }
-  println("error : {slice(c8)} , at line {} column {}", message, line + 1, col + 1);
-  exit(1);
-}
 void on_allocation(void *, usize in, usize out, void *, const char *file, uint line) {
   // println("(alloc) {} -> {},{cstr}:{}", in, out, file, line);
 }
 // }
 cmd_main(
     int nargs,
-    char **args,
+    char *args[nargs],
     (bool, help /*      */, ("-h", "--help") /**/, "print help message" /*  */, false),
     (bool, execute /*   */, ("-r", "--run") /* */, "interpret the ast" /*   */, false),
 
@@ -72,28 +38,24 @@ cmd_main(
 
   char *progname = nargs ? *args : "cshl";
 
-  if (help) {
-    cmd_usage(progname);
-    return 0;
-  } else if (nargs < 2) {
-    println("no input file provided");
-    cmd_usage(progname);
-    return 1;
-  }
+  if (help)
+    return cmd_usage(progname), 0;
+  else if (nargs != 2)
+    return println("no input file provided"), cmd_usage(progname), 1;
 
   fptr buffer = {};
   defer {
     if (buffer.len && buffer.ptr)
       slice_free(allocator, buffer);
   };
-
-  buffer = read_file(allocator, args[1]);
-  filectx = &buffer;
-  if (echo_file)
+  if (echo_file) {
+    buffer = read_file(allocator, args[1]);
     println("file : \n{slice(c8)}\n", buffer);
+  }
   println("(log) after fread : {dbga_stats}", debugAllocator_stats(allocator));
 
-  let ctx = catch_errcall((parse_source2, (allocator, buffer, args[1])), (e, _), (err_panic(e), (astidx_full){}));
+  // parse_source reads the file itself when given a filename, so pass exactly one source
+  let ctx = catch_errcall((parse_source, (allocator, (fptr){}, args[1])), (e, _), (err_panic(e), (astidx_full){}));
   println("(log) after ast : {dbga_stats}", debugAllocator_stats(allocator));
 
   if (echo_ast)

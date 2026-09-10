@@ -55,10 +55,10 @@ i8 slice_typed_value_cmp_hash(const void *a, const void *b) {
 }
 
 static inline Type function_item_type errs(superscope *ss, scope *s, astidx item) {
-  let item_node = ast2_at(&ss->asts, item);
+  let item_node = ast_at(ss->asts, item);
   let decl = tu_catch(astDecl, item_node, return_err("PARAM_NOT_DECL"));
-  let name_idx = ast2_child(&ss->asts, decl.name_type_value);
-  let type_idx = ast2_child(&ss->asts, decl.name_type_value + 1);
+  let name_idx = ast_child(ss->asts, decl.name_type_value);
+  let type_idx = ast_child(ss->asts, decl.name_type_value + 1);
   if (!name_idx) return_err("PARAM_NO_NAME");
   if (!type_idx) return_err("PARAM_NO_TYPE");
   let name = try_err(id_from_ast, (ss, s, name_idx));
@@ -76,9 +76,7 @@ static inline Type function_item_type errs(superscope *ss, scope *s, astidx item
 }
 
 u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, astidx body) {
-  let args_node = ast2_at(&ss->asts, args);
-  let pblock = tu_catch(astPBlock, args_node);
-  let params = ast2_block_children(ss->alloc, &ss->asts, pblock.start);
+  let params = builtin_arg_list(ss->asts, args);
   // clang-format off
   msList_push(ss->alloc, ss->functions, {
       .params = params,
@@ -94,8 +92,8 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
   let res = scope_add_value(ss, s, TV(T(tu_of(c_fun, signature)), {.c_fun.fn = msList_len(ss->functions)}));
   // generate example signature
   {
-    foreach (let p, span(params.ptr, params.len))
-      mList_push(signature, try_err(function_item_type, (ss, arg_scope, *p)));
+    foreach (let p, span(params.start, params.len))
+      mList_push(signature, try_err(function_item_type, (ss, arg_scope, p)));
     mList_push(signature, try_err(value_asType, (ss, try_err(temporary_interpret, (ss, arg_scope, retT)))));
   }
   println(
@@ -104,8 +102,8 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
       "return:{astidx_full}\n"
       "to {slice : Type}",
 
-      ast2_full(ss, args),
-      ast2_full(ss, retT),
+      ss_ast_full(ss, args),
+      ss_ast_full(ss, retT),
       ((slice(Type)){mList_len(signature), mList_arr(signature)})
   );
   return res;
@@ -138,9 +136,9 @@ static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_
 
   foreach (let param, span(key.ptr, key.len)) {
     let index = param - key.ptr;
-    let item_node = ast2_at(&ss->asts, function_item->params.ptr[index]);
+    let item_node = ast_at(ss->asts, function_item->params.start + index);
     let item = tu_catch(astDecl, item_node);
-    let name = try_err(id_from_ast, (ss, spec, ast2_child(&ss->asts, item.name_type_value)));
+    let name = try_err(id_from_ast, (ss, spec, ast_child(ss->asts, item.name_type_value)));
     u32 value;
     if (Type_is_comptime(param->t)) {
       value = scope_add_value(ss, spec, *param);
@@ -168,7 +166,7 @@ static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_
   return result;
 }
 static u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astidx args, u32 lead) {
-  let alist = builtin_arg_list(ss->alloc, &ss->asts, args);
+  let alist = builtin_arg_list(ss->asts, args);
   let function_value = *scope_find(ss, s, fn);
   let generic_signature = tu_catch(c_fun, function_value.t.t);
   let function_item = &ss->functions[function_value.v.c_fun.fn - 1];
@@ -185,13 +183,13 @@ static u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astid
     argptrs.ptr[index] = lead;
     msList_push(ss->alloc, value_list, *scope_find(ss, s, lead));
   }
-  foreach (let arg_item, span(alist.ptr, alist.len)) {
+  foreach (let arg_item, span(alist.start, alist.len)) {
     let index = idx++;
     let thisitem = mList_arr(generic_signature)[index];
     u32 lead;
     if (tu_is(c_ast, thisitem.t))
-      lead = scope_add_value(ss, s, TV_ast(*arg_item));
-    else lead = try_err(lower, (ss, s, *arg_item));
+      lead = scope_add_value(ss, s, TV_ast(arg_item));
+    else lead = try_err(lower, (ss, s, arg_item));
 
     lead = coerce_type(ss, s, lead, thisitem);
     msList_push(ss->alloc, value_list, *scope_find(ss, s, lead));

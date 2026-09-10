@@ -7,6 +7,10 @@
 #include <wheels/macros.h>
 #include <wheels/print/print_pre.h>
 
+typedef struct {
+  astidx start;
+  u32 len;
+} astidx_span;
 typedef struct superscope superscope;
 typedef struct scope scope;
 struct scope {
@@ -26,7 +30,7 @@ typedef struct {
 } function_instance;
 
 typedef struct function {
-  slice(astidx) params;
+  astidx_span params;
   astidx retT;
   astidx body;
   msList(function_instance) instances;
@@ -51,56 +55,27 @@ struct superscope {
   scope *outermost;
 };
 
-//
-// ast2 accessors. astidx is a 1-based index into ss->asts (0 = absent/null),
-// see ast.h. nodes are stored by value; compound nodes reference consecutive
-// child slots, so all navigation goes through these helpers.
-//
-
-// the node at idx, astNull for 0 (or out of range)
-static inline ast ast2_at(astlist *al, astidx idx) {
-  if (!idx || idx > al->len) return (ast)tu_of(astNull, {});
-  return sglist_get(*al, idx - 1);
+static inline ast ast_at(astlist al, astidx idx) {
+  return (!idx || idx > al.len) ? (ast)tu_of(astNull, {}) : sglist_get(al, idx - 1);
 }
-// the index of a child slot if it holds a real node, 0 if it's astNull
-static inline astidx ast2_child(astlist *al, astidx slot) {
-  return tu_is(astNull, ast2_at(al, slot)) ? 0 : slot;
-}
-// resolve a srcpos to the source text it points at
-static inline fptr ast2_text(superscope *ss, srcpos p) {
+static inline astidx ast_child(astlist al, astidx slot) { return tu_is(astNull, ast_at(al, slot)) ? 0 : slot; }
+static inline fptr ast_text(superscope *ss, srcpos p) {
   return fp_from_srcpos((srcpos_full){.pidx = p, .plist = ss->plist, .flist = ss->flist});
 }
-// bundle an index with its lists, for {astidx_full} printing
-static inline astidx_full ast2_full(superscope *ss, astidx idx) {
-  return (astidx_full){.idx = idx, .alist = ss->asts, .plist = ss->plist, .flist = ss->flist};
+static inline usize ast_loc(superscope *ss, astidx idx) {
+  let p = srcpos_ast(ast_at(ss->asts, idx), ss->asts);
+  return (!p || p > ss->plist.len) ? (usize)-1 : sglist_get(ss->plist, p - 1).offset;
 }
-// byte offset of a node's location in ss->file, (usize)-1 if unknown
-static inline usize ast2_errloc(superscope *ss, astidx idx) {
-  let p = srcpos_ast(ast2_at(&ss->asts, idx), ss->asts);
-  if (!p || p > ss->plist.len) return (usize)-1;
-  return sglist_get(ss->plist, p - 1).offset;
-}
-static inline slice(astidx) ast2_block_children(allocfn alloc, astlist *al, astidx start) {
-  usize n = 0;
-  for (astidx i = start; !tu_is(astNull, ast2_at(al, i)); i++)
-    n++;
-  let res = *acreate(alloc, astidx[n ?: 1]);
-  usize k = 0;
-  for (astidx i = start; !tu_is(astNull, ast2_at(al, i)); i++)
-    res[k++] = i;
-  return (slice(astidx)){k, res};
-}
-// a fresh astEmpty node (the "nothing here" sentinel asts return from dot lookups)
-static inline astidx ast2_make_empty(superscope *ss) {
-  sglist_push(ss->asts, (ast)tu_of(astEmpty, 0));
-  return (astidx)ss->asts.len;
-}
-// a fresh astId node whose text is a standalone string (for @id)
-static inline astidx ast2_make_id(superscope *ss, fptr text) {
+static inline astidx ast_make_id(superscope *ss, fptr text) {
   sglist_push(ss->flist, (fileItem){.filename = nullptr, .filecontent = text, .fileptr = nullptr});
   u32 fidx = (u32)ss->flist.len; // 1-based
   sglist_push(ss->plist, (posItem){.fidx = fidx, .offset = 0, .length = (u32)text.len});
   sglist_push(ss->asts, (ast)tu_of(astId, (srcpos)ss->plist.len));
+  return (astidx)ss->asts.len;
+}
+// a fresh astEmpty node (the "nothing here" sentinel asts return from dot lookups)
+static inline astidx ast_make_empty(superscope *ss) {
+  sglist_push(ss->asts, (ast)tu_of(astEmpty, 0));
   return (astidx)ss->asts.len;
 }
 
@@ -395,23 +370,50 @@ static inline void bigint_into_int(superscope *ss, typed_value *t, bigint b) {
       }),
   );
 }
-
-// the arguments of a call node: its PBlock children, or the node itself if it
-// is not a PBlock (allocated in alloc)
-static inline slice(astidx) builtin_arg_list(allocfn alloc, astlist *al, astidx args) {
-  iflet_tu (let block, astPBlock, ast2_at(al, args))
-    return ast2_block_children(alloc, al, block.start);
-  let res = *acreate(alloc, astidx[1]);
-  res[0] = args;
-  return (slice(astidx)){1, res};
+static inline astidx_span ast_block_children(astlist al, astidx args) {
+  return tu_match_exp(
+      ast_at(al, args),
+      (astABlock, b, ({
+         let start = b.start, end = start;
+         while (!tu_is(astNull, ast_at(al, end)))
+           end++;
+         (astidx_span){start, end - start};
+       })),
+      (astBBlock, b, ({
+         let start = b.start, end = start;
+         while (!tu_is(astNull, ast_at(al, end)))
+           end++;
+         (astidx_span){start, end - start};
+       })),
+      (astPBlock, b, ({
+         let start = b.start, end = start;
+         while (!tu_is(astNull, ast_at(al, end)))
+           end++;
+         (astidx_span){start, end - start};
+       })),
+      (default, (assertMessage(false, "unreachable"), (astidx_span){})),
+  );
 }
+static inline astidx_span builtin_arg_list(astlist al, astidx args) {
+  iflet_tu (let block, astPBlock, ast_at(al, args)) {
+    let start = block.start, end = start;
+    while (!tu_is(astNull, ast_at(al, end)))
+      end++;
+    return (astidx_span){start, end - start};
+  }
+  return (astidx_span){args, 1};
+}
+static inline astidx_full ss_ast_full(superscope *ss, astidx idx) {
+  return (astidx_full){.idx = idx, .alist = ss->asts, .plist = ss->plist, .flist = ss->flist};
+}
+
 static inline fptr id_from_ast errs(superscope *ss, scope *s, astidx name) {
-  iflet_tu (let id, astId, ast2_at(&ss->asts, name)) return ast2_text(ss, id);
+  iflet_tu (let id, astId, ast_at(ss->asts, name)) return ast_text(ss, id);
   let tv = try_err(temporary_interpret, (ss, s, name));
   if (!tu_is(c_ast, tv.t.t) || !tv.v.c_ast) return_err("ID_REQUIRES_ASTID");
-  let inner = ast2_at(&ss->asts, tv.v.c_ast);
+  let inner = ast_at(ss->asts, tv.v.c_ast);
   if (!tu_is(astId, inner)) return_err("ID_REQUIRES_ASTID");
-  return ast2_text(ss, tu_catch(astId, inner));
+  return ast_text(ss, tu_catch(astId, inner));
 }
 
 constexpr typed_value void_value = TV(T(tu_of(r_void, {})));

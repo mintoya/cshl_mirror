@@ -2,10 +2,10 @@
 #include "ir/interpret.h"
 #include "ir/lower.h"
 
-astidx_full parse_source2 errs(allocfn out_allocator, fptr input, const char *filename);
+astidx_full parse_source errs(allocfn out_allocator, fptr input, const char *filename);
 
 static typed_value interpret_source(allocfn arena, fptr src, astidx_full *ctx_out) {
-  let ctx = catch_errcall((parse_source2, (arena, src, nullptr)), (e, _), (err_panic(e), (astidx_full){}));
+  let ctx = catch_errcall((parse_source, (arena, src, nullptr)), (e, _), (err_panic(e), (astidx_full){}));
   let env = ss_init(arena, ctx);
   catch_errcall((lower, (env, env->outermost, ctx.idx)), (e, _), (err_panic(e), (u32)0));
   let res = catch_errcall((interpret, (env, env->outermost)), (e, _), (err_panic(e), (typed_value){}));
@@ -176,14 +176,11 @@ test_fn(if_cshl) {
   let r = interpret_source(
       arena,
       fp(
-          "ast ~~ @ast();"
-          "any ~~ @any();"
-          ""
+          "ast ~~ @ast();any ~~ @any();"
           "if  ~~ @fn (a ~ast),ast,{"
           "  call ~ast~ a.\"()\";"
           "  cond ~ast~ call.opleft;"
           "  rest ~ast~ call.opright;"
-          ""
           "  @cif((rest.\"()\".opright.\"()\".opleft == \"else\"), {"
           "    then ~ast~ rest.opleft;"
           "    else ~ast~ rest.opright.\"()\".opright;"
@@ -194,7 +191,6 @@ test_fn(if_cshl) {
           "      @uqot(else)"
           "    );"
           "  });"
-          ""
           "  return @qot @if("
           "    @uqot(cond),"
           "    @uqot(rest)"
@@ -204,14 +200,8 @@ test_fn(if_cshl) {
           "  if' (a) (return b) else (return c);"
           "};"
           ""
-          "one ~= cnd (1),"
-          "  1,"
-          "  0;"
-          "// one == 1\n"
-          "one = cnd (one),"
-          "  3,"
-          "  2;"
-          "// one == 3\n"
+          "one ~= cnd (1),  1,0;"
+          "one =  cnd (one),3,2;"
           "one;"
       ),
       nullptr
@@ -248,7 +238,7 @@ test_fn(ast_dot_operator_match) {
   astidx_full ctx = {};
   let r = ast_probe(arena, fp("a.\"+\""), fp("1 + 2"), &ctx);
   test_assert(tu_is(c_ast, r.t.t));
-  let node = ast2_at(&ctx.alist, r.v.c_ast);
+  let node = ast_at(ctx.alist, r.v.c_ast);
   test_assert(tu_is(astOp, node));
   test_inteq(tu_catch(astOp, node).number_rep, opNumbers.plus);
 }
@@ -260,7 +250,7 @@ test_fn(ast_dot_operator_mismatch) {
   astidx_full ctx = {};
   let r = ast_probe(arena, fp("a.\"+\""), fp("1 - 2"), &ctx);
   test_assert(tu_is(c_ast, r.t.t));
-  test_assert(tu_is(astEmpty, ast2_at(&ctx.alist, r.v.c_ast)));
+  test_assert(tu_is(astEmpty, ast_at(ctx.alist, r.v.c_ast)));
 }
 
 test_fn(ast_dot_operation_members) {
@@ -270,14 +260,14 @@ test_fn(ast_dot_operation_members) {
   astidx_full lctx = {};
   let l = ast_probe(arena, fp("a.opleft"), fp("1 + 2"), &lctx);
   test_assert(tu_is(c_ast, l.t.t));
-  let lnode = ast2_at(&lctx.alist, l.v.c_ast);
+  let lnode = ast_at(lctx.alist, l.v.c_ast);
   test_assert(tu_is(astNumber, lnode));
   test_fpeq(fp_from_srcpos((srcpos_full){.pidx = tu_catch(astNumber, lnode), .plist = lctx.plist, .flist = lctx.flist}), "1");
 
   astidx_full rctx = {};
   let rr = ast_probe(arena, fp("a.opright"), fp("1 + 2"), &rctx);
   test_assert(tu_is(c_ast, rr.t.t));
-  let rnode = ast2_at(&rctx.alist, rr.v.c_ast);
+  let rnode = ast_at(rctx.alist, rr.v.c_ast);
   test_assert(tu_is(astNumber, rnode));
   test_fpeq(fp_from_srcpos((srcpos_full){.pidx = tu_catch(astNumber, rnode), .plist = rctx.plist, .flist = rctx.flist}), "2");
 }
@@ -289,7 +279,7 @@ test_fn(ast_dot_member_check_on_non_op) {
   astidx_full ctx = {};
   let l = ast_probe(arena, fp("a.opleft"), fp("7"), &ctx);
   test_assert(tu_is(c_ast, l.t.t));
-  test_assert(tu_is(astEmpty, ast2_at(&ctx.alist, l.v.c_ast)));
+  test_assert(tu_is(astEmpty, ast_at(ctx.alist, l.v.c_ast)));
 }
 
 test_fn(ast_dot_kind_check) {
@@ -299,27 +289,27 @@ test_fn(ast_dot_kind_check) {
   astidx_full ictx = {};
   let i = ast_probe(arena, fp("a.id"), fp("foo"), &ictx);
   test_assert(tu_is(c_ast, i.t.t));
-  let inode = ast2_at(&ictx.alist, i.v.c_ast);
+  let inode = ast_at(ictx.alist, i.v.c_ast);
   test_assert(tu_is(astId, inode));
-  test_fpeq(fp_from_srcpos((srcpos_full){.pidx = tu_catch(astId, inode), .plist = ictx.plist, .flist = ictx.flist}), "foo");
+  test_fpeq(fp_from_srcpos((srcpos_full){tu_catch(astId, inode), ictx.plist, ictx.flist}), "foo");
 
   astidx_full octx = {};
   let o = ast_probe(arena, fp("a.op"), fp("1 + 2"), &octx);
   test_assert(tu_is(c_ast, o.t.t));
-  test_assert(tu_is(astOp, ast2_at(&octx.alist, o.v.c_ast)));
+  test_assert(tu_is(astOp, ast_at(octx.alist, o.v.c_ast)));
 
   astidx_full ectx = {};
   let e = ast_probe(arena, fp("a.id"), fp("7"), &ectx);
   test_assert(tu_is(c_ast, e.t.t));
-  test_assert(tu_is(astEmpty, ast2_at(&ectx.alist, e.v.c_ast)));
+  test_assert(tu_is(astEmpty, ast_at(ectx.alist, e.v.c_ast)));
 }
 
 //
-// error tests : lowering/interpretation should fail with a specific err code
+// error tests
 //
 
 static err_t lower_source_err(allocfn arena, fptr src) {
-  let ctx = catch_errcall((parse_source2, (arena, src, nullptr)), (e, _), (({ return e; }), (astidx_full){}));
+  let ctx = catch_errcall((parse_source, (arena, src, nullptr)), (e, _), (({ return e; }), (astidx_full){}));
   let env = ss_init(arena, ctx);
   return call_err(lower, (env, env->outermost, ctx.idx)).err;
 }

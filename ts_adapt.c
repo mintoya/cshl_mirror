@@ -1,5 +1,6 @@
 #include "ast.h"
 #include "wheels/allocator.h"
+#include "wheels/fptr.h"
 #include "wheels/macros.h"
 #include <assert.h>
 #include <string.h>
@@ -111,23 +112,35 @@ static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u3
   assertMessage(false, "unhandled node %s", type);
 }
 
-astidx_full parse_source2 errs(allocfn out_allocator, fptr input, const char *filename) {
+astidx_full parse_source errs(allocfn out_allocator, fptr input, const char *filename) {
+  assertMessage(!filename + fptr_isNull(input) == 1);
   astidx_full res = {
-      .alist = {.allocator = out_allocator},
-      .plist = {.allocator = out_allocator},
-      .flist = {.allocator = out_allocator},
+      .alist = out_allocator,
+      .plist = out_allocator,
+      .flist = out_allocator,
   };
-
-  sglist_push(res.flist, {.filename = filename ?: "<source>", .filecontent = input, .fileptr = nullptr});
+  let const fileit =
+      filename
+          ? (fileItem){
+                .filename = filename,
+                .filecontent = read_file(out_allocator, filename),
+            }
+          : (fileItem){
+                .filecontent = input,
+            };
+  // clang-format off
+  sglist_push(res.flist, fileit);
+  // clang-format on
   u32 fileIndex = (u32)res.flist.len; // 1-based, see fp_from_srcpos
+  fptr content = fileit.filecontent;
 
   TSParser *parser = ts_parser_new();
   defer { ts_parser_delete(parser); };
   ts_parser_set_language(parser, tree_sitter_cshl());
-  TSTree *tree = ts_parser_parse_string(parser, NULL, (const char *)input.ptr, input.len);
+  TSTree *tree = ts_parser_parse_string(parser, NULL, (const char *)content.ptr, content.len);
   defer { ts_tree_delete(tree); };
 
-  let root = try_err(ts_to_ast2, (out_allocator, &res.alist, &res.plist, fileIndex, input.ptr, ts_tree_root_node(tree)));
+  let root = try_err(ts_to_ast2, (out_allocator, &res.alist, &res.plist, fileIndex, content.ptr, ts_tree_root_node(tree)));
   sglist_push(res.alist, root); // the root is referenced by no parent slot
   res.idx = (astidx)res.alist.len;
   return res;
