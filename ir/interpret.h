@@ -78,7 +78,7 @@ void interpret_set errs(irstate st, ir_set c) {
   let l = irstate_find(st, c.l);
   tu_match_void(
       d->t.t,
-      (c_ast, _, d->v.c_ast = l->v.value),
+      (c_ast, _, d->v.c_ast = (astidx)(usize)l->v.value),
       (c_int, _, d->v.c_int = BInt.copy(st.ss->alloc, l->v.c_int)),
       (builtin, _, return_err("SET_BUILTIN")),
       (c_fun, _, d->v.c_fun = l->v.c_fun),
@@ -169,7 +169,7 @@ void interpret_call errs(irstate st, ir_call c) {
   destination->t.isconst = false;
 
   if (Type_cmp(destination->t, result.t))
-    return_err_extras("RETURN_WRONG_TYPE", ss_errprint(st.ss, nullptr, "{Type} != {Type}", destination->t, result.t).ptr);
+    return_err("RETURN_WRONG_TYPE");
   tu_match_void(
       destination->t.t,
       (c_ast, _, destination->v.c_ast = result.v.c_ast),
@@ -239,7 +239,7 @@ void interpret_farg errs(irstate st, ir_farg c) {
   if (Type_cmp(v.t, d->t)) return_err("FUNCTION_WRONG_RETURN");
   tu_match_void(
       d->t.t,
-      (c_ast, _, d->v.c_ast = v.v.value),
+      (c_ast, _, d->v.c_ast = (astidx)(usize)v.v.value),
       (c_int, _, d->v.c_int = BInt.copy(st.ss->alloc, v.v.c_int)),
       (builtin, _, return_err("SET_BUILTIN")),
       (c_fun, _, d->v.c_fun = v.v.c_fun),
@@ -332,9 +332,6 @@ bool try_interpret errs(superscope *ss, scope *s, ir inst) {
 typed_value interpret errs(superscope *ss, scope *s) {
   try_err(interpret_block, ((irstate){.ss = ss, .s = s, .root = s, .sig = {}}, s));
   let result = msList_last(s->values);
-  if (!result.v.value) return_err_extras(
-      "YIELD_EMPTY",
-      ss_errprint(ss, nullptr, "{typed_value}", result).ptr
-  );
+  if (!result.v.value) return_err("YIELD_EMPTY");
   return result;
 }

@@ -26,18 +26,20 @@ typedef struct {
 } function_instance;
 
 typedef struct function {
-  slice(astptr) params;
-  ast *retT;
-  ast *body;
+  slice(astidx) params;
+  astidx retT;
+  astidx body;
   msList(function_instance) instances;
   moxmap(sliceDef(typed_value), u32) mp;
 } function;
 struct superscope {
   allocfn alloc;
 
-  fptr file;        // source buffer, error locations are stored as offsets into it
-  usize errloc;     // byte offset of the last ss_errprint location, (usize)-1 if none
-  slice(c8) errmsg; // reserved error-message slot, reused by ss_errprint
+  struct {
+    astlist asts;
+    poslist plist;
+    filelist flist;
+  };
 
   moxmap(void *, usize) pointers;
   moxmap(TypeTree, TypeTree *) typetrees;
@@ -48,29 +50,59 @@ struct superscope {
   msList(c_fun) fnctx;
   scope *outermost;
 };
-// formats an error message into the superscope's reserved slot, freeing the
-// previous message if any, and returns it. messages live in ss->alloc instead
-// of stdAlloc, and the slot is reused so they don't pile up. loc is optional
-// (nullable) and, when given, its byte offset within ss->file is recorded in
-// ss->errloc (resolving it to line/col is left to the caller, later).
-#define ss_errprint(ss, loc, fmt, ...) ({                                         \
-  let _ss = (ss);                                                                 \
-  if (_ss->errmsg.ptr) slice_free(_ss->alloc, _ss->errmsg);                       \
-  let _body = snprint(_ss->alloc, fmt __VA_OPT__(, ) __VA_ARGS__);                \
-  u8 *_loc = match_type(                                                          \
-      (loc),                                                                      \
-      (char *, _l, (u8 *)_l),                                                     \
-      (u8 *, _l, _l),                                                             \
-      (typeof(nullptr), _l, (u8 *)0),                                             \
-      (ast, _l, ast_loc(_l)),                                                     \
-      (ast *, _l, _l ? ast_loc(*_l) : nullptr)                                    \
-  );                                                                              \
-  _ss->errloc = (_loc && _ss->file.len && _ss->file.ptr)                          \
-                    ? (usize)(_loc - _ss->file.ptr)                               \
-                    : (usize)-1;                                                  \
-  _ss->errmsg = _body;                                                            \
-  _ss->errmsg;                                                                    \
-})
+
+//
+// ast2 accessors. astidx is a 1-based index into ss->asts (0 = absent/null),
+// see ast.h. nodes are stored by value; compound nodes reference consecutive
+// child slots, so all navigation goes through these helpers.
+//
+
+// the node at idx, astNull for 0 (or out of range)
+static inline ast ast2_at(astlist *al, astidx idx) {
+  if (!idx || idx > al->len) return (ast)tu_of(astNull, {});
+  return sglist_get(*al, idx - 1);
+}
+// the index of a child slot if it holds a real node, 0 if it's astNull
+static inline astidx ast2_child(astlist *al, astidx slot) {
+  return tu_is(astNull, ast2_at(al, slot)) ? 0 : slot;
+}
+// resolve a srcpos to the source text it points at
+static inline fptr ast2_text(superscope *ss, srcpos p) {
+  return fp_from_srcpos((srcpos_full){.pidx = p, .plist = ss->plist, .flist = ss->flist});
+}
+// bundle an index with its lists, for {astidx_full} printing
+static inline astidx_full ast2_full(superscope *ss, astidx idx) {
+  return (astidx_full){.idx = idx, .alist = ss->asts, .plist = ss->plist, .flist = ss->flist};
+}
+// byte offset of a node's location in ss->file, (usize)-1 if unknown
+static inline usize ast2_errloc(superscope *ss, astidx idx) {
+  let p = srcpos_ast(ast2_at(&ss->asts, idx), ss->asts);
+  if (!p || p > ss->plist.len) return (usize)-1;
+  return sglist_get(ss->plist, p - 1).offset;
+}
+static inline slice(astidx) ast2_block_children(allocfn alloc, astlist *al, astidx start) {
+  usize n = 0;
+  for (astidx i = start; !tu_is(astNull, ast2_at(al, i)); i++)
+    n++;
+  let res = *acreate(alloc, astidx[n ?: 1]);
+  usize k = 0;
+  for (astidx i = start; !tu_is(astNull, ast2_at(al, i)); i++)
+    res[k++] = i;
+  return (slice(astidx)){k, res};
+}
+// a fresh astEmpty node (the "nothing here" sentinel asts return from dot lookups)
+static inline astidx ast2_make_empty(superscope *ss) {
+  sglist_push(ss->asts, (ast)tu_of(astEmpty, 0));
+  return (astidx)ss->asts.len;
+}
+// a fresh astId node whose text is a standalone string (for @id)
+static inline astidx ast2_make_id(superscope *ss, fptr text) {
+  sglist_push(ss->flist, (fileItem){.filename = nullptr, .filecontent = text, .fileptr = nullptr});
+  u32 fidx = (u32)ss->flist.len; // 1-based
+  sglist_push(ss->plist, (posItem){.fidx = fidx, .offset = 0, .length = (u32)text.len});
+  sglist_push(ss->asts, (ast)tu_of(astId, (srcpos)ss->plist.len));
+  return (astidx)ss->asts.len;
+}
 
 scope *scope_inferior(superscope *b, scope *s);
 void scope_destroy(superscope *b, scope *s);
@@ -84,14 +116,14 @@ static inline void scope_bind(superscope *env, scope *s, u32 idx, fptr name);
 #define TV(...) ((typed_value){__VA_ARGS__})
 
 // lowers an ast and gives you the resulting value's index. all instructions go into scope s
-u32 lower errs /*                      */ (superscope *ss, scope *s, ast *a);
+u32 lower errs /*                      */ (superscope *ss, scope *s, astidx a);
 // interprets a scope and yields the result
 typed_value interpret errs /*          */ (superscope *ss, scope *s);
 // if true inst was interpreted
 bool try_interpret errs /*             */ (superscope *ss, scope *s, ir inst);
 
 #define allocates(...) (__VA_ARGS__)
-typed_value temporary_interpret errs(superscope *ss, scope *s, ast *a) {
+typed_value temporary_interpret errs(superscope *ss, scope *s, astidx a) {
   let work = scope_inferior(ss, s);
   defer { scope_destroy(ss, work); };
   try_err(lower, (ss, work, a));
@@ -169,7 +201,7 @@ typePrinter(enum_op) {
 
 [[gnu::const]] typed_value TV_bigint(bigint b) { return TV(T(tu_of(c_int, {})), b); }
 [[gnu::const]] typed_value TV_type(Type *t) { return TV(T(tu_of(c_type, {})), t); }
-[[gnu::const]] typed_value TV_ast(ast *ats) { return TV(T(tu_of(c_ast, {})), ats); }
+[[gnu::const]] typed_value TV_ast(astidx ats) { return (typed_value){.t = T(tu_of(c_ast, {})), .v.c_ast = ats}; }
 [[gnu::const]] typed_value TV_any() { return TV(T(tu_of(c_any, {}))); }
 
 static inline enum_op op_as_enum(u32 opn) {
@@ -241,8 +273,8 @@ static inline bool Type_isint(Type t) {
 
 static inline Type value_asType errs(superscope *ss, typed_value t) {
   if (!tu_is(c_type, t.t.t))
-    return_err_extras("TYPE IS NOT VALUE", ss_errprint(ss, nullptr, "tried to get type from {Type}", t.t).ptr);
-  if (!t.v.c_type) return_err("UNKNOWN TYPE");
+    return_err("TYPE_IS_NOT_VALUE");
+  if (!t.v.c_type) return_err("UNKNOWN_TYPE");
   return *t.v.c_type;
 }
 static inline typed_value Type_asValue(superscope *s, Type t) { return TV_type(ss_getType(s, t)); }
@@ -364,17 +396,22 @@ static inline void bigint_into_int(superscope *ss, typed_value *t, bigint b) {
   );
 }
 
-static inline slice(astptr) builtin_arg_list(ast **args) {
-  iflet_tu (let block, astPBlock, **args)
-    return slice_stat(slice(astptr), *sentList_vla(block.stmts));
-  return (slice(astptr)){1, args};
+// the arguments of a call node: its PBlock children, or the node itself if it
+// is not a PBlock (allocated in alloc)
+static inline slice(astidx) builtin_arg_list(allocfn alloc, astlist *al, astidx args) {
+  iflet_tu (let block, astPBlock, ast2_at(al, args))
+    return ast2_block_children(alloc, al, block.start);
+  let res = *acreate(alloc, astidx[1]);
+  res[0] = args;
+  return (slice(astidx)){1, res};
 }
-static inline fptr id_from_ast errs(superscope *ss, scope *s, ast *name) {
-  iflet_tu (let id, astId, *name) return id;
+static inline fptr id_from_ast errs(superscope *ss, scope *s, astidx name) {
+  iflet_tu (let id, astId, ast2_at(&ss->asts, name)) return ast2_text(ss, id);
   let tv = try_err(temporary_interpret, (ss, s, name));
-  if (!tu_is(c_ast, tv.t.t) || !tv.v.c_ast || !tu_is(astId, *tv.v.c_ast))
-    return_err("ID_REQUIRES_ASTID");
-  return tu_catch(astId, *tv.v.c_ast);
+  if (!tu_is(c_ast, tv.t.t) || !tv.v.c_ast) return_err("ID_REQUIRES_ASTID");
+  let inner = ast2_at(&ss->asts, tv.v.c_ast);
+  if (!tu_is(astId, inner)) return_err("ID_REQUIRES_ASTID");
+  return ast2_text(ss, tu_catch(astId, inner));
 }
 
 constexpr typed_value void_value = TV(T(tu_of(r_void, {})));
@@ -386,7 +423,7 @@ typePrinter(typed_value) {
   tu_match_void(
       in.t.t,
       (c_int, _, in.v.c_int ? USENAMEDPRINTER("bigint", in.v.c_int) : PUTS("??");),
-      (c_ast, _, in.v.c_ast ? USENAMEDPRINTER("ast", in.v.c_ast) : PUTS("??");),
+      (c_ast, _, in.v.c_ast ? (PUTS("(ast "), USETYPEPRINTER(u32, in.v.c_ast), PUTS(")")) : PUTS("??");),
       (c_type, _, in.v.value ? USETYPEPRINTER(Type, *(Type *)in.v.value) : PUTS("??");),
       (c_fun, _, in.v.value ? PUTS("("), USETYPEPRINTER(u32, in.v.c_fun.fn), USETYPEPRINTER(u32, in.v.c_fun.spec), PUTS(")") : PUTS("??");),
       (default, {

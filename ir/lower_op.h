@@ -7,27 +7,30 @@
 #include "wheels/macros.h"
 #include "wheels/mytypes.h"
 #include <string.h>
-u32 lower_call_extra errs(superscope *ss, scope *s, u32 left, u32 first, ast *args) {
+u32 lower_call_extra errs(superscope *ss, scope *s, u32 left, u32 first, astidx args) {
   let l = scope_find(ss, s, left);
   iflet_tu (let fn, c_fun, l->t.t)
     return try_err(lower_function_call_with, (ss, s, left, args, first));
-  return_err_extras("UNSUPPORTED_CALL", ss_errprint(ss, args, "unsupported : call on {*:typed_value}", l).ptr);
+  return_err("UNSUPPORTED_CALL");
 }
-u32 lower_call errs(superscope *ss, scope *s, u32 left, ast *args) {
+u32 lower_call errs(superscope *ss, scope *s, u32 left, astidx args) {
   let l = scope_find(ss, s, left);
   iflet_tu (let builtin, builtin, l->t.t)
     return try_err(lower_builtin, (ss, s, builtin, args));
   iflet_tu (let fn, c_fun, l->t.t)
     return try_err(lower_function_call, (ss, s, left, args));
-  return_err_extras("UNSUPPORTED_CALL", ss_errprint(ss, args, "unsupported call on {*:typed_value}", l).ptr);
+  return_err("UNSUPPORTED_CALL");
 }
 tu_def(
     (astLit, u8),
-    (astIdLit, astId),
-    (astStrLit, astString),
-    (astNumLit, astNumber),
+    (astIdLit, srcpos),
+    (astStrLit, srcpos),
+    (astNumLit, srcpos),
 );
-u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
+static inline fptr astLit_str(superscope *ss, astLit l) {
+  return tu_match_exp(l, (astIdLit, l, ast2_text(ss, l)), (astStrLit, l, ast2_text(ss, l)), (astNumLit, l, ast2_text(ss, l)));
+}
+u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber) {
   let t = scope_find(ss, s, left)->t;
   if (t.ptr_level > 1) return 0;
   let result = tu_match_exp(
@@ -36,10 +39,12 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, ast *right,
       (r_arr, arr, ({ // array index
                       // no bounds checking, because there is no pointer arithmatic
          if (opNumber != opNumbers.call) return_err("ARRAY_NO_OP");
-         let block = tu_catch(astABlock, *right, return_err("ARRAY_NEEDS_ABLOCK"));
-         if (sentList_len(block.items) != 1) return_err("ARRAY_INDEX_ONE_ARG");
+         let right_node = ast2_at(&ss->asts, right);
+         let block = tu_catch(astABlock, right_node, return_err("ARRAY_NEEDS_ABLOCK"));
+         let items = ast2_block_children(ss->alloc, &ss->asts, block.start);
+         if (items.len != 1) return_err("ARRAY_INDEX_ONE_ARG");
          let d = scope_add_value(ss, s, TV(T(*arr.t, .isref = true)));
-         let r = try_err(lower, (ss, s, block.items[0]));
+         let r = try_err(lower, (ss, s, items.ptr[0]));
          if (!Type_isint(scope_find(ss, s, r)->t)) return_err("ARRAY_INDEX_NON_INT");
          scope_add_inst(ss, s, (ir)tu_of(ir_array, {.d = d, .r = r, .l = left}));
          d;
@@ -58,44 +63,45 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, ast *right,
       (c_ast, _, ({
          u32 ovl = 0;
          if (opNumber == opNumbers.dot) {
-           ast *empty = ({
-             static ast empty = (ast)tu_of(astEmptyStatement, {});
-             &empty;
-           });
            let self = scope_find(ss, s, left)->v.c_ast;
-           iflet_tu (let m, astString, *right) {
-             ast *res = empty;
-             if (self && tu_is(astOp, *self) && m.len >= 2 && m.ptr[0] == '"' && m.ptr[m.len - 1] == '"') {
-               let op = tu_catch(astOp, *self);
+           let right_node = ast2_at(&ss->asts, right);
+           iflet_tu (let m, astString, right_node) {
+             let ms = ast2_text(ss, m);
+             astidx res = 0;
+             if (self && tu_is(astOp, ast2_at(&ss->asts, self)) && ms.len >= 2 && ms.ptr[0] == '"' && ms.ptr[ms.len - 1] == '"') {
+               let self_node = ast2_at(&ss->asts, self);
+               let op = tu_catch(astOp, self_node);
                union {
                  u32 n;
                  char s[sizeof(u32)];
                } spelling = {};
-               memcpy(spelling.s, m.ptr + 1, m.len - 2);
+               memcpy(spelling.s, ms.ptr + 1, ms.len - 2);
                if (op.number_rep == spelling.n) res = self;
              }
-             ovl = scope_add_value(ss, s, TV_ast(res));
-           } else iflet_tu (let m, astId, *right) {
-             ast *res = empty;
+             ovl = scope_add_value(ss, s, TV_ast(res ?: ast2_make_empty(ss)));
+           } else iflet_tu (let m, astId, right_node) {
+             let ms = ast2_text(ss, m);
+             astidx res = 0;
              if (self)
-               iflet_tu (let op, astOp, *self) {
-                 if (fptr_eq(m, "opleft")) res = op.left ?: empty;
-                 else if (fptr_eq(m, "opright")) res = op.right ?: empty;
+               iflet_tu (let op, astOp, ast2_at(&ss->asts, self)) {
+                 if (fptr_eq(ms, "opleft")) res = ast2_child(&ss->asts, op.left_right);
+                 else if (fptr_eq(ms, "opright")) res = ast2_child(&ss->asts, op.left_right + 1);
                }
-             if (res == empty && self)
+             if (!res && self)
                res = tu_match_exp(
-                   *self,
-                   (astOp, _, /*    */ fptr_eq(m, "op") /*    */ ? self : empty),
-                   (astId, _, /*    */ fptr_eq(m, "id") /*    */ ? self : empty),
-                   (astDecl, _, /*  */ fptr_eq(m, "decl") /*  */ ? self : empty),
-                   (astNumber, _, /**/ fptr_eq(m, "number") /**/ ? self : empty),
-                   (astString, _, /**/ fptr_eq(m, "string") /**/ ? self : empty),
-                   (astPBlock, _, /**/ fptr_eq(m, "pblock") /**/ ? self : empty),
-                   (astBBlock, _, /**/ fptr_eq(m, "bblock") /**/ ? self : empty),
-                   (astABlock, _, /**/ fptr_eq(m, "ablock") /**/ ? self : empty),
-                   (astEmptyStatement, _, empty),
+                   ast2_at(&ss->asts, self),
+                   (astOp, _, /*    */ fptr_eq(ms, "op") /*    */ ? self : (astidx)0),
+                   (astId, _, /*    */ fptr_eq(ms, "id") /*    */ ? self : (astidx)0),
+                   (astDecl, _, /*  */ fptr_eq(ms, "decl") /*  */ ? self : (astidx)0),
+                   (astNumber, _, /**/ fptr_eq(ms, "number") /**/ ? self : (astidx)0),
+                   (astString, _, /**/ fptr_eq(ms, "string") /**/ ? self : (astidx)0),
+                   (astPBlock, _, /**/ fptr_eq(ms, "pblock") /**/ ? self : (astidx)0),
+                   (astBBlock, _, /**/ fptr_eq(ms, "bblock") /**/ ? self : (astidx)0),
+                   (astABlock, _, /**/ fptr_eq(ms, "ablock") /**/ ? self : (astidx)0),
+                   (astEmpty, _, (astidx)0),
+                   (astNull, _, (astidx)0),
                );
-             ovl = scope_add_value(ss, s, TV_ast(res));
+             ovl = scope_add_value(ss, s, TV_ast(res ?: ast2_make_empty(ss)));
            }
          } else if (opNumber == opNumbers.eq) {
            // "checking against string for id. for asts, do it like java":
@@ -107,10 +113,10 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, ast *right,
            iflet_tu (let arr, r_arr, other->t.t) {
              if (self) {
                fptr spelling = tu_match_exp(
-                   *self,
-                   (astId, id, /*     */ id),
-                   (astNumber, num, /*  */ num),
-                   (astString, str, /*  */ str),
+                   ast2_at(&ss->asts, self),
+                   (astId, id, /*     */ ast2_text(ss, id)),
+                   (astNumber, num, /*  */ ast2_text(ss, num)),
+                   (astString, str, /*  */ ast2_text(ss, str)),
                    (default, (fptr){})
                );
                if (spelling.len && spelling.ptr[0] == '"') // string nodes still carry their quotes
@@ -129,7 +135,6 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, ast *right,
   return result;
 }
 
-fptr astLit_str(astLit l) { return tu_match_exp(l, (astIdLit, l, l), (astStrLit, l, l), (astNumLit, l, l)); }
 r_bitfield find_inner_bitfield(TypeTree t) {
   return tu_match_exp(
       t,
@@ -146,9 +151,9 @@ r_struct find_inner_struct(TypeTree t) {
       (default, (r_struct) nullptr)
   );
 }
-u32 lower_dot errs(superscope *ss, scope *s, u32 left, ast *right, astLit lit) {
+u32 lower_dot errs(superscope *ss, scope *s, u32 left, astidx right, astLit lit) {
   let l = scope_find(ss, s, left);
-  let name = astLit_str(lit);
+  let name = astLit_str(ss, lit);
 
   if (tu_is(c_type, l->t.t)) {
     let target = try_err(value_asType, (ss, *l));
@@ -156,10 +161,10 @@ u32 lower_dot errs(superscope *ss, scope *s, u32 left, ast *right, astLit lit) {
       if_decl (let info, moxmap_get(ss->type_info, tag.name))
         if_decl (let idx, moxmap_get((*info)->named, name))
           return scope_add_value(ss, s, *scope_find(ss, *info, *idx));
-    return_err_extras("NO_MEMBER", ss_errprint(ss, *right, "{Type} has no member {slice(c8)}", target, name).ptr);
+    return_err("NO_MEMBER");
   }
 
-  if (l->t.ptr_level > 1) return_err_extras("DOT_UNSUPPORTED", ss_errprint(ss, *right, "{Type} does not support dot", l->t).ptr);
+  if (l->t.ptr_level > 1) return_err("DOT_UNSUPPORTED");
 
   iflet_tu (let tag, r_tag, l->t.t)
     if_decl (let info, moxmap_get(ss->type_info, tag.name))
@@ -171,7 +176,7 @@ u32 lower_dot errs(superscope *ss, scope *s, u32 left, ast *right, astLit lit) {
     foreach (let item, mList_iter(st)) {
       if (fptr_eq(item.name, name)) {
         if (Type_is_comptime(item.t))
-          return_err_extras("NO_STORAGE", ss_errprint(ss, *right, "{slice(c8)} has no storage; its type has no name to look it up by", name).ptr);
+          return_err("NO_STORAGE");
         Type rt = item.t;
         rt.isref = true;
         let d = scope_add_value(ss, s, TV(rt));
@@ -194,7 +199,7 @@ u32 lower_dot errs(superscope *ss, scope *s, u32 left, ast *right, astLit lit) {
     }
   }
 
-  return_err_extras("NO_MEMBER", ss_errprint(ss, *right, "{Type} has no member {slice(c8)}", l->t, name).ptr);
+  return_err("NO_MEMBER");
 }
 typedef enum {
   math_mul = enop_mul,
@@ -243,7 +248,7 @@ u32 lower_math(superscope *ss, scope *s, u32 left, u32 right, math_operation op)
   scope_add_inst(ss, s, (ir)tu_of(ir_rawop, {.r = left, .l = right, .d = d, .o = opNumber}));
   return d;
 }
-u32 lower_op errs(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) {
+u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber) {
   // these are not overloadable
   // dot probably coming soon
   switch_tuple(
@@ -265,9 +270,9 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) 
          // ->
          // @uqot a @qot b
          let argument = scope_find(ss, s, try_err(lower_builtin_qot, (ss, s, right)));
-         if (Type_cmp(TV_ast(nullptr).t, argument->t)) return_err_extras("EXPECTED_AST", ss_errprint(ss, right, "expected ast, got {Type}", argument->t).ptr);
+         if (Type_cmp(TV_ast(0).t, argument->t)) return_err("EXPECTED_AST");
          let result = scope_find(ss, s, try_err(lower_call, (ss, s, left, argument->v.c_ast)));
-         if (Type_cmp(TV_ast(nullptr).t, result->t)) return_err_extras("EXPECTED_AST", ss_errprint(ss, right, "expected ast, got {Type}", argument->t).ptr);
+         if (Type_cmp(TV_ast(0).t, result->t)) return_err("EXPECTED_AST");
          if (!result->v.c_ast) return_err("EXPECTED_AST");
          return try_err(lower, (ss, s, result->v.c_ast));
        })),
@@ -292,7 +297,7 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) 
       (enop_call, try_err(lower_call, (ss, s, left, right))),
       (enop_dot, ({
          P$(tu_match_exp(
-                *right,
+                ast2_at(&ss->asts, right),
                 (astId, id, (astLit)tu_of(astIdLit, id)),
                 (astString, str, (astLit)tu_of(astStrLit, str)),
                 (astNumber, num, (astLit)tu_of(astNumLit, num)),
@@ -319,6 +324,6 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) 
       (enop_neq, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right)), math_neq)),
       (enop_leq, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right)), math_leq)),
   );
-  if (!res) error_print(right, "something went wrong {} , {} , {ast}", left, opNumber, right);
+  if (!res) return_err("LOWER_FAILED");
   return res;
 }

@@ -95,7 +95,8 @@ static inline void scope_add_inst(superscope *env, scope *s, ir i) {
     msList_push(env->alloc, s->instructions, i);
 }
 static inline void scope_bind(superscope *env, scope *s, u32 idx, fptr name) {
-  if (moxmap_get(s->named, name)) error_print(name.ptr, "already bound {slice(c8)}", name);
+  // if (moxmap_get(s->named, name)) ss_error_at_ptr(env, name.ptr, snprint(env->alloc, "already bound {slice(c8)}", name));
+  assertMessage(!moxmap_get(s->named, name));
   assertMessage(idx <= msList_len(s->values) + s->start, "%zu <= %zu + %zu", idx, msList_len(s->values), s->start);
   moxmap_set(s->named, name, idx);
 }
@@ -130,9 +131,9 @@ static inline u32 ss_get_named_failable_noref(superscope *env, scope *s, fptr n)
   }
   return 0;
 }
-static inline u32 ss_get_named(superscope *env, scope *s, fptr n) {
+static inline u32 ss_get_named errs(superscope *env, scope *s, fptr n) {
   let val = ss_get_named_failable_noref(env, s, n);
-  if (!val) error_print(n.ptr, "unbound identifier {slice(c8)}", n);
+  if (!val) return_err("UNBOUND_ID");
   let vo = scope_find(env, s, val);
   if (vo->t.isref) return val;
   if (Type_is_comptime(vo->t)) return scope_add_value(env, s, *vo);
@@ -140,10 +141,9 @@ static inline u32 ss_get_named(superscope *env, scope *s, fptr n) {
   scope_add_inst(env, s, (ir)tu_of(ir_getref, {.d = res, .l = val}));
   return res;
 }
-// for assignment targets: the bound register itself, no copy/ref, so writes stick
-static inline u32 ss_get_named_mut(superscope *env, scope *s, fptr n) {
+static inline u32 ss_get_named_mut errs(superscope *env, scope *s, fptr n) {
   let val = ss_get_named_failable_noref(env, s, n);
-  if (!val) error_print(n.ptr, "unbound identifier {slice(c8)}", n);
+  if (!val) return_err("UNBOUND_ID");
   return val;
 }
 
@@ -189,9 +189,12 @@ static inline void irb_cbb(const callbackallocatorhandle *h, void *p) {
   if (p) moxmap_set(_map, p, h->outsize);
 }
 
-static inline superscope *ss_init(allocfn allocator) {
+static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
   // clang-format off
   superscope* res = avalue(allocator, ((superscope){
+    .asts = ctx.alist,
+    .plist = ctx.plist,
+    .flist  = ctx.flist,
     .pointers = moxmap_init(allocator, void*, usize),
     .typetrees = moxmap_init(allocator, TypeTree, TypeTree *,TypeTree_cmp_hash),
     .types = moxmap_init(allocator, Type, Type *,Type_cmp_hash),
@@ -253,7 +256,6 @@ static inline superscope *ss_init(allocfn allocator) {
 
 static inline void ss_deInit(superscope *ss) {
   let allocator = ((struct cballocator *)ss->alloc)->allocator;
-  if (ss->errmsg.ptr) slice_free(ss->alloc, ss->errmsg);
   msList_deInit(allocator, ss->thisstack);
   foreach (let it, moxmap_iter(ss->pointers, void *, usize))
     adestroy(allocator, (u8(*)[*it.val])it.key);

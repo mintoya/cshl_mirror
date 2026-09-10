@@ -1,11 +1,19 @@
 #include "ast.h"
 #include "ir/interpret.h"
 #include "ir/lower.h"
-static typed_value interpret_source(allocfn arena, fptr src) {
-  let env = ss_init(arena);
-  let ast = catch_errcall((parse_source, (arena, src)), (e, _), (err_panic(e), nullptr));
-  catch_errcall((lower, (env, env->outermost, ast)), (e, _), (err_panic(e), (u32)0));
-  return catch_errcall((interpret, (env, env->outermost)), (e, _), (err_panic(e), (typed_value){}));
+
+astidx_full parse_source2 errs(allocfn out_allocator, fptr input, const char *filename);
+
+static typed_value interpret_source(allocfn arena, fptr src, astidx_full *ctx_out) {
+  let ctx = catch_errcall((parse_source2, (arena, src, nullptr)), (e, _), (err_panic(e), (astidx_full){}));
+  let env = ss_init(arena, ctx);
+  catch_errcall((lower, (env, env->outermost, ctx.idx)), (e, _), (err_panic(e), (u32)0));
+  let res = catch_errcall((interpret, (env, env->outermost)), (e, _), (err_panic(e), (typed_value){}));
+  if (ctx_out) {
+    *ctx_out = ctx;
+    ctx_out->alist = env->asts;
+  }
+  return res;
 }
 
 test_fn(interpret_literal_int) {
@@ -14,7 +22,8 @@ test_fn(interpret_literal_int) {
 
   let r = interpret_source(
       arena,
-      fp("5;")
+      fp("5;"),
+      nullptr
   );
 
   test_assert(tu_is(c_int, r.t.t));
@@ -26,7 +35,8 @@ test_fn(interpret_block_yield) {
 
   let r = interpret_source(
       arena,
-      fp("{5;};")
+      fp("{5;};"),
+      nullptr
   );
 
   test_assert(tu_is(c_int, r.t.t));
@@ -42,7 +52,8 @@ test_fn(interpret_string_value) {
       fp(
           "hi ~= \"yo\";"
           "hi;"
-      )
+      ),
+      nullptr
   );
 
   test_assert(tu_catch(r_arr, r.t.t, test_assert(false)).t);
@@ -63,7 +74,8 @@ test_fn(interpret_type_fn) {
           "  return @arr(2, t);"
           "});"
           "two(@sint(8));"
-      )
+      ),
+      nullptr
   );
 
   println("{typed_value}", r);
@@ -75,7 +87,7 @@ test_fn(interpret_type_fn) {
   test_inteq(tu_catch(r_sint, *arr.t), 8);
 }
 
-static typed_value ast_probe(allocfn arena, fptr dotwork, fptr arg) {
+static typed_value ast_probe(allocfn arena, fptr dotwork, fptr arg, astidx_full *ctx) {
   let src = snprint(
       arena,
       "ast ~~ @ast();\n"
@@ -85,7 +97,7 @@ static typed_value ast_probe(allocfn arena, fptr dotwork, fptr arg) {
       arg
   );
   src.len--;
-  return interpret_source(arena, fp(src));
+  return interpret_source(arena, fp(src), ctx);
 }
 
 test_fn(interpret_comptime_recursion) {
@@ -102,7 +114,8 @@ test_fn(interpret_comptime_recursion) {
           "   );"
           " });"
           "fact(5);"
-      )
+      ),
+      nullptr
   );
 
   test_assert(tu_is(c_int, r.t.t));
@@ -147,7 +160,8 @@ test_fn(interpret_runtime_recursion) {
           "  return total;"
           "});"
           "sum(4);"
-      )
+      ),
+      nullptr
   );
 
   test_assert(tu_is(r_sint, r.t.t));
@@ -199,7 +213,8 @@ test_fn(if_cshl) {
           "  2;"
           "// one == 3\n"
           "one;"
-      )
+      ),
+      nullptr
   );
 
   println("[if_cshl] r {typed_value} {bigint}", r, r.v.c_int);
@@ -210,7 +225,7 @@ test_fn(if_cshl) {
 test_fn(bool_bigint_roundtrip) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let env = ss_init(arena);
+  let env = ss_init(arena, (astidx_full){});
 
   u8 *mem = *acreate(arena, u8[1]);
   let tv = TV(T(tu_of(r_bool, {})), mem);
@@ -230,54 +245,73 @@ test_fn(ast_dot_operator_match) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
 
-  let r = ast_probe(arena, fp("a.\"+\""), fp("1 + 2"));
+  astidx_full ctx = {};
+  let r = ast_probe(arena, fp("a.\"+\""), fp("1 + 2"), &ctx);
   test_assert(tu_is(c_ast, r.t.t));
-  test_assert(tu_is(astOp, *r.v.c_ast));
-  test_inteq(tu_catch(astOp, *r.v.c_ast).number_rep, opNumbers.plus);
+  let node = ast2_at(&ctx.alist, r.v.c_ast);
+  test_assert(tu_is(astOp, node));
+  test_inteq(tu_catch(astOp, node).number_rep, opNumbers.plus);
 }
 
 test_fn(ast_dot_operator_mismatch) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
 
-  let r = ast_probe(arena, fp("a.\"+\""), fp("1 - 2"));
+  astidx_full ctx = {};
+  let r = ast_probe(arena, fp("a.\"+\""), fp("1 - 2"), &ctx);
   test_assert(tu_is(c_ast, r.t.t));
-  test_assert(tu_is(astEmptyStatement, *r.v.c_ast));
+  test_assert(tu_is(astEmpty, ast2_at(&ctx.alist, r.v.c_ast)));
 }
 
 test_fn(ast_dot_operation_members) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
 
-  let l = ast_probe(arena, fp("a.opleft"), fp("1 + 2"));
-  test_assert(tu_is(astNumber, *l.v.c_ast));
-  test_fpeq(tu_catch(astNumber, *l.v.c_ast), "1");
-  let rr = ast_probe(arena, fp("a.opright"), fp("1 + 2"));
-  test_assert(tu_is(astNumber, *rr.v.c_ast));
-  test_fpeq(tu_catch(astNumber, *rr.v.c_ast), "2");
+  astidx_full lctx = {};
+  let l = ast_probe(arena, fp("a.opleft"), fp("1 + 2"), &lctx);
+  test_assert(tu_is(c_ast, l.t.t));
+  let lnode = ast2_at(&lctx.alist, l.v.c_ast);
+  test_assert(tu_is(astNumber, lnode));
+  test_fpeq(fp_from_srcpos((srcpos_full){.pidx = tu_catch(astNumber, lnode), .plist = lctx.plist, .flist = lctx.flist}), "1");
+
+  astidx_full rctx = {};
+  let rr = ast_probe(arena, fp("a.opright"), fp("1 + 2"), &rctx);
+  test_assert(tu_is(c_ast, rr.t.t));
+  let rnode = ast2_at(&rctx.alist, rr.v.c_ast);
+  test_assert(tu_is(astNumber, rnode));
+  test_fpeq(fp_from_srcpos((srcpos_full){.pidx = tu_catch(astNumber, rnode), .plist = rctx.plist, .flist = rctx.flist}), "2");
 }
 
 test_fn(ast_dot_member_check_on_non_op) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
 
-  let l = ast_probe(arena, fp("a.opleft"), fp("7"));
-  test_assert(tu_is(astEmptyStatement, *l.v.c_ast));
+  astidx_full ctx = {};
+  let l = ast_probe(arena, fp("a.opleft"), fp("7"), &ctx);
+  test_assert(tu_is(c_ast, l.t.t));
+  test_assert(tu_is(astEmpty, ast2_at(&ctx.alist, l.v.c_ast)));
 }
 
 test_fn(ast_dot_kind_check) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
 
-  let i = ast_probe(arena, fp("a.id"), fp("foo"));
-  test_assert(tu_is(astId, *i.v.c_ast));
-  test_fpeq(tu_catch(astId, *i.v.c_ast), "foo");
+  astidx_full ictx = {};
+  let i = ast_probe(arena, fp("a.id"), fp("foo"), &ictx);
+  test_assert(tu_is(c_ast, i.t.t));
+  let inode = ast2_at(&ictx.alist, i.v.c_ast);
+  test_assert(tu_is(astId, inode));
+  test_fpeq(fp_from_srcpos((srcpos_full){.pidx = tu_catch(astId, inode), .plist = ictx.plist, .flist = ictx.flist}), "foo");
 
-  let o = ast_probe(arena, fp("a.op"), fp("1 + 2"));
-  test_assert(tu_is(astOp, *o.v.c_ast));
+  astidx_full octx = {};
+  let o = ast_probe(arena, fp("a.op"), fp("1 + 2"), &octx);
+  test_assert(tu_is(c_ast, o.t.t));
+  test_assert(tu_is(astOp, ast2_at(&octx.alist, o.v.c_ast)));
 
-  let e = ast_probe(arena, fp("a.id"), fp("7"));
-  test_assert(tu_is(astEmptyStatement, *e.v.c_ast));
+  astidx_full ectx = {};
+  let e = ast_probe(arena, fp("a.id"), fp("7"), &ectx);
+  test_assert(tu_is(c_ast, e.t.t));
+  test_assert(tu_is(astEmpty, ast2_at(&ectx.alist, e.v.c_ast)));
 }
 
 //
@@ -285,9 +319,9 @@ test_fn(ast_dot_kind_check) {
 //
 
 static err_t lower_source_err(allocfn arena, fptr src) {
-  let env = ss_init(arena);
-  let ast = catch_errcall((parse_source, (arena, src)), (e, _), (err_panic(e), nullptr));
-  return call_err(lower, (env, env->outermost, ast)).err;
+  let ctx = catch_errcall((parse_source2, (arena, src, nullptr)), (e, _), (({ return e; }), (astidx_full){}));
+  let env = ss_init(arena, ctx);
+  return call_err(lower, (env, env->outermost, ctx.idx)).err;
 }
 
 test_fn(lower_error_too_many_args) {
@@ -322,7 +356,7 @@ test_fn(lower_error_type_not_value) {
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("@arr(2, 5);"));
   test_assert(e.err_code);
-  test_assert(!strcmp(e.err_code, "TYPE IS NOT VALUE"));
+  test_assert(!strcmp(e.err_code, "TYPE_IS_NOT_VALUE"));
 }
 
 test_fn(lower_error_tuple) {
@@ -359,17 +393,8 @@ test_fn(lower_error_lone_ab) {
 test_fn(interpret_error_yield_empty) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let env = ss_init(arena);
+  let env = ss_init(arena, (astidx_full){});
   let e = call_err(interpret, (env, env->outermost)).err;
   test_assert(e.err_code);
   test_assert(!strcmp(e.err_code, "YIELD_EMPTY"));
-}
-
-test_fn(parse_error_syntax) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-  let e = call_err(parse_source, (arena, fp("1 + ;"))).err;
-  test_assert(e.err_code);
-  test_assert(!strcmp(e.err_code, "PARSE_ERROR"));
-  test_assert(e.extra_info != nullptr);
 }

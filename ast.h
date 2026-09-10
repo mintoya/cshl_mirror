@@ -1,307 +1,17 @@
 #pragma once
-#include "wheels/mytypes.h"
+#include "srcpos.h"
+#include "wheels/macros.h"
 #include "wheels/print/print_pre.h"
 #include <assert.h>
-#include <stdio.h>
-#include <string.h>
-#include <wheels/allocator.h>
-#include <wheels/allocators/fbaAllocator.h>
-#include <wheels/assertMessage.h>
 #include <wheels/errable.h>
-#include <wheels/fptr.h>
-#include <wheels/macros.h>
-#include <wheels/print.h>
-#if !defined(_Nullable)
-  #define _Nullable
-#endif
-extern __attribute__((noreturn)) void error_at(u8 *location, fptr message);
-static inline __attribute__((noreturn)) void error_at_sc8(u8 *loc, slice(c8) message) { error_at(loc, (fptr){message.len, (u8 *)message.ptr}); };
-static inline __attribute__((noreturn)) void error_at_str(u8 *loc, char *messag) { error_at(loc, fptr_CSP(messag)); };
 
-#define error_at(loc, message)         \
-  ({                                   \
-    let _msg = message;                \
-    let _loc = loc;                    \
-    u8 *_gloc = match_type(            \
-        _loc,                          \
-        (char *, l, (u8 *)l),          \
-        (u8 *, l, l),                  \
-        (typeof(nullptr), l, (u8 *)0), \
-        (ast, l, ast_loc(l))           \
-    );                                 \
-    _Generic(                          \
-        _msg,                          \
-        char *: (error_at_str),        \
-        slice(c8): (error_at_sc8),     \
-        default: (error_at)            \
-    )(_gloc, _msg);                    \
-  })
-#define error_print(loc, msg, ...)                        \
-  ({                                                      \
-    error_at_sc8(                                         \
-        match_type(                                       \
-            loc,                                          \
-            (char *, l, (u8 *)l),                         \
-            (u8 *, l, l),                                 \
-            (typeof(nullptr), l, (u8 *)0),                \
-            (ast, l, ast_loc(l)),                         \
-            (ast *, l, l ? ast_loc(*l) : nullptr)         \
-        ),                                                \
-        snprint(stdAlloc, msg __VA_OPT__(, ) __VA_ARGS__) \
-    );                                                    \
-  })
+typedef u32 astidx;
+sliceDef(astidx);
+typedef struct
+    //__attribute__((packed))
+    ast ast;
+typedef sglist(ast) astlist;
 
-typedef struct {
-  slice(u8) str;
-} id_str;
-static inline bool id_str_iscid(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
-typePrinter(id_str) {
-  if (fptr_eq(PRINTARGS(), "decode")) {
-    let p = in.str.ptr;
-    while (p < in.str.len + in.str.ptr) {
-      if (*p == '_') {
-        p++;
-        while (p < in.str.len + in.str.ptr && *p != '_') {
-          assertMessage(p + 1 < in.str.len + in.str.ptr);
-          PUTC((char)(((*p - 'a') << 4) | (*(p + 1) - 'a')));
-          p += 2;
-        }
-        p++;
-      } else PUTC((char)*p++);
-    }
-  } else {
-    let p = in.str.ptr;
-    while (p < in.str.len + in.str.ptr) {
-      while (p < in.str.len + in.str.ptr && id_str_iscid(*p))
-        PUTC((char)(*(p++)));
-      if (p < in.str.len + in.str.ptr && !id_str_iscid(*p)) {
-        PUTC((char)'_');
-        while (p < in.str.len + in.str.ptr && !id_str_iscid(*p)) {
-          char c = *(p++);
-          PUTC((char)((((c) >> 4) & 0xf) + 'a'));
-          PUTC((char)((((c) >> 0) & 0xf) + 'a'));
-        }
-        PUTC((char)'_');
-      }
-    }
-  }
-}
-
-//
-// ast {
-typedef struct ast ast;
-tu_def(
-    (ast, u8),
-    // empty statement
-    (astEmptyStatement, nothing_t),
-    // Identifier
-    //  string, u8* ptr & usize len
-    (astId, fptr),
-    // Numbers
-    //  0-9*
-    //  x0-9 + a-f*
-    //  b0-1
-    (astNumber, fptr),
-    // inside of ""
-    (astString, fptr),
-    // (astComment, fptr),
-    // Declarations
-    //  valid states :
-    //    no type         : inferred type, like pi::3.1415926535
-    //    no value        : forward declaration/uninitialized , print : fn(([*]i8),i32);
-    //    no name or type : expression
-    (astDecl, struct { ast * _Nullable name; ast *_Nullable type; ast *_Nullable value; int is_const; }),
-    // Operations
-    // normal math operations, but also function calls and the dot operator
-    // nullable cause in  structtype[.f] left is nullable
-    // literal operators like bor bxor bnor ...
-    (astOp, struct { 
-      typeof(ast*) left,right;
-      union{
-        c8 symLiteral[sizeof(u32)]; 
-        u32 number_rep;
-      }; }),
-
-    // PBlocks
-    // whatever is inside ()
-    // ccomma-separated
-    (astPBlock, struct {u8* loc ; sentList_t(ast *) stmts; }),
-    // Blocks
-    // whatever is inside {}
-    // always semicolon-separated
-    (astBBlock, struct {u8* loc ; sentList_t(ast *) stmts; }),
-    // Blocks
-    // whatever is inside []
-    // always comma-separated
-    (astABlock, struct {u8* loc ; sentList_t(ast *) items; }),
-);
-static_assert(sizeof(ast));
-
-typedef ast *astptr;
-sliceDef(astptr);
-_Static_assert(sizeof(ast));
-typePrinter("astTag", itypeof(ast, tag)) {
-  tu_match_void(
-      ((ast){.tag = in}),
-      (astId, _, PUTS("astId");),
-      (astNumber, _, PUTS("astNum");),
-      (astString, _, PUTS("astStr");),
-      (astDecl, _, PUTS("astDecl");),
-      (astOp, _, PUTS("astOp");),
-      (astBBlock, _, PUTS("astBBlock");),
-      (astPBlock, _, PUTS("astPBlock");),
-      (astABlock, _, PUTS("astABlock");),
-      (astEmptyStatement, _, PUTS("astEmpty");),
-  );
-}
-static inline isize fptr_toi(fptr p) {
-  isize result = 0;
-  int sign = 1;
-
-  for (isize i = 0; i < p.len; i++) {
-    if (p.ptr[i] == ' ') {
-      continue;
-    }
-
-    if (p.ptr[i] == '-') {
-      sign = -1;
-      continue;
-    }
-
-    if (p.ptr[i] >= '0' && p.ptr[i] <= '9') {
-      result = result * 10 + (p.ptr[i] - '0');
-    }
-  }
-
-  return result * sign;
-}
-typePrinter("ast", ast *) {
-  if (!in) {
-    PUTS("(null)");
-    return;
-  }
-
-  tu_match_void(
-      (*in),
-
-      (astId, id, {
-        PUTS("(Id ");
-        USENAMEDPRINTER("slice(c8)", id);
-        // USENAMEDPRINTER("id_str", id);
-        PUTS(")");
-      }),
-
-      (astNumber, num, {
-        PUTS("(Number ");
-        USENAMEDPRINTER("slice(c8)", num);
-        PUTS(")");
-      }),
-
-      (astString, str, {
-        PUTS("(String \"");
-        USENAMEDPRINTER("slice(c8)", str); // assumes escaping
-        PUTS("\")");
-      }),
-
-      (astDecl, decl, {
-        PUTS("(Decl");
-        if (decl.is_const) PUTS(" :const");
-        PUTS(",");
-        USENAMEDPRINTER("ast", decl.name);
-        PUTS(",");
-        USENAMEDPRINTER("ast", decl.type);
-        PUTS(",");
-        USENAMEDPRINTER("ast", decl.value);
-        PUTS(")");
-      }),
-
-      (astOp, op, {
-        PUTS("(Op \"");
-        let s = (char[5]){};
-        let l = op.symLiteral[sizeof(u32) - 1] ? 4 : strlen(op.symLiteral);
-        memcpy(s, op.symLiteral, l);
-        USENAMEDPRINTER("cstr", s + 0);
-        PUTS("\","); // was: PUTS("\" ");
-        USENAMEDPRINTER("ast", op.left);
-        PUTS(","); // was: PUTS(" ");
-        USENAMEDPRINTER("ast", op.right);
-        PUTS(")");
-      }),
-
-      (astPBlock, block, {
-        PUTS("(PBlock");
-        foreach (let stmt, vlap(sentList_vla(block.stmts))) {
-          PUTS(",");
-          USENAMEDPRINTER("ast", stmt);
-        }
-        PUTS(")");
-      }),
-
-      (astBBlock, block, {
-        PUTS("(BBlock");
-        foreach (let stmt, vlap(sentList_vla(block.stmts))) {
-          PUTS(",");
-          USENAMEDPRINTER("ast", stmt);
-        }
-        PUTS(")");
-      }),
-
-      (astABlock, block, {
-        PUTS("(ABlock");
-        foreach (let stmt, vlap(sentList_vla(block.items))) {
-          PUTS(",");
-          USENAMEDPRINTER("ast", stmt);
-        }
-        PUTS(")");
-      }),
-
-      (astEmptyStatement, _, {
-        PUTS("(Empty)");
-      }),
-
-      (default, unreachable())
-  );
-}
-
-// }
-//
-
-static inline u8 *ast_loc(ast a) {
-  return tu_match_exp(
-      a,
-      (astId, s, s.ptr),
-      (astNumber, s, s.ptr),
-      (astString, s, s.ptr),
-
-      (astDecl, d, ast_loc(d.name[0])),
-      (astOp, o, ast_loc(o.right[0])),
-
-      (astPBlock, b, b.loc),
-      (astBBlock, b, b.loc),
-      (astABlock, b, b.loc),
-      (default, (u8 *)nullptr),
-  );
-}
-static inline __attribute__((noreturn)) void error_ast(ast a, slice(c8) message) {
-  error_at(a, message);
-  unreachable();
-}
-extern ast *parse_source errs(allocfn allocator, fptr input);
-
-static inline slice(u8) readFileAlloc(allocfn allocator, const char *filename) {
-  let fileptr = fopen(filename, "rb");
-  assertMessage(fileptr);
-  defer { fclose(fileptr); };
-
-  fseek(fileptr, 0, SEEK_END);
-  usize len = ftell(fileptr);
-  fseek(fileptr, 0, SEEK_SET);
-
-  let resp = acreate(allocator, u8[len ?: 1]);
-  usize len2 = fread(resp, sizeof(u8), len, fileptr);
-  assertMessage(len2 == len);
-  return slice_stat(slice(u8), *resp);
-}
 static struct { // opNumbers
   u32
       call,
@@ -357,4 +67,112 @@ static struct { // opNumbers
   opNumbers.set = /*    */ ((opS){"="}).n;
   opNumbers.iexpand = /**/ ((opS){"'"}).n;
 }
+tu_def(
+    (ast, u8),
+    (astNull, nothing_t),
+    (astEmpty, srcpos),
+    (astId, srcpos),
+    (astString, srcpos),
+    (astNumber, srcpos),
+    (astDecl, struct {
+      // list of name type and value all next to eachother startign at idx
+      astidx name_type_value;
+      bool isconst; // weather ~ or = is used
+    }),
+    (astOp, struct {
+      // left and right next to eaachother
+      astidx left_right;
+      union {
+        c8 symliteral[sizeof(u32)];
+        u32 number_rep;
+      }; //
+    }),
+    // starting from start, null-termintaed
+    // could remove pos if all of tthem were garunteed to have at least one member
+    (astABlock, struct { srcpos pos;astidx start; }), // []
+    (astBBlock, struct { srcpos pos;astidx start; }), // {}
+    (astPBlock, struct { srcpos pos;astidx start; }), // ()
+);
+static_assert(((ast){}).tag == TU_TAG(astNull)); // sentinel
+static_assert(sizeof(ast), "");                  // 12, 9 if packed
+static inline srcpos srcpos_ast(ast a, astlist alist) {
+  return tu_match_exp(
+      a,
+      (astNull, _, (srcpos)0),
 
+      (astEmpty, a, a),
+      (astId, a, a),
+      (astString, a, a),
+      (astNumber, a, a),
+      (astABlock, b, b.pos),
+      (astBBlock, b, b.pos),
+      (astPBlock, b, b.pos),
+      // clang-format off
+      (astOp, op, ({
+         let off = op.left_right - 1;
+         srcpos_ast(sglist_get(alist, off) , alist )
+         ?: srcpos_ast(sglist_get(alist, off + 1) ,alist);
+       })),
+      (astDecl, d, ({
+         let off = d.name_type_value - 1;
+         srcpos_ast(sglist_get(alist, off)  ,alist )
+         ?: srcpos_ast(sglist_get(alist, off + 1),alist )
+         ?: srcpos_ast(sglist_get(alist, off + 2),alist );
+       })),
+      // clang-format on
+  );
+}
+typedef struct {
+  astidx idx;
+  astlist alist;
+  poslist plist;
+  filelist flist;
+} astidx_full;
+typePrinter(astidx_full) {
+  if (!in.idx) return PUTS("(null)");
+  tu_match_void(
+      sglist_get(in.alist, in.idx - 1),
+      (astNull, _, PUTS("(null)")),
+      (astEmpty, _, PUTS("(empty)")),
+      (astId, id, PUTS("(Id "), USENAMEDPRINTER("slice(c8)", fp_from_srcpos((srcpos_full){id, in.plist, in.flist})), PUTS(")");),
+      (astString, id, PUTS("(Str "), USENAMEDPRINTER("slice(c8)", fp_from_srcpos((srcpos_full){id, in.plist, in.flist})), PUTS(")");),
+      (astNumber, id, PUTS("(Num "), USENAMEDPRINTER("slice(c8)", fp_from_srcpos((srcpos_full){id, in.plist, in.flist})), PUTS(")");),
+      (astDecl, decl, {
+        PUTS("(Dcl");
+        if (decl.isconst) PUTS(" :const");
+        PUTS(",");
+        USETYPEPRINTER(astidx_full, P$(in, ($.idx = decl.name_type_value, $))), PUTS(",");
+        USETYPEPRINTER(astidx_full, P$(in, ($.idx = decl.name_type_value + 1, $))), PUTS(",");
+        USETYPEPRINTER(astidx_full, P$(in, ($.idx = decl.name_type_value + 2, $))), PUTS(")");
+      }),
+      (astOp, op, {
+        PUTS("(Op \"");
+        let s = (char[5]){};
+        let l = op.symliteral[sizeof(u32) - 1] ? 4 : strlen(op.symliteral);
+        memcpy(s, op.symliteral, l);
+        USENAMEDPRINTER("cstr", s + 0);
+        PUTS("\",");
+
+        USETYPEPRINTER(astidx_full, P$(in, ($.idx = op.left_right, $))), PUTS(",");
+        USETYPEPRINTER(astidx_full, P$(in, ($.idx = op.left_right + 1, $))), PUTS(")");
+      }),
+      (astPBlock, block, {
+        PUTS("(PBlock");
+        for (let idx = block.start - 1; !tu_is(astNull, sglist_get(in.alist, idx)); idx++)
+          idx == block.start - 1 ?: PUTS(","), USETYPEPRINTER(astidx_full, P$(in, ($.idx = idx + 1, $)));
+        PUTS(")");
+      }),
+      (astABlock, block, {
+        PUTS("(ABlock");
+        for (let idx = block.start - 1; !tu_is(astNull, sglist_get(in.alist, idx)); idx++)
+          idx == block.start - 1 ?: PUTS(","), USETYPEPRINTER(astidx_full, P$(in, ($.idx = idx + 1, $)));
+        PUTS(")");
+      }),
+      (astBBlock, block, {
+        PUTS("(BBlock");
+        for (let idx = block.start - 1; !tu_is(astNull, sglist_get(in.alist, idx)); idx++)
+          idx == block.start - 1 ?: PUTS(","), USETYPEPRINTER(astidx_full, P$(in, ($.idx = idx + 1, $)));
+        PUTS(")");
+      }),
+  );
+}
