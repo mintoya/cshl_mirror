@@ -1,14 +1,3 @@
-// tree-sitter -> ast adapter.
-// unlike the old pointer ast (deleted), nodes live in a flat astlist arena and
-// children are stored BY VALUE in consecutive slots :
-//   decl : arena[idx]     = name,  arena[idx+1] = type, arena[idx+2] = value
-//   op   : arena[idx]     = left,  arena[idx+1] = right
-//   block: arena[start..] = children, terminated by an astNull node
-// indices are 1-based astidx into the arena (see ast.h). a node's own entry
-// is pushed by its parent (or by parse_source2 for the root) and nested child
-// runs always land in the arena BEFORE their parent's slots, keeping every
-// block's run of children contiguous. absent children are stored as astNull,
-// which srcpos_ast maps to 0 so the ?: chains in ast.h fall through.
 #include "ast.h"
 #include "wheels/allocator.h"
 #include "wheels/macros.h"
@@ -19,26 +8,18 @@ extern const TSLanguage *tree_sitter_cshl(void);
 
 static ast null_ast() { return (ast)tu_of(astNull, {}); }
 
-// payload for PARSE_ERROR : the byte offset of the offending node. handlers
-// render it however they want via the callback (see parse_err_print below).
 typedef struct {
   u32 byte;
 } parse_err_info;
 
-static void parse_err_print(void *userdata) {
-  fprintf(stdout, "Syntax error at byte %u", ((parse_err_info *)userdata)->byte);
-}
+static void parse_err_print(void *userdata) { fprintf(stdout, "Syntax error at byte %u", ((parse_err_info *)userdata)->byte); }
 
-// register the byte range of a ts node as a srcpos (1-based index into plist)
 static srcpos register_pos(poslist *plist, u32 fileIndex, TSNode n) {
   u32 start = ts_node_start_byte(n);
   sglist_push(*plist, {.fidx = fileIndex, .offset = start, .length = ts_node_end_byte(n) - start});
   return (srcpos)plist->len;
 }
 
-// converts a ts node into its ast2 value. the node's child slots are pushed
-// into alist before returning, so the returned value is a single entry that
-// its parent stores by value.
 static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u32 fileIndex, const u8 *source, TSNode ts_node) {
   if (ts_node_is_null(ts_node) || !ts_node_is_named(ts_node) || ts_node_is_error(ts_node) || ts_node_is_missing(ts_node))
     return_err_print("PARSE_ERROR", parse_err_print, avalue(allocator, ((parse_err_info){.byte = ts_node_start_byte(ts_node)})));
@@ -126,9 +107,6 @@ static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u3
   assertMessage(false, "unhandled node %s", type);
 }
 
-// parses input into the ast2 arena and returns the root index along with the
-// lists needed to resolve srcpos (ast nodes, positions and files). safe to
-// call multiple times (appends to the same lists).
 astidx_full parse_source2 errs(allocfn out_allocator, fptr input, const char *filename) {
   astidx_full res = {
       .alist = {.allocator = out_allocator},
@@ -136,8 +114,6 @@ astidx_full parse_source2 errs(allocfn out_allocator, fptr input, const char *fi
       .flist = {.allocator = out_allocator},
   };
 
-  // register the source as a "file" so srcpos can later be resolved back to
-  // file/line/col and to the original text
   sglist_push(res.flist, {.filename = filename ?: "<source>", .filecontent = input, .fileptr = nullptr});
   u32 fileIndex = (u32)res.flist.len; // 1-based, see fp_from_srcpos
 
