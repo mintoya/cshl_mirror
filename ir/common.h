@@ -273,8 +273,8 @@ static inline bool Type_isint(Type t) {
 
 static inline Type value_asType errs(superscope *ss, typed_value t) {
   if (!tu_is(c_type, t.t.t))
-    return_err("TYPE IS NOT VALUE");
-  if (!t.v.c_type) return_err("UNKNOWN TYPE");
+    return_err("TYPE_IS_NOT_VALUE");
+  if (!t.v.c_type) return_err("UNKNOWN_TYPE");
   return *t.v.c_type;
 }
 static inline typed_value Type_asValue(superscope *s, Type t) { return TV_type(ss_getType(s, t)); }

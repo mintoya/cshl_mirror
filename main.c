@@ -100,10 +100,7 @@ cmd_main(
     print_wfO(sexplike, nullptr, "{astidx_full}\n", ctx);
 
   if (execute) {
-    let env = ss_init(allocator);
-    env->asts = ctx.alist;
-    env->plist = ctx.plist;
-    env->flist = ctx.flist;
+    let env = ss_init(allocator, ctx);
     catch_errcall((lower, (env, env->outermost, ctx.idx)), (e, _), (err_panic(e), (u32)0));
     print_wf(sexplike, "{scope}\n", *env->outermost);
     // interpret(env,env->outermost);

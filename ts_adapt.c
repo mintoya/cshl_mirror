@@ -12,7 +12,7 @@ static ast null_ast() { return (ast)tu_of(astNull, {}); }
 
 static void __attribute__((noreturn)) printerr_point(void *userdata) {
   let epoint = (TSPoint *)&userdata;
-  fprintf(stderr, "Syntax error at byte line %u colun %u", epoint->row, epoint->column);
+  fprintf(stderr, "Syntax error line %u column %u", epoint->row + 1, epoint->column + 1);
   assertMessage(false);
 }
 

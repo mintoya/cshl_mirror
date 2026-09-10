@@ -356,7 +356,7 @@ test_fn(lower_error_type_not_value) {
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("@arr(2, 5);"));
   test_assert(e.err_code);
-  test_assert(!strcmp(e.err_code, "TYPE IS NOT VALUE"));
+  test_assert(!strcmp(e.err_code, "TYPE_IS_NOT_VALUE"));
 }
 
 test_fn(lower_error_tuple) {
