@@ -9,9 +9,9 @@ static fptr ts_node_str(const u8 *src, TSNode n) {
   assertMessage(!ts_node_is_null(n));
   return P$(ts_node_start_byte(n), ((fptr){ts_node_end_byte(n) - $, (u8 *)src + $}));
 }
-static ast *ts_to_ast(allocfn allocator, const u8 *source, TSNode ts_node) {
+static ast *ts_to_ast errs(allocfn allocator, const u8 *source, TSNode ts_node) {
   if (!ts_node_is_named(ts_node) || ts_node_is_null(ts_node) || ts_node_is_error(ts_node) || ts_node_is_missing(ts_node))
-    error_at((u8 *)source + ts_node_start_byte(ts_node), "Syntax error encountered");
+    return_err_extras("PARSE_ERROR", snprint(allocator, "Syntax error at byte {}", ts_node_start_byte(ts_node)).ptr);
   let type = ts_node_type(ts_node);
   if (!strcmp(type, "empty_statement"))
     return avalue(allocator, (ast)tu_of(astEmptyStatement, {}));
@@ -32,9 +32,9 @@ static ast *ts_to_ast(allocfn allocator, const u8 *source, TSNode ts_node) {
         ((ast)tu_of(
             astDecl,
             {
-                .name = !ts_node_is_null(name_node) ? ts_to_ast(allocator, source, name_node) : nullptr,
-                .type = !ts_node_is_null(type_node) ? ts_to_ast(allocator, source, type_node) : nullptr,
-                .value = !ts_node_is_null(value_node) ? ts_to_ast(allocator, source, value_node) : nullptr,
+                .name = !ts_node_is_null(name_node) ? try_err(ts_to_ast, (allocator, source, name_node)) : nullptr,
+                .type = !ts_node_is_null(type_node) ? try_err(ts_to_ast, (allocator, source, type_node)) : nullptr,
+                .value = !ts_node_is_null(value_node) ? try_err(ts_to_ast, (allocator, source, value_node)) : nullptr,
                 .is_const = !ts_node_is_null(assign_op) ? source[ts_node_start_byte(assign_op)] == '~' : false,
             }
         ))
@@ -46,8 +46,8 @@ static ast *ts_to_ast(allocfn allocator, const u8 *source, TSNode ts_node) {
     TSNode right_node = ts_node_child_by_field_name(ts_node, "right", 5);
     TSNode op_node = ts_node_child_by_field_name(ts_node, "operator", 8);
 
-    ast *left_ast = ts_node_is_null(left_node) ? 0 : ts_to_ast(allocator, source, left_node);
-    ast *right_ast = ts_node_is_null(right_node) ? 0 : ts_to_ast(allocator, source, right_node);
+    ast *left_ast = ts_node_is_null(left_node) ? 0 : try_err(ts_to_ast, (allocator, source, left_node));
+    ast *right_ast = ts_node_is_null(right_node) ? 0 : try_err(ts_to_ast, (allocator, source, right_node));
 
     let opNode = avalue(allocator, (ast)tu_of(astOp, {.left = left_ast, .right = right_ast, .number_rep = 0}));
 
@@ -78,16 +78,16 @@ static ast *ts_to_ast(allocfn allocator, const u8 *source, TSNode ts_node) {
     for (u32 i = 0, rc = 0; i < count; i++) {
       let child = ts_node_named_child(ts_node, i);
       if (strcmp(ts_node_type(child), "comment"))
-        rp[++rc] = ts_to_ast(allocator, source, child);
+        rp[++rc] = try_err(ts_to_ast, (allocator, source, child));
     }
     return rp[0];
   } else assertMessage(false, "unhandled node %s", type);
 }
-ast *parse_source(allocfn out_allocator, fptr input) {
+ast *parse_source errs(allocfn out_allocator, fptr input) {
   TSParser *parser = ts_parser_new();
   defer { ts_parser_delete(parser); };
   ts_parser_set_language(parser, tree_sitter_cshl());
   TSTree *tree = ts_parser_parse_string(parser, NULL, (const char *)input.ptr, input.len);
   defer { ts_tree_delete(tree); };
-  return ts_to_ast(out_allocator, input.ptr, ts_tree_root_node(tree));
+  return try_err(ts_to_ast, (out_allocator, input.ptr, ts_tree_root_node(tree)));
 }

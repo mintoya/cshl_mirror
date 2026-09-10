@@ -7,6 +7,7 @@
 #include <wheels/allocator.h>
 #include <wheels/allocators/fbaAllocator.h>
 #include <wheels/assertMessage.h>
+#include <wheels/errable.h>
 #include <wheels/fptr.h>
 #include <wheels/macros.h>
 #include <wheels/print.h>
@@ -285,7 +286,7 @@ static inline __attribute__((noreturn)) void error_ast(ast a, slice(c8) message)
   error_at(a, message);
   unreachable();
 }
-extern ast *parse_source(allocfn allocator, fptr input);
+extern ast *parse_source errs(allocfn allocator, fptr input);
 
 static inline slice(u8) readFileAlloc(allocfn allocator, const char *filename) {
   let fileptr = fopen(filename, "rb");

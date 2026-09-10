@@ -56,11 +56,11 @@ i8 slice_typed_value_cmp_hash(const void *a, const void *b) {
 }
 
 static inline Type function_item_type errs(superscope *ss, scope *s, ast *item) {
-  let decl = tu_catch(astDecl, *item, error_print(item, "function parameter must be a decl"));
-  if (!decl.name) error_print(item, "function parameter needs a name");
-  if (!decl.type) error_print(item, "function parameter needs a type");
+  let decl = tu_catch(astDecl, *item, return_err("PARAM_NOT_DECL"));
+  if (!decl.name) return_err("PARAM_NO_NAME");
+  if (!decl.type) return_err("PARAM_NO_TYPE");
   let name = try_err(id_from_ast, (ss, s, decl.name));
-  let t = try_err(value_asType, (try_err(temporary_interpret, (ss, s, decl.type))));
+  let t = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, decl.type))));
 
   typed_value placeholder;
   if (Type_is_comptime(t)) {
@@ -92,7 +92,7 @@ u32 lower_function errs(superscope *ss, scope *s, astPBlock args, ast *retT, ast
   {
     foreach (let p, span(params.ptr, params.len))
       mList_push(signature, try_err(function_item_type, (ss, arg_scope, *p)));
-    mList_push(signature, try_err(value_asType, (try_err(temporary_interpret, (ss, arg_scope, retT)))));
+    mList_push(signature, try_err(value_asType, (ss, try_err(temporary_interpret, (ss, arg_scope, retT)))));
   }
   let temp = (ast)tu_of(astPBlock, args);
   println(
@@ -148,7 +148,7 @@ static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_
   }
 
   let ret_value = try_err(temporary_interpret, (ss, spec, function_item->retT));
-  instance.ret = try_err(value_asType, (ret_value));
+  instance.ret = try_err(value_asType, (ss, ret_value));
   function_item->instances[spec_number].ret = instance.ret;
 
   try_err(lower, (ss, spec, function_item->body));
@@ -194,7 +194,7 @@ static u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, ast *
     argptrs.ptr[index] = lead;
   }
   if (mList_len(generic_signature) != msList_len(value_list) + 1)
-    error_print(args, "unexpected arg length");
+    return_err_extras("WRONG_ARG_COUNT", ss_errprint(ss, args, "expected {} args, got {}", mList_len(generic_signature) - 1, msList_len(value_list)).ptr);
   foreach (let l, span(value_list, msList_len(value_list)))
     l->v.value = (!Type_is_comptime(l->t) && l->v.value) ? nullptr : l->v.value;
   return try_err(lower_specialized, (

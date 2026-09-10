@@ -11,7 +11,7 @@ u32 lower_call_extra errs(superscope *ss, scope *s, u32 left, u32 first, ast *ar
   let l = scope_find(ss, s, left);
   iflet_tu (let fn, c_fun, l->t.t)
     return try_err(lower_function_call_with, (ss, s, left, args, first));
-  error_print(args, "unsupported : call on {*:typed_value}", l);
+  return_err_extras("UNSUPPORTED_CALL", ss_errprint(ss, args, "unsupported : call on {*:typed_value}", l).ptr);
 }
 u32 lower_call errs(superscope *ss, scope *s, u32 left, ast *args) {
   let l = scope_find(ss, s, left);
@@ -19,7 +19,7 @@ u32 lower_call errs(superscope *ss, scope *s, u32 left, ast *args) {
     return try_err(lower_builtin, (ss, s, builtin, args));
   iflet_tu (let fn, c_fun, l->t.t)
     return try_err(lower_function_call, (ss, s, left, args));
-  error_print(args, "unsupported call on {*:typed_value}", l);
+  return_err_extras("UNSUPPORTED_CALL", ss_errprint(ss, args, "unsupported call on {*:typed_value}", l).ptr);
 }
 tu_def(
     (astLit, u8),
@@ -35,12 +35,12 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, ast *right,
       (default, (u32)0),
       (r_arr, arr, ({ // array index
                       // no bounds checking, because there is no pointer arithmatic
-         if (opNumber != opNumbers.call) error_at(*right, "array does not support this operation");
-         let block = tu_catch(astABlock, *right, error_at(*right, "array does not support this call"));
-         if (sentList_len(block.items) != 1) error_at(*right, "expected [N]");
+         if (opNumber != opNumbers.call) return_err("ARRAY_NO_OP");
+         let block = tu_catch(astABlock, *right, return_err("ARRAY_NEEDS_ABLOCK"));
+         if (sentList_len(block.items) != 1) return_err("ARRAY_INDEX_ONE_ARG");
          let d = scope_add_value(ss, s, TV(T(*arr.t, .isref = true)));
          let r = try_err(lower, (ss, s, block.items[0]));
-         if (!Type_isint(scope_find(ss, s, r)->t)) error_print(*right, "index into array with non-integer");
+         if (!Type_isint(scope_find(ss, s, r)->t)) return_err("ARRAY_INDEX_NON_INT");
          scope_add_inst(ss, s, (ir)tu_of(ir_array, {.d = d, .r = r, .l = left}));
          d;
        })),
@@ -151,15 +151,15 @@ u32 lower_dot errs(superscope *ss, scope *s, u32 left, ast *right, astLit lit) {
   let name = astLit_str(lit);
 
   if (tu_is(c_type, l->t.t)) {
-    let target = try_err(value_asType, (*l));
+    let target = try_err(value_asType, (ss, *l));
     iflet_tu (let tag, r_tag, target.t)
       if_decl (let info, moxmap_get(ss->type_info, tag.name))
         if_decl (let idx, moxmap_get((*info)->named, name))
           return scope_add_value(ss, s, *scope_find(ss, *info, *idx));
-    error_print(*right, "{Type} has no member {slice(c8)}", target, name);
+    return_err_extras("NO_MEMBER", ss_errprint(ss, *right, "{Type} has no member {slice(c8)}", target, name).ptr);
   }
 
-  if (l->t.ptr_level > 1) error_print(*right, "{Type} does not support dot", l->t);
+  if (l->t.ptr_level > 1) return_err_extras("DOT_UNSUPPORTED", ss_errprint(ss, *right, "{Type} does not support dot", l->t).ptr);
 
   iflet_tu (let tag, r_tag, l->t.t)
     if_decl (let info, moxmap_get(ss->type_info, tag.name))
@@ -171,7 +171,7 @@ u32 lower_dot errs(superscope *ss, scope *s, u32 left, ast *right, astLit lit) {
     foreach (let item, mList_iter(st)) {
       if (fptr_eq(item.name, name)) {
         if (Type_is_comptime(item.t))
-          error_print(*right, "{slice(c8)} has no storage; its type has no name to look it up by", name);
+          return_err_extras("NO_STORAGE", ss_errprint(ss, *right, "{slice(c8)} has no storage; its type has no name to look it up by", name).ptr);
         Type rt = item.t;
         rt.isref = true;
         let d = scope_add_value(ss, s, TV(rt));
@@ -194,7 +194,7 @@ u32 lower_dot errs(superscope *ss, scope *s, u32 left, ast *right, astLit lit) {
     }
   }
 
-  error_print(*right, "{Type} has no member {slice(c8)}", l->t, name);
+  return_err_extras("NO_MEMBER", ss_errprint(ss, *right, "{Type} has no member {slice(c8)}", l->t, name).ptr);
 }
 typedef enum {
   math_mul = enop_mul,
@@ -265,10 +265,10 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, ast *right, u32 opNumber) 
          // ->
          // @uqot a @qot b
          let argument = scope_find(ss, s, try_err(lower_builtin_qot, (ss, s, right)));
-         if (Type_cmp(TV_ast(nullptr).t, argument->t)) error_print(right, "expected ast, got {Type}", argument->t);
+         if (Type_cmp(TV_ast(nullptr).t, argument->t)) return_err_extras("EXPECTED_AST", ss_errprint(ss, right, "expected ast, got {Type}", argument->t).ptr);
          let result = scope_find(ss, s, try_err(lower_call, (ss, s, left, argument->v.c_ast)));
-         if (Type_cmp(TV_ast(nullptr).t, result->t)) error_print(right, "expected ast, got {Type}", argument->t);
-         assertMessage(result->v.c_ast, "macro call didn't materialize an ast");
+         if (Type_cmp(TV_ast(nullptr).t, result->t)) return_err_extras("EXPECTED_AST", ss_errprint(ss, right, "expected ast, got {Type}", argument->t).ptr);
+         if (!result->v.c_ast) return_err("EXPECTED_AST");
          return try_err(lower, (ss, s, result->v.c_ast));
        })),
       (default, ),

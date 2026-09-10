@@ -35,6 +35,10 @@ typedef struct function {
 struct superscope {
   allocfn alloc;
 
+  fptr file;        // source buffer, error locations are stored as offsets into it
+  usize errloc;     // byte offset of the last ss_errprint location, (usize)-1 if none
+  slice(c8) errmsg; // reserved error-message slot, reused by ss_errprint
+
   moxmap(void *, usize) pointers;
   moxmap(TypeTree, TypeTree *) typetrees;
   moxmap(Type, Type *) types;
@@ -44,6 +48,30 @@ struct superscope {
   msList(c_fun) fnctx;
   scope *outermost;
 };
+// formats an error message into the superscope's reserved slot, freeing the
+// previous message if any, and returns it. messages live in ss->alloc instead
+// of stdAlloc, and the slot is reused so they don't pile up. loc is optional
+// (nullable) and, when given, its byte offset within ss->file is recorded in
+// ss->errloc (resolving it to line/col is left to the caller, later).
+#define ss_errprint(ss, loc, fmt, ...) ({                                         \
+  let _ss = (ss);                                                                 \
+  if (_ss->errmsg.ptr) slice_free(_ss->alloc, _ss->errmsg);                       \
+  let _body = snprint(_ss->alloc, fmt __VA_OPT__(, ) __VA_ARGS__);                \
+  u8 *_loc = match_type(                                                          \
+      (loc),                                                                      \
+      (char *, _l, (u8 *)_l),                                                     \
+      (u8 *, _l, _l),                                                             \
+      (typeof(nullptr), _l, (u8 *)0),                                             \
+      (ast, _l, ast_loc(_l)),                                                     \
+      (ast *, _l, _l ? ast_loc(*_l) : nullptr)                                    \
+  );                                                                              \
+  _ss->errloc = (_loc && _ss->file.len && _ss->file.ptr)                          \
+                    ? (usize)(_loc - _ss->file.ptr)                               \
+                    : (usize)-1;                                                  \
+  _ss->errmsg = _body;                                                            \
+  _ss->errmsg;                                                                    \
+})
+
 scope *scope_inferior(superscope *b, scope *s);
 void scope_destroy(superscope *b, scope *s);
 u32 scope_add_value(superscope *env, scope *s, typed_value v);
@@ -211,9 +239,9 @@ static inline bool Type_isint(Type t) {
          );
 }
 
-static inline Type value_asType errs(typed_value t) {
+static inline Type value_asType errs(superscope *ss, typed_value t) {
   if (!tu_is(c_type, t.t.t))
-    return_err_extras("TYPE IS NOT VALUE", snprint(stdAlloc, "tried to get type from {Type}", t.t).ptr);
+    return_err_extras("TYPE IS NOT VALUE", ss_errprint(ss, nullptr, "tried to get type from {Type}", t.t).ptr);
   if (!t.v.c_type) return_err("UNKNOWN TYPE");
   return *t.v.c_type;
 }

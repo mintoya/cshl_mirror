@@ -253,6 +253,7 @@ static inline superscope *ss_init(allocfn allocator) {
 
 static inline void ss_deInit(superscope *ss) {
   let allocator = ((struct cballocator *)ss->alloc)->allocator;
+  if (ss->errmsg.ptr) slice_free(ss->alloc, ss->errmsg);
   msList_deInit(allocator, ss->thisstack);
   foreach (let it, moxmap_iter(ss->pointers, void *, usize))
     adestroy(allocator, (u8(*)[*it.val])it.key);

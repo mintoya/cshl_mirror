@@ -70,15 +70,14 @@ u32 lower errs(superscope *ss, scope *s, ast *a) {
       (astDecl, dcl, ({
          let type = T(tu_of(c_any, {}));
          if (dcl.type) {
-           let t = try_err(temporary_interpret, (ss, s, dcl.type));
-           type = try_err(value_asType, (t));
+           let t = try_err(temporary_interpret, (ss, s, dcl.type));            type = try_err(value_asType, (ss, t));
          }
          u32 value = 0;
          if (dcl.value) {
            value = try_err(lower, (ss, s, dcl.value));
            assertMessage(value);
          } else {
-           assertMessage(dcl.type, "must have type or value");
+           if (!dcl.type) return_err_extras("DECL_NO_TYPE_OR_VALUE", ss_errprint(ss, a, "must have type or value").ptr);
            value = scope_add_value(ss, s, TV(type));
          }
          value = coerce_type(ss, s, value, type);
@@ -93,6 +92,6 @@ u32 lower errs(superscope *ss, scope *s, ast *a) {
          value;
        })),
   );
-  if (!res) return_err_extras("STATEMENT_NULL", snprint(stdAlloc, "{ast} resulted in null somehow", a).ptr);
+  if (!res) return_err_extras("STATEMENT_NULL", ss_errprint(ss, a, "{ast} resulted in null somehow", a).ptr);
   return res;
 }

@@ -78,7 +78,7 @@ cmd_main(
     println("file : \n{slice(c8)}\n", buffer);
   println("(log) after fread : {dbga_stats}", debugAllocator_stats(allocator));
 
-  let ast = parse_source(allocator, buffer);
+  let ast = catch_errcall((parse_source, (allocator, buffer)), (e, _), (err_panic(e), nullptr));
   println("(log) after ast : {dbga_stats}", debugAllocator_stats(allocator));
 
   if (echo_ast)
@@ -86,6 +86,7 @@ cmd_main(
 
   if (execute) {
     let env = ss_init(allocator);
+    env->file = buffer;
     catch_errcall((lower, (env, env->outermost, ast)), (e, _), (err_panic(e), (u32)0));
     print_wf(sexplike, "{scope}\n", *env->outermost);
     // interpret(env,env->outermost);

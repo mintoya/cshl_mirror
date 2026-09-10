@@ -3,7 +3,8 @@
 #include "ir/lower.h"
 static typed_value interpret_source(allocfn arena, fptr src) {
   let env = ss_init(arena);
-  catch_errcall((lower, (env, env->outermost, parse_source(arena, src))), (e, _), (err_panic(e), (u32)0));
+  let ast = catch_errcall((parse_source, (arena, src)), (e, _), (err_panic(e), nullptr));
+  catch_errcall((lower, (env, env->outermost, ast)), (e, _), (err_panic(e), (u32)0));
   return catch_errcall((interpret, (env, env->outermost)), (e, _), (err_panic(e), (typed_value){}));
 }
 
@@ -277,4 +278,98 @@ test_fn(ast_dot_kind_check) {
 
   let e = ast_probe(arena, fp("a.id"), fp("7"));
   test_assert(tu_is(astEmptyStatement, *e.v.c_ast));
+}
+
+//
+// error tests : lowering/interpretation should fail with a specific err code
+//
+
+static err_t lower_source_err(allocfn arena, fptr src) {
+  let env = ss_init(arena);
+  let ast = catch_errcall((parse_source, (arena, src)), (e, _), (err_panic(e), nullptr));
+  return call_err(lower, (env, env->outermost, ast)).err;
+}
+
+test_fn(lower_error_too_many_args) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "two ~~ @fn((t ~type),type,{\n"
+          "  return @arr(2, t);\n"
+          "});\n"
+          "two(@sint(8), @sint(16));"
+      )
+  );
+  test_assert(e.err_code);
+  test_assert(!strcmp(e.err_code, "WRONG_ARG_COUNT"));
+  test_assert(e.line > 0);
+  test_assert(e.file != nullptr);
+}
+
+test_fn(lower_error_builtin_arg_count) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("@cif(1);"));
+  test_assert(e.err_code);
+  test_assert(!strcmp(e.err_code, "WRONG_ARG_COUNT"));
+}
+
+test_fn(lower_error_type_not_value) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("@arr(2, 5);"));
+  test_assert(e.err_code);
+  test_assert(!strcmp(e.err_code, "TYPE IS NOT VALUE"));
+}
+
+test_fn(lower_error_tuple) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("(1, 2);"));
+  test_assert(e.err_code);
+  test_assert(!strcmp(e.err_code, "TUPLE"));
+}
+
+test_fn(lower_error_id_requires_astid) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "point ~type~ @struct{ x ~@int(); };\n"
+          "@offsetof(point, 5);"
+      )
+  );
+  test_assert(e.err_code);
+  test_assert(!strcmp(e.err_code, "ID_REQUIRES_ASTID"));
+}
+
+test_fn(lower_error_lone_ab) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("[1, 2];"));
+  test_assert(e.err_code);
+  test_assert(!strcmp(e.err_code, "LONE_AB"));
+}
+
+test_fn(interpret_error_yield_empty) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let env = ss_init(arena);
+  let e = call_err(interpret, (env, env->outermost)).err;
+  test_assert(e.err_code);
+  test_assert(!strcmp(e.err_code, "YIELD_EMPTY"));
+}
+
+test_fn(parse_error_syntax) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = call_err(parse_source, (arena, fp("1 + ;"))).err;
+  test_assert(e.err_code);
+  test_assert(!strcmp(e.err_code, "PARSE_ERROR"));
+  test_assert(e.extra_info != nullptr);
 }
