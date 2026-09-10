@@ -61,7 +61,7 @@ int main(int argc, char **argv) {
     return puts("chdir failed idk"), 1;
   if (system(strcats_space(((char[256]){}), CC, "-o", "nob" EXTENSION, "nob.c", "-w")))
     return puts("failed to run nob for wheels dependency"), 1;
-  return execl("nob" EXTENSION, "");
+  return execl("nob" EXTENSION, "nob" EXTENSION, NULL);
   printf("done cloning dependencies, re-run nob");
   return 0;
 }
