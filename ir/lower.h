@@ -92,6 +92,8 @@ u32 lower errs(superscope *ss, scope *s, astidx a) {
       (astBBlock, bb, ({
          let res = scope_add_value(ss, s, TV(T(tu_of(c_any, {}))));
          let sc = scope_inferior(ss, s);
+         sc->is_bare = s->is_bare; // an unconditional block stays part of the module
+         sc->stable_root = sc->is_bare ? sc : s->stable_root;
          scope_add_inst(ss, s, (ir)tu_of(ir_block, sc));
          let stmts = ast_block_children(ss->asts, a);
          foreach (let i, span(stmts.start, stmts.len))

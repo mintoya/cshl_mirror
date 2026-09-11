@@ -19,6 +19,8 @@ struct scope {
   msList(typed_value) values;
   moxmap(fptr, u32) named;
   u32 start;
+  bool is_bare;
+  scope *stable_root;
 };
 sliceDef(scope);
 
@@ -88,16 +90,6 @@ TypeTree *ss_getTypeTree(superscope *ss, TypeTree t);
 typed_value *scope_find(superscope *env, scope *s, u32 idx);
 scope *scope_copy(superscope *ss, scope *s);
 static inline void scope_bind(superscope *env, scope *s, u32 idx, fptr name);
-// TODO: this is not good enough,
-// functions should own all their referanced values completley, then tehir scope can be independant and only linked to outermost at some instant
-static inline void scope_lift_functions(superscope *ss, usize first, scope *from, scope *to) {
-  foreach (let f, span(ss->functions + first, msList_len(ss->functions) - first))
-    for (scope *sc = f->defscope; sc; sc = sc->parent)
-      if (sc == from) {
-        f->defscope = to;
-        break;
-      }
-}
 #define T(...) ((Type){.t = __VA_ARGS__})
 #define TV(...) ((typed_value){__VA_ARGS__})
 
@@ -110,11 +102,11 @@ bool try_interpret errs /*             */ (superscope *ss, scope *s, ir inst);
 
 typed_value temporary_interpret errs(superscope *ss, scope *s, astidx a) {
   let work = scope_inferior(ss, s);
-  usize first_fn = msList_len(ss->functions);
   defer { scope_destroy(ss, work); };
   try_err(lower, (ss, work, a));
   let result = try_err(interpret, (ss, work));
-  scope_lift_functions(ss, first_fn, work, s);
+  // functions defined in `work` root at s->stable_root, so destroying it cannot
+  // leave them dangling
   if (tu_is(c_int, result.t.t) && result.v.c_int)
     result.v.c_int = BInt.copy(ss->alloc, result.v.c_int); // lift it into this scope
   return result;

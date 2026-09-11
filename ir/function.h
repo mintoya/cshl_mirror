@@ -82,13 +82,16 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
       .params = params,
       .retT = retT,
       .body = body,
-      .defscope = s,
+      .defscope = s->stable_root ? s->stable_root : s,
       .instances = msList_init(ss->alloc, function_instance),
       .mp = moxmap_init(ss->alloc, slice(typed_value), u32, slice_typed_value_cmp_hash),
   });
   // clang-format on
 
-  let arg_scope = scope_inferior(ss, s);
+  // the body and its signature resolve against the closure root, same as the body will,
+  // so a function can never see a frame it was written inside of
+  let root = s->stable_root ? s->stable_root : s;
+  let arg_scope = scope_inferior(ss, root);
   c_fun signature = mList_init(ss->alloc, mList_iType(signature));
   let res = scope_add_value(ss, s, TV(T(tu_of(c_fun, signature)), {.c_fun.fn = msList_len(ss->functions)}));
   // generate example signature
@@ -120,8 +123,9 @@ static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_
   }
 
   let spec_number = msList_len(function_item->instances);
-  let stable_key = slice_alloc(ss->alloc, typed_value, key.len);
-  memcpy(stable_key.ptr, key.ptr, key.len * sizeof(*key.ptr));
+  let stable_key = key.len ? slice_alloc(ss->alloc, typed_value, key.len) : (slice(typed_value)){};
+  if (key.len)
+    memcpy(stable_key.ptr, key.ptr, key.len * sizeof(*key.ptr));
   foreach (let item, span(stable_key.ptr, stable_key.len))
     if (tu_is(c_int, item->t.t) && item->v.c_int)
       item->v.c_int = BInt.copy(ss->alloc, item->v.c_int);
@@ -170,7 +174,7 @@ static u32 lower_function_call_values errs(superscope *ss, scope *s, u32 fn, sli
   if (mList_len(generic_signature) != vals.len + 1) return_err("WRONG_ARG_COUNT");
   let value_list = msList_init(ss->alloc, typed_value);
   defer { msList_deInit(ss->alloc, value_list); };
-  slice(u32) argptrs = slice_alloc(ss->alloc, u32, vals.len);
+  slice(u32) argptrs = vals.len ? slice_alloc(ss->alloc, u32, vals.len) : (slice(u32)){};
   foreach (let i, range(0, vals.len)) {
     let thisitem = mList_arr(generic_signature)[i];
     u32 lead = try_err(coerce_type, (ss, s, vals.ptr[i], thisitem));
@@ -189,7 +193,8 @@ static u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astid
   let function_arglist = function_item->params;
   let value_list = msList_init(ss->alloc, typed_value);
   defer { msList_deInit(ss->alloc, value_list); };
-  slice(u32) argptrs = slice_alloc(ss->alloc, u32, mList_len(generic_signature) - 1);
+  usize nargs = mList_len(generic_signature) - 1;
+  slice(u32) argptrs = nargs ? slice_alloc(ss->alloc, u32, nargs) : (slice(u32)){};
 
   usize idx = 0;
   if (lead) {

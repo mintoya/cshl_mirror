@@ -39,11 +39,9 @@ static u32 lower_builtin_cif errs(superscope *ss, scope *s, astidx args) {
   if (!EQUAL_ANY(list.len, 2, 3)) return_err("WRONG_ARG_COUNT");
   let value = ({
     let ns = scope_inferior(ss, s);
-    usize first_fn = msList_len(ss->functions);
     defer { scope_destroy(ss, ns); };
     try_err(lower_truthy, (ss, ns, list.start + 0));
     let v = try_err(interpret, (ss, ns));
-    scope_lift_functions(ss, first_fn, ns, s);
     v;
   });
   if (!tu_is(r_bool, value.t.t)) return_err("CIF_CONDITION_NOT_BOOL");
@@ -372,7 +370,11 @@ static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
     unique_type_name(ss),
   }));
   // clang-format on
-  let working_scope = scope_inferior(ss, s);
+  // struct members resolve against the module, not against whatever frame the @struct
+  // was written in, and methods defined here close over the struct environment
+  let root = s->stable_root ? s->stable_root : s;
+  let working_scope = scope_inferior(ss, root);
+  working_scope->stable_root = working_scope;
   msList_push(ss->alloc, ss->thisstack, {ss_getType(ss, T(*_this))});
   defer { msList_pop(ss->thisstack); };
   moxmap_set(ss->type_info, tu_catch(r_tag, *_this).name, working_scope);

@@ -152,10 +152,13 @@ void interpret_call errs(irstate st, ir_call c) {
   foreach (let it, span(ftype.ptr, ftype.len - 1))
     *it = irstate_find(st, c.args.ptr[it - ftype.ptr])->t;
   st.fnctx.ftype = ftype;
-  st.fnctx.args = acreate(st.ss->alloc, value_store[st.fnctx.ftype.len - 1]);
-  defer { adestroy(st.ss->alloc, (value_store(*)[st.fnctx.ftype.len - 1]) st.fnctx.args); };
-  foreach (let it, span(*st.fnctx.args, st.fnctx.ftype.len - 1))
-    *it = irstate_find(st, c.args.ptr[it - *st.fnctx.args])->v;
+  usize nargs = st.fnctx.ftype.len - 1;
+  // a zero-length allocation is not a valid allocator call, so a no-arg call keeps null args
+  st.fnctx.args = nargs ? acreate(st.ss->alloc, value_store[nargs]) : nullptr;
+  defer { if (nargs) adestroy(st.ss->alloc, (value_store(*)[nargs]) st.fnctx.args); };
+  if (nargs)
+    foreach (let it, span(*st.fnctx.args, nargs))
+      *it = irstate_find(st, c.args.ptr[it - *st.fnctx.args])->v;
   typed_value result = TV(it.ret);
   st.sig = (typeof(st.sig)){0, &result};
 

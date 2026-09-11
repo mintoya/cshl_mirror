@@ -17,6 +17,18 @@ typed_value *scope_find(superscope *env, scope *s, u32 idx) {
     else s = s->parent;
   assertMessage(false, "value %u not found in scope", idx);
 }
+// the scope that actually owns register idx, i.e. where its storage lives
+scope *scope_find_scope(superscope *env, scope *s, u32 idx) {
+  while (s)
+    if (idx > s->start && idx <= s->start + msList_len(s->values))
+      return s;
+    else s = s->parent;
+  assertMessage(false, "value %u not found in scope", idx);
+  return nullptr;
+}
+// globals are bindings in a bare scope under outermost; nothing else survives as
+// module state, so nothing else may hold mutable comptime state
+static inline bool scope_is_global(scope *s) { return s && s->is_bare; }
 
 scope *scope_inferior(superscope *b, scope *s) {
   let res = avalue(
@@ -47,6 +59,7 @@ static scope *scope_copy_deep(superscope *ss, scope *s, scope *parent) {
           .values = msList_initArr(ss->alloc, *msList_vla(s->values)),
           .named = named,
           .start = s->start,
+          .is_bare = s->is_bare,
       })
   );
   // the copy shares bigint pointers with the original, but scope_destroy frees
@@ -206,6 +219,7 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
   // clang-format on
   res->alloc = cba_init(allocator, nullptr, irb_cbb, res->pointers);
   res->outermost = scope_inferior(res, nullptr);
+  res->outermost->is_bare = true;
   struct {
     char *name;
     builtin_id id;

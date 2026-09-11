@@ -87,6 +87,51 @@ test_fn(interpret_type_fn) {
   test_inteq(tu_catch(r_sint, *arr.t), 8);
 }
 
+test_fn(interpret_zero_arg_call) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "seven ~~ @fn (),@int(),{\n"
+          "  return 7;\n"
+          "};\n"
+          "seven();\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(c_int, r.t.t));
+  test_assert(!BInt.cmp(r.v.c_int, BInt.from.i64(arena, 7)));
+}
+
+// a comptime function may mutate module state (see examples/mutate.cshl); the
+// mutation lands in the global, so it is visible to later instantiations
+test_fn(interpret_global_comptime_mutation) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "asize ~= 1;\n"
+          "type ~~ @type();\n"
+          "increasing_array~~@fn((t~type),type,\n"
+          "   return @arr { asize = asize + 1;},t );\n"
+          "a ~increasing_array @sint 8;\n"
+          "b ~increasing_array @uint 16;\n"
+          "b;\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_arr, r.t.t));
+  let arr = tu_catch(r_arr, r.t.t);
+  test_inteq(arr.count, 3); // asize started at 1 and was incremented on each call
+  test_inteq(tu_catch(r_uint, *arr.t), 16);
+}
+
 static typed_value ast_probe(allocfn arena, fptr dotwork, fptr arg, astidx_full *ctx) {
   let src = snprint(
       arena,
@@ -466,6 +511,26 @@ test_fn(lower_error_type_not_value) {
   let e = lower_source_err(arena, fp("@arr(2, 5);"));
   test_assert(e.err_code);
   test_assert(!strcmp(e.err_code, "TYPE_IS_NOT_VALUE"));
+}
+
+test_fn(lower_error_function_cannot_capture_frame) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  // a @fn roots at the module, so a body can never name a variable of the frame it
+  // was written inside of
+  let e = lower_source_err(
+      arena,
+      fp(
+          "outer ~~ @fn (x ~@int()),@int(),{\n"
+          "  hidden ~ @int() = 7;\n"
+          "  inner ~~ @fn (y ~@int()),@int(),{ return hidden; };\n"
+          "  return inner(1);\n"
+          "};\n"
+          "outer(1);\n"
+      )
+  );
+  test_assert(e.err_code);
+  test_assert(!strcmp(e.err_code, "UNBOUND_ID"));
 }
 
 test_fn(lower_error_tuple) {
