@@ -362,6 +362,67 @@ test_fn(struct_operator_overload_vector_equality_false) {
   test_inteq(*(u8 *)r.v.value, 0);
 }
 
+test_fn(struct_operator_overload_self_in_body) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "i ~~ @sint;\n"
+          "vec2 ~type~ @struct{\n"
+          "  Self ~type~ @this();\n"
+          "  x ~ i 32;\n"
+          "  y ~ i 32;\n"
+          "  @id(\"+\") ~~ @fn (self~Self,other~Self),Self,{\n"
+          "    r ~Self;\n"
+          "    r.x = self.x + other.x;\n"
+          "    r.y = self.y + other.y;\n"
+          "    return r;\n"
+          "  };\n"
+          "};\n"
+          "a ~vec2; a.x = 1; a.y = 2;\n"
+          "b ~vec2; b.x = 3; b.y = 4;\n"
+          "c ~vec2~ a + b;\n"
+          "c.x + c.y;\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_sint, r.t.t));
+  test_inteq(tu_catch(r_sint, r.t.t), 32);
+  test_inteq(*(i32 *)r.v.value, 10);
+}
+
+test_fn(struct_cast_overload) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "i ~~ @sint;\n"
+          "wrapped ~type~ @struct{\n"
+          "  Self ~type~ @this();\n"
+          "  v ~ i 32;\n"
+          "  @id(\"@cast\") ~~ @fn (self ~Self, target ~type), @sint(32), {\n"
+          "    return self.v;\n"
+          "  };\n"
+          "};\n"
+          "a ~wrapped; a.v = 7;\n"
+          "b ~i 32~ a;\n"
+          "b;\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_sint, r.t.t));
+  test_inteq(tu_catch(r_sint, r.t.t), 32);
+  test_inteq(*(i32 *)r.v.value, 7);
+}
+
 //
 // error tests
 //

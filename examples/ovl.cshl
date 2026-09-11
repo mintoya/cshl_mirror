@@ -1,0 +1,15 @@
+type ~~ @type();
+i ~~ @sint;
+vec2 ~type~ @struct{
+  Self ~type~ @this();
+  x ~ i 32;
+  y ~ i 32;
+  @id("==") ~~ @fn (self~Self,other~Self),@uint(1),{
+    return (self.x == other.x) and
+           (self.y == other.y);
+  };
+};
+a ~vec2; a.x = 1; a.y = 2;
+c ~vec2; c.x = 3; c.y = 4;
+(a == c);
+

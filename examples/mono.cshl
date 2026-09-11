@@ -14,7 +14,7 @@ hshr2 ~~ @fn (
   i = i shl @sizeof(@typeof(i));
   return i;
 };
-s ~@sint
+s ~~ @sint;
 main ~~ @fn (),s(32),{
   i ~s(32) = 5;
   hshr s(32),i;
