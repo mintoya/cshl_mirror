@@ -50,7 +50,7 @@ scope *scope_find_rootable(superscope *b, scope *s) {
 }
 static scope *scope_copy_deep(superscope *ss, scope *s, scope *parent) {
   if (!s) return nullptr;
-  // oxmap_copy asserts on empty maps, so mint a fresh one for those
+  // TODO: fix oxmap
   moxmap(fptr, u32) named = ((oxmap *)s->named)->keys->length
                                 ? (moxmap(fptr, u32))oxmap_copy(ss->alloc, (oxmap *)s->named)
                                 : moxmap_init(ss->alloc, fptr, u32, cmpfptr);
@@ -66,8 +66,6 @@ static scope *scope_copy_deep(superscope *ss, scope *s, scope *parent) {
           .rootable = s->rootable,
       })
   );
-  // the copy shares bigint pointers with the original, but scope_destroy frees
-  // them, so give the copy its own copies
   foreach (let v, span(res->values, msList_len(res->values)))
     if (tu_is(c_int, v->t.t) && !v->t.isref && v->v.c_int)
       v->v.c_int = BInt.copy(ss->alloc, v->v.c_int);
@@ -104,14 +102,15 @@ u32 scope_add_value(superscope *env, scope *s, typed_value v) {
   return msList_len(s->values) + s->start;
 }
 static inline void scope_add_inst(superscope *env, scope *s, ir i) {
-  if (tu_is(ir_if, i)) {
-    tu_catch(ir_if, i).cnd->rootable = false;
-    tu_catch(ir_if, i).t->rootable = false;
-    tu_catch(ir_if, i).f->rootable = false;
-  } else if (tu_is(ir_while, i)) {
-    tu_catch(ir_while, i).body->rootable = false;
-    tu_catch(ir_while, i).cnd->rootable = false;
-  }
+  if (tu_is(ir_if, i))
+    P$(&tu_catch(ir_if, i),
+       ($->cnd ? $->cnd->rootable = false : 0, $),
+       ($->f ? $->f->rootable = false : 0, $),
+       ($->t ? $->t->rootable = false : 0, $));
+  else if (tu_is(ir_while, i))
+    P$(&tu_catch(ir_while, i),
+       ($->cnd ? $->cnd->rootable = false : 0, $),
+       ($->body ? $->body->rootable = false : 0, $));
   if (!catch_errcall(
           (try_interpret, (env, s, i)),
           _,

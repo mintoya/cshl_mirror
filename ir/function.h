@@ -128,7 +128,7 @@ static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_
       item->v.c_int = BInt.copy(ss->alloc, item->v.c_int);
 
   // copy values to where function was made
-  let spec = scope_inferior(ss, function_item->defscope);
+  let spec = P$(scope_inferior(ss, function_item->defscope), ($->rootable = false, $));
   let instance = (function_instance){.spec = spec, .key = stable_key.ptr, .key_len = stable_key.len};
   moxmap_set(function_item->mp, stable_key, (u32)spec_number);
   msList_push(ss->alloc, function_item->instances, instance);

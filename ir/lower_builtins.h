@@ -38,11 +38,10 @@ static u32 lower_builtin_cif errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
   if (!EQUAL_ANY(list.len, 2, 3)) return_err("WRONG_ARG_COUNT");
   let value = ({
-    let ns = scope_inferior(ss, s);
+    let ns = P$(scope_inferior(ss, s), ($->rootable = false, $));
     defer { scope_destroy(ss, ns); };
     try_err(lower_truthy, (ss, ns, list.start + 0));
-    let v = try_err(interpret, (ss, ns));
-    v;
+    try_err(interpret, (ss, ns));
   });
   if (!tu_is(r_bool, value.t.t)) return_err("CIF_CONDITION_NOT_BOOL");
   if (!value.v.value) return_err("CIF_CONDITION_NOT_COMPTIME");

@@ -101,14 +101,12 @@ typed_value interpret errs /*          */ (superscope *ss, scope *s);
 bool try_interpret errs /*             */ (superscope *ss, scope *s, ir inst);
 
 typed_value temporary_interpret errs(superscope *ss, scope *s, astidx a) {
-  let work = scope_inferior(ss, s);
+  let work = P$(scope_inferior(ss, s), ($->rootable = false, $));
   defer { scope_destroy(ss, work); };
   try_err(lower, (ss, work, a));
   let result = try_err(interpret, (ss, work));
-  // functions defined in `work` root at s->stable_root, so destroying it cannot
-  // leave them dangling
   if (tu_is(c_int, result.t.t) && result.v.c_int)
-    result.v.c_int = BInt.copy(ss->alloc, result.v.c_int); // lift it into this scope
+    result.v.c_int = BInt.copy(ss->alloc, result.v.c_int);
   return result;
 }
 
