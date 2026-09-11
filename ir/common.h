@@ -19,8 +19,7 @@ struct scope {
   msList(typed_value) values;
   moxmap(fptr, u32) named;
   u32 start;
-  bool is_bare;
-  scope *stable_root;
+  bool rootable;
 };
 sliceDef(scope);
 
@@ -83,6 +82,7 @@ static inline astidx ast_make_empty(superscope *ss) {
 }
 
 scope *scope_inferior(superscope *b, scope *s);
+scope *scope_find_rootable(superscope *b, scope *s);
 void scope_destroy(superscope *b, scope *s);
 u32 scope_add_value(superscope *env, scope *s, typed_value v);
 Type *ss_getType(superscope *ss, Type t);
@@ -306,7 +306,6 @@ static inline u32 ss_compileInt(superscope *b, scope *s, fptr in) {
   else result = BInt.from.fptr(b->alloc, 10, in);
   return scope_add_value(b, s, TV_bigint(result));
 }
-
 static inline u32 ss_compileString(superscope *b, scope *s, fptr in) {
   assertMessage(in.len > 1 && in.ptr[0] == '"' && in.ptr[in.len - 1] == '"');
   in = string_escape(b->alloc, in);

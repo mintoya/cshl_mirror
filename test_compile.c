@@ -5,10 +5,10 @@
 astidx_full parse_source errs(allocfn out_allocator, fptr input, const char *filename);
 
 static typed_value interpret_source(allocfn arena, fptr src, astidx_full *ctx_out) {
-  let ctx = catch_errcall((parse_source, (arena, src, nullptr)), (e, _), (err_panic(e), (astidx_full){}));
+  let ctx = catch_errcall((parse_source, (arena, src, nullptr)), e, (err_panic(e), (astidx_full){}));
   let env = ss_init(arena, ctx);
-  catch_errcall((lower, (env, env->outermost, ctx.idx)), (e, _), (err_panic(e), (u32)0));
-  let res = catch_errcall((interpret, (env, env->outermost)), (e, _), (err_panic(e), (typed_value){}));
+  catch_errcall((lower, (env, env->outermost, ctx.idx)), e, (err_panic(e), (u32)0));
+  let res = catch_errcall((interpret, (env, env->outermost)), e, (err_panic(e), (typed_value){}));
   if (ctx_out) {
     *ctx_out = ctx;
     ctx_out->alist = env->asts;
@@ -473,7 +473,7 @@ test_fn(struct_cast_overload) {
 //
 
 static err_t lower_source_err(allocfn arena, fptr src) {
-  let ctx = catch_errcall((parse_source, (arena, src, nullptr)), (e, _), (({ return e; }), (astidx_full){}));
+  let ctx = catch_errcall((parse_source, (arena, src, nullptr)), e, (({ return e; }), (astidx_full){}));
   let env = ss_init(arena, ctx);
   return call_err(lower, (env, env->outermost, ctx.idx)).err;
 }

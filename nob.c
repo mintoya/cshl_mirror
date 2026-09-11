@@ -1,5 +1,5 @@
 #if !defined CC
-  #define CC "gcc"
+  #define CC "clang"
 #endif
 
 #if defined(_WIN32)
@@ -9,7 +9,7 @@
 #endif
 
 #if !defined INPUT_FLAGS
-  #define INPUT_FLAGS "-finstrument-functions"
+  #define INPUT_FLAGS "-finstrument-functions" , "-fdefer-ts"
 #endif
 
 #if __has_include("deps/nob.h/nob.h")

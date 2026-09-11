@@ -26,10 +26,6 @@ scope *scope_find_scope(superscope *env, scope *s, u32 idx) {
   assertMessage(false, "value %u not found in scope", idx);
   return nullptr;
 }
-// globals are bindings in a bare scope under outermost; nothing else survives as
-// module state, so nothing else may hold mutable comptime state
-static inline bool scope_is_global(scope *s) { return s && s->is_bare; }
-
 scope *scope_inferior(superscope *b, scope *s) {
   let res = avalue(
       b->alloc,
@@ -39,10 +35,18 @@ scope *scope_inferior(superscope *b, scope *s) {
           .values = msList_init(b->alloc, typed_value),
           .named = moxmap_init(b->alloc, fptr, u32, cmpfptr),
           .start = s ? s->start + msList_len(s->values) : 0,
+          .rootable = s ? s->rootable : true,
       })
   );
   scope_add_value(b, res, TV(T(tu_of(r_void, {}))));
   return res;
+}
+
+scope *scope_find_rootable(superscope *b, scope *s) {
+  while (!s->rootable)
+    s = s->parent;
+  assertMessage(s);
+  return s;
 }
 static scope *scope_copy_deep(superscope *ss, scope *s, scope *parent) {
   if (!s) return nullptr;
@@ -59,7 +63,7 @@ static scope *scope_copy_deep(superscope *ss, scope *s, scope *parent) {
           .values = msList_initArr(ss->alloc, *msList_vla(s->values)),
           .named = named,
           .start = s->start,
-          .is_bare = s->is_bare,
+          .rootable = s->rootable,
       })
   );
   // the copy shares bigint pointers with the original, but scope_destroy frees
@@ -100,9 +104,17 @@ u32 scope_add_value(superscope *env, scope *s, typed_value v) {
   return msList_len(s->values) + s->start;
 }
 static inline void scope_add_inst(superscope *env, scope *s, ir i) {
+  if (tu_is(ir_if, i)) {
+    tu_catch(ir_if, i).cnd->rootable = false;
+    tu_catch(ir_if, i).t->rootable = false;
+    tu_catch(ir_if, i).f->rootable = false;
+  } else if (tu_is(ir_while, i)) {
+    tu_catch(ir_while, i).body->rootable = false;
+    tu_catch(ir_while, i).cnd->rootable = false;
+  }
   if (!catch_errcall(
           (try_interpret, (env, s, i)),
-          (_, __),
+          _,
           (println("[ERROR] try_interpret encountered an error"), false)
       ))
     msList_push(env->alloc, s->instructions, i);
@@ -219,7 +231,6 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
   // clang-format on
   res->alloc = cba_init(allocator, nullptr, irb_cbb, res->pointers);
   res->outermost = scope_inferior(res, nullptr);
-  res->outermost->is_bare = true;
   struct {
     char *name;
     builtin_id id;

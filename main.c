@@ -55,7 +55,7 @@ cmd_main(
   println("(log) after fread : {dbga_stats}", debugAllocator_stats(allocator));
 
   // parse_source reads the file itself when given a filename, so pass exactly one source
-  let ctx = catch_errcall((parse_source, (allocator, (fptr){}, args[1])), (e, _), (err_panic(e), (astidx_full){}));
+  let ctx = catch_errcall((parse_source, (allocator, (fptr){}, args[1])), e, (err_panic(e), (astidx_full){}));
   println("(log) after ast : {dbga_stats}", debugAllocator_stats(allocator));
 
   if (echo_ast)
@@ -63,7 +63,7 @@ cmd_main(
 
   if (execute) {
     let env = ss_init(allocator, ctx);
-    catch_errcall((lower, (env, env->outermost, ctx.idx)), (e, _), (err_panic(e), (u32)0));
+    catch_errcall((lower, (env, env->outermost, ctx.idx)), e, (err_panic(e), (u32)0));
     print_wf(sexplike, "{scope}\n", *env->outermost);
     // interpret(env,env->outermost);
     // print_wf(sexplike, "{scope}\n", *env->outermost);

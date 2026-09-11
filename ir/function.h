@@ -78,20 +78,17 @@ static inline Type function_item_type errs(superscope *ss, scope *s, astidx item
 u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, astidx body) {
   let params = builtin_arg_list(ss->asts, args);
   // clang-format off
+  let roots = scope_find_rootable(ss,s);
   msList_push(ss->alloc, ss->functions, {
       .params = params,
       .retT = retT,
       .body = body,
-      .defscope = s->stable_root ? s->stable_root : s,
+      .defscope = roots,
       .instances = msList_init(ss->alloc, function_instance),
       .mp = moxmap_init(ss->alloc, slice(typed_value), u32, slice_typed_value_cmp_hash),
   });
   // clang-format on
-
-  // the body and its signature resolve against the closure root, same as the body will,
-  // so a function can never see a frame it was written inside of
-  let root = s->stable_root ? s->stable_root : s;
-  let arg_scope = scope_inferior(ss, root);
+  let arg_scope = scope_inferior(ss, roots);
   c_fun signature = mList_init(ss->alloc, mList_iType(signature));
   let res = scope_add_value(ss, s, TV(T(tu_of(c_fun, signature)), {.c_fun.fn = msList_len(ss->functions)}));
   // generate example signature
