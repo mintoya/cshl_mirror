@@ -149,21 +149,15 @@ void interpret_call errs(irstate st, ir_call c) {
   defer { adestroy(st.ss->alloc, (value_store(*)[st.fnctx.ftype.len - 1]) st.fnctx.args); };
   foreach (let it, span(*st.fnctx.args, st.fnctx.ftype.len - 1))
     *it = irstate_find(st, c.args.ptr[it - *st.fnctx.args])->v;
-  typed_value call_ret = TV(it.ret);
-  st.sig.ret = &call_ret;
+  typed_value result = TV(it.ret);
+  st.sig.ret = &result;
 
   let ns = scope_copy(st.ss, it.spec);
   defer { scope_destroy(st.ss, ns); };
   try_err(interpret_block, (st, ns));
 
-  typed_value result = {};
-  if (call_ret.v.value) {
-    result = call_ret;
-  } else {
-    if (Type_cmp(T(tu_of(r_void, {})), result.t))
-      return_err("NO_RETURN_NONVOID");
-    result = msList_last(ns->values);
-  }
+  if (!result.v.value && Type_cmp(T(tu_of(r_void, {})), result.t))
+    return_err("NO_RETURN_NONVOID");
 
   let destination = irstate_find(st, c.d);
   destination->t.isconst = false;
