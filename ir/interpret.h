@@ -150,7 +150,7 @@ void interpret_call errs(irstate st, ir_call c) {
   foreach (let it, span(*st.fnctx.args, st.fnctx.ftype.len - 1))
     *it = irstate_find(st, c.args.ptr[it - *st.fnctx.args])->v;
   typed_value result = TV(it.ret);
-  st.sig.ret = &result;
+  st.sig = (typeof(st.sig)){0, &result};
 
   let ns = scope_copy(st.ss, it.spec);
   defer { scope_destroy(st.ss, ns); };

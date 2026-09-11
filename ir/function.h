@@ -111,16 +111,11 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
 static u32 coerce_type(superscope *ss, scope *s, u32 left, Type to);
 static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_value) key, slice(u32) aargs) {
   let function_item = &ss->functions[fn - 1];
-  foreach (let instance, span(function_item->instances, msList_len(function_item->instances))) {
-    if (instance->key_len != key.len) continue;
-    if (!slice_typed_value_cmp_hash(
-            &key,
-            &(slice(typed_value)){key.len, instance->key}
-        )) {
-      let result = scope_add_value(ss, s, TV(instance->ret));
-      scope_add_inst(ss, s, (ir)tu_of(ir_call, {.l = {.fn = fn, .spec = instance - function_item->instances}, .d = result, .args = aargs}));
-      return result;
-    }
+  if_decl (let inst, moxmap_get(function_item->mp, key)) {
+    let instance = &function_item->instances[*inst];
+    let result = scope_add_value(ss, s, TV(instance->ret));
+    scope_add_inst(ss, s, (ir)tu_of(ir_call, {.l = {.fn = fn, .spec = instance - function_item->instances}, .d = result, .args = aargs}));
+    return result;
   }
 
   let spec_number = msList_len(function_item->instances);
@@ -132,6 +127,7 @@ static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_
 
   let spec = scope_inferior(ss, s);
   let instance = (function_instance){.spec = spec, .key = stable_key.ptr, .key_len = stable_key.len};
+  moxmap_set(function_item->mp, stable_key, (u32)spec_number);
   msList_push(ss->alloc, function_item->instances, instance);
 
   foreach (let param, span(key.ptr, key.len)) {
@@ -186,11 +182,9 @@ static u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astid
   foreach (let arg_item, span(alist.start, alist.len)) {
     let index = idx++;
     let thisitem = mList_arr(generic_signature)[index];
-    u32 lead;
-    if (tu_is(c_ast, thisitem.t))
-      lead = scope_add_value(ss, s, TV_ast(arg_item));
-    else lead = try_err(lower, (ss, s, arg_item));
-
+    u32 lead = (tu_is(c_ast, thisitem.t))
+                   ? scope_add_value(ss, s, TV_ast(arg_item))
+                   : try_err(lower, (ss, s, arg_item));
     lead = coerce_type(ss, s, lead, thisitem);
     msList_push(ss->alloc, value_list, *scope_find(ss, s, lead));
     argptrs.ptr[index] = lead;

@@ -138,7 +138,8 @@ test_fn(interpret_comptime_recursion_low) {
           "   );"
           " });"
           "fact(5);"
-      )
+      ),
+      nullptr
   );
 
   test_assert(tu_is(c_int, r.t.t));
@@ -302,6 +303,63 @@ test_fn(ast_dot_kind_check) {
   let e = ast_probe(arena, fp("a.id"), fp("7"), &ectx);
   test_assert(tu_is(c_ast, e.t.t));
   test_assert(tu_is(astEmpty, ast_at(ectx.alist, e.v.c_ast)));
+}
+test_fn(struct_operator_overload_vector_equality_true) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "i ~~ @sint;\n"
+          "vec2 ~type~ @struct{\n"
+          "  Self ~type~ @this();\n"
+          "  x ~ i 32;\n"
+          "  y ~ i 32;\n"
+          "  @id(\"==\") ~~ @fn (self~Self,other~Self),@uint(1),{\n"
+          "    return (self.x == other.x) and (self.y == other.y);\n"
+          "  };\n"
+          "};\n"
+          "a ~vec2; a.x = 1; a.y = 2;\n"
+          "b ~vec2; b.x = 1; b.y = 2;\n"
+          "(a == b);\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_uint, r.t.t));
+  test_inteq(tu_catch(r_uint, r.t.t), 1);
+  test_inteq(*(u8 *)r.v.value, 1);
+}
+
+test_fn(struct_operator_overload_vector_equality_false) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "i ~~ @sint;\n"
+          "vec2 ~type~ @struct{\n"
+          "  Self ~type~ @this();\n"
+          "  x ~ i 32;\n"
+          "  y ~ i 32;\n"
+          "  @id(\"==\") ~~ @fn (self~Self,other~Self),@uint(1),{\n"
+          "    return (self.x == other.x) and (self.y == other.y);\n"
+          "  };\n"
+          "};\n"
+          "a ~vec2; a.x = 1; a.y = 2;\n"
+          "c ~vec2; c.x = 3; c.y = 4;\n"
+          "(a == c);\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_uint, r.t.t));
+  test_inteq(tu_catch(r_uint, r.t.t), 1);
+  test_inteq(*(u8 *)r.v.value, 0);
 }
 
 //

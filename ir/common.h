@@ -53,6 +53,7 @@ struct superscope {
   msList(function) functions;
   msList(c_fun) fnctx;
   scope *outermost;
+  u32 foldempty;
 };
 
 static inline ast ast_at(astlist al, astidx idx) {
@@ -73,10 +74,9 @@ static inline astidx ast_make_id(superscope *ss, fptr text) {
   sglist_push(ss->asts, (ast)tu_of(astId, (srcpos)ss->plist.len));
   return (astidx)ss->asts.len;
 }
-// a fresh astEmpty node (the "nothing here" sentinel asts return from dot lookups)
 static inline astidx ast_make_empty(superscope *ss) {
-  sglist_push(ss->asts, (ast)tu_of(astEmpty, 0));
-  return (astidx)ss->asts.len;
+  if (ss->foldempty) return ss->foldempty;
+  else return ss->foldempty = (sglist_push(ss->asts, tu_of(astEmpty, 0)), ss->asts.len);
 }
 
 scope *scope_inferior(superscope *b, scope *s);
@@ -97,7 +97,6 @@ typed_value interpret errs /*          */ (superscope *ss, scope *s);
 // if true inst was interpreted
 bool try_interpret errs /*             */ (superscope *ss, scope *s, ir inst);
 
-#define allocates(...) (__VA_ARGS__)
 typed_value temporary_interpret errs(superscope *ss, scope *s, astidx a) {
   let work = scope_inferior(ss, s);
   defer { scope_destroy(ss, work); };
@@ -297,7 +296,7 @@ static inline u32 ss_compileInt(superscope *b, scope *s, fptr in) {
   bigint result = nullptr;
   if (fptr_eq(front, "0x"))
     result = BInt.from.fptr(b->alloc, 16, slice_split(in, (2, -1))[0]);
-  else if (fptr_eq(front, "0x"))
+  else if (fptr_eq(front, "0b"))
     result = BInt.from.fptr(b->alloc, 2, slice_split(in, (2, -1))[0]);
   else result = BInt.from.fptr(b->alloc, 10, in);
   return scope_add_value(b, s, TV_bigint(result));

@@ -6,11 +6,13 @@
 #include "wheels/fptr.h"
 #include "wheels/macros.h"
 #include "wheels/mytypes.h"
+#include "wheels/print/print_pre.h"
 #include <string.h>
 u32 lower_call_extra errs(superscope *ss, scope *s, u32 left, u32 first, astidx args) {
   let l = scope_find(ss, s, left);
   iflet_tu (let fn, c_fun, l->t.t)
     return try_err(lower_function_call_with, (ss, s, left, args, first));
+  println("calling {Type}", l->t);
   return_err("UNSUPPORTED_CALL");
 }
 u32 lower_call errs(superscope *ss, scope *s, u32 left, astidx args) {
@@ -52,11 +54,11 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx righ
       (r_tag, t, ({
          let result = (u32)0;
          if_decl (let info, moxmap_get(ss->type_info, t.name)) {
-           char op_str[5] = {};
+           char op_str[sizeof(u32) + 1] = {};
            memcpy(op_str, &opNumber, 4);
-           if_decl (let item, moxmap_get((*info)->named, fp((char *)op_str))) {
-             TODO("handle operator overloading, depends on functions though");
-           }
+           if_decl (let item, moxmap_get((*info)->named, fp((char *)op_str)))
+             let method = scope_add_value(ss, s, *scope_find(ss, (*info), *item)),
+                 result = try_err(lower_call_extra, (ss, s, method, left, right));
          }
          result;
        })),
@@ -112,16 +114,16 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx righ
            bool res = false;
            iflet_tu (let arr, r_arr, other->t.t) {
              if (self) {
-               fptr spelling = tu_match_exp(
+               fptr word = tu_match_exp(
                    ast_at(ss->asts, self),
-                   (astId, id, /*     */ ast_text(ss, id)),
+                   (astId, id, /*       */ ast_text(ss, id)),
                    (astNumber, num, /*  */ ast_text(ss, num)),
                    (astString, str, /*  */ ast_text(ss, str)),
                    (default, (fptr){})
                );
-               if (spelling.len && spelling.ptr[0] == '"') // string nodes still carry their quotes
-                 spelling = string_escape(ss->alloc, spelling);
-               res = fptr_eq(spelling, ((fptr){arr.count, (u8 *)other->v.value}));
+               if (word.len && word.ptr[0] == '"') // string nodes still carry their quotes
+                 word = string_escape(ss->alloc, word);
+               res = fptr_eq(word, ((fptr){arr.count, (u8 *)other->v.value}));
              }
            } else if (tu_is(c_ast, other->t.t)) {
              res = self == other->v.c_ast; // java-style identity
