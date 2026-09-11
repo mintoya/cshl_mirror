@@ -47,6 +47,11 @@ static typed_value ir_readthrough(irstate st, u32 idx) {
   t.isref = false;
   return TV(t, *(void **)irstate_mem(st, idx));
 }
+// address of a value's bytes
+static inline void *irstate_data(irstate st, u32 idx) {
+  typed_value tv = ir_readthrough(st, idx);
+  return tv.v.value ? tv.v.value : irstate_mem(st, idx);
+}
 static r_struct ir_find_struct(TypeTree t) {
   return tu_match_exp(t, (r_struct, r, r), (r_tag, r, ir_find_struct(*r.t)), (default, (r_struct) nullptr));
 }
@@ -86,12 +91,14 @@ void interpret_set errs(irstate st, ir_set c) {
       (default, {
         Type dt = d->t;
         dt.isref = false;
-        memcpy(irstate_mem(st, c.d), irstate_mem(st, c.l), Type_sizeof(dt));
+        memcpy(irstate_data(st, c.d), irstate_data(st, c.l), Type_sizeof(dt));
       })
   );
 }
+// at this point no non-integer casts are supported
 void interpret_cast(irstate st, ir_cast c) {
   let d = irstate_find(st, c.d);
+  assertMessage(Type_isint(d->t) || tu_is(r_bool, d->t.t), "non-integer cast reached the interpreter");
   let b = int_as_bigint(st.ss->alloc, ir_readthrough(st, c.l));
   if (tu_is(c_int, d->t.t)) {
     d->v.c_int = b;
@@ -289,7 +296,7 @@ bool try_interpret errs(superscope *ss, scope *s, ir inst) {
   let fold = tu_match_exp(
       inst,
       (ir_rawop, c, (bool)(try_err(try_reg_known, (ss, s, c.l)) && try_err(try_reg_known, (ss, s, c.r)))),
-      (ir_set, c, try_err(try_reg_known, (ss, s, c.l))),
+      (ir_set, c, (bool)(try_err(try_reg_known, (ss, s, c.l)) && !irstate_find(st, c.d)->t.isref)),
       (ir_call, c, ({
          let it = &ss->functions[c.l.fn - 1].instances[c.l.spec];
          if (!Type_is_comptime(it->ret)) return false;

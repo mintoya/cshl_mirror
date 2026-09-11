@@ -33,6 +33,7 @@ typedef struct function {
   astidx_span params;
   astidx retT;
   astidx body;
+  scope *defscope;
   msList(function_instance) instances;
   moxmap(sliceDef(typed_value), u32) mp;
 } function;

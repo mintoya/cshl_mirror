@@ -82,6 +82,7 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
       .params = params,
       .retT = retT,
       .body = body,
+      .defscope = s,
       .instances = msList_init(ss->alloc, function_instance),
       .mp = moxmap_init(ss->alloc, slice(typed_value), u32, slice_typed_value_cmp_hash),
   });
@@ -108,7 +109,7 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
   );
   return res;
 }
-static u32 coerce_type(superscope *ss, scope *s, u32 left, Type to);
+static u32 coerce_type errs(superscope *ss, scope *s, u32 left, Type to);
 static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_value) key, slice(u32) aargs) {
   let function_item = &ss->functions[fn - 1];
   if_decl (let inst, moxmap_get(function_item->mp, key)) {
@@ -125,7 +126,8 @@ static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_
     if (tu_is(c_int, item->t.t) && item->v.c_int)
       item->v.c_int = BInt.copy(ss->alloc, item->v.c_int);
 
-  let spec = scope_inferior(ss, s);
+  // copy values to where function was made
+  let spec = scope_inferior(ss, function_item->defscope);
   let instance = (function_instance){.spec = spec, .key = stable_key.ptr, .key_len = stable_key.len};
   moxmap_set(function_item->mp, stable_key, (u32)spec_number);
   msList_push(ss->alloc, function_item->instances, instance);
@@ -161,6 +163,24 @@ static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_
   // clang-format on
   return result;
 }
+// lower call with already defined values
+static u32 lower_function_call_values errs(superscope *ss, scope *s, u32 fn, slice(u32) vals) {
+  let function_value = *scope_find(ss, s, fn);
+  let generic_signature = tu_catch(c_fun, function_value.t.t);
+  if (mList_len(generic_signature) != vals.len + 1) return_err("WRONG_ARG_COUNT");
+  let value_list = msList_init(ss->alloc, typed_value);
+  defer { msList_deInit(ss->alloc, value_list); };
+  slice(u32) argptrs = slice_alloc(ss->alloc, u32, vals.len);
+  foreach (let i, range(0, vals.len)) {
+    let thisitem = mList_arr(generic_signature)[i];
+    u32 lead = try_err(coerce_type, (ss, s, vals.ptr[i], thisitem));
+    argptrs.ptr[i] = lead;
+    msList_push(ss->alloc, value_list, *scope_find(ss, s, lead));
+  }
+  foreach (let l, span(value_list, msList_len(value_list)))
+    l->v.value = (!Type_is_comptime(l->t) && l->v.value) ? nullptr : l->v.value;
+  return try_err(lower_specialized, (ss, s, function_value.v.c_fun.fn, ((slice(typed_value)){msList_len(value_list), value_list}), argptrs));
+}
 static u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astidx args, u32 lead) {
   let alist = builtin_arg_list(ss->asts, args);
   let function_value = *scope_find(ss, s, fn);
@@ -175,7 +195,7 @@ static u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astid
   if (lead) {
     let index = idx++;
     let first = mList_arr(generic_signature)[index];
-    lead = coerce_type(ss, s, lead, first);
+    lead = try_err(coerce_type, (ss, s, lead, first));
     argptrs.ptr[index] = lead;
     msList_push(ss->alloc, value_list, *scope_find(ss, s, lead));
   }
@@ -185,7 +205,7 @@ static u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astid
     u32 lead = (tu_is(c_ast, thisitem.t))
                    ? scope_add_value(ss, s, TV_ast(arg_item))
                    : try_err(lower, (ss, s, arg_item));
-    lead = coerce_type(ss, s, lead, thisitem);
+    lead = try_err(coerce_type, (ss, s, lead, thisitem));
     msList_push(ss->alloc, value_list, *scope_find(ss, s, lead));
     argptrs.ptr[index] = lead;
   }

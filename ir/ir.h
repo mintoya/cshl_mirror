@@ -17,7 +17,7 @@ tu_def(
     (ir_getref, /* */ struct { u32 l, d; }),                 // d = &l; // but a referance
     (ir_getptr, /* */ struct { u32 l, d; }),                 // d = &l;
     (ir_putptr, /* */ struct { u32 l, d; }),                 // d = *l;
-    (ir_cast, /*   */ struct { u32 l, d; }),                 // d = (typeof(d))l; // integer cast
+    (ir_cast, /*   */ struct { u32 l, d; }),                 // d = (typeof(d))l; // integer cast, the only cast the interpreter sees
     (ir_rawop, /*  */ struct { u32 l, r, d, o; }),           // d = l (o) r;
     (ir_field, /*  */ struct { u32 l, d, i; }),              // d = ref(l.i), specifically runtime, struct members are named but also ordered so u32
     (ir_array, /*  */ struct { u32 l, d, r; }),              // d = ref(l[r]), r is index of variable not index itself
