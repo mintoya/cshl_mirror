@@ -40,9 +40,12 @@ static u32 lower_builtin_cif errs(superscope *ss, scope *s, astidx args) {
   if (!EQUAL_ANY(list.len, 2, 3)) return_err(ARG_COUNT_ERROR);
   let value = ({
     let ns = scope_inferior(ss, s);
+    usize first_fn = msList_len(ss->functions);
     defer { scope_destroy(ss, ns); };
     try_err(lower_truthy, (ss, ns, list.start + 0));
-    try_err(interpret, (ss, ns));
+    let v = try_err(interpret, (ss, ns));
+    scope_rehome_functions(ss, first_fn, ns, s);
+    v;
   });
   if (!tu_is(r_bool, value.t.t)) return_err("CIF_CONDITION_NOT_BOOL");
   if (!value.v.value) return_err("CIF_CONDITION_NOT_COMPTIME");
