@@ -57,8 +57,10 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx righ
            char op_str[sizeof(u32) + 1] = {};
            memcpy(op_str, &opNumber, 4);
            if_decl (let item, moxmap_get((*info)->named, fp((char *)op_str)))
-             let method = scope_add_value(ss, s, *scope_find(ss, (*info), *item)),
-                 result = try_err(lower_call_extra, (ss, s, method, left, right));
+             result = P$(
+                 scope_add_value(ss, s, *scope_find(ss, (*info), *item)),
+                 try_err(lower_call_extra, (ss, s, $, left, right))
+             );
          }
          result;
        })),
