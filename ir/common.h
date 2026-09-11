@@ -88,7 +88,7 @@ TypeTree *ss_getTypeTree(superscope *ss, TypeTree t);
 typed_value *scope_find(superscope *env, scope *s, u32 idx);
 scope *scope_copy(superscope *ss, scope *s);
 static inline void scope_bind(superscope *env, scope *s, u32 idx, fptr name);
-// TODO: this is not good enough, 
+// TODO: this is not good enough,
 // functions should own all their referanced values completley, then tehir scope can be independant and only linked to outermost at some instant
 static inline void scope_lift_functions(superscope *ss, usize first, scope *from, scope *to) {
   foreach (let f, span(ss->functions + first, msList_len(ss->functions) - first))
@@ -386,19 +386,19 @@ static inline astidx_span ast_block_children(astlist al, astidx args) {
   return tu_match_exp(
       ast_at(al, args),
       (astABlock, b, ({
-         let start = b.start, end = start;
+         astidx start = b.start, end = start;
          while (!tu_is(astNull, ast_at(al, end)))
            end++;
          (astidx_span){start, end - start};
        })),
       (astBBlock, b, ({
-         let start = b.start, end = start;
+         astidx start = b.start, end = start;
          while (!tu_is(astNull, ast_at(al, end)))
            end++;
          (astidx_span){start, end - start};
        })),
       (astPBlock, b, ({
-         let start = b.start, end = start;
+         astidx start = b.start, end = start;
          while (!tu_is(astNull, ast_at(al, end)))
            end++;
          (astidx_span){start, end - start};
@@ -408,7 +408,7 @@ static inline astidx_span ast_block_children(astlist al, astidx args) {
 }
 static inline astidx_span builtin_arg_list(astlist al, astidx args) {
   iflet_tu (let block, astPBlock, ast_at(al, args)) {
-    let start = block.start, end = start;
+    astidx start = block.start, end = start;
     while (!tu_is(astNull, ast_at(al, end)))
       end++;
     return (astidx_span){start, end - start};

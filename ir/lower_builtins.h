@@ -4,10 +4,9 @@
 #include "scope.h"
 #include "wheels/macros.h"
 #include "wheels/print/print_pre.h"
-static const char *const ARG_COUNT_ERROR = "WRONG_ARG_COUNT";
 static u32 lower_builtin_fn errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
-  if (list.len != 3) return_err(ARG_COUNT_ERROR);
+  if (list.len != 3) return_err("WRONG_ARG_COUNT");
   let pnode = ast_at(ss->asts, list.start);
   tu_catch(astPBlock, pnode, return_err("EXPECTED_PBLOCK"));
   return try_err(lower_function, (ss, s, list.start, list.start + 1, list.start + 2));
@@ -37,14 +36,14 @@ u32 lower_truthy errs(superscope *ss, scope *s, astidx a) {
 }
 static u32 lower_builtin_cif errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
-  if (!EQUAL_ANY(list.len, 2, 3)) return_err(ARG_COUNT_ERROR);
+  if (!EQUAL_ANY(list.len, 2, 3)) return_err("WRONG_ARG_COUNT");
   let value = ({
     let ns = scope_inferior(ss, s);
     usize first_fn = msList_len(ss->functions);
     defer { scope_destroy(ss, ns); };
     try_err(lower_truthy, (ss, ns, list.start + 0));
     let v = try_err(interpret, (ss, ns));
-    scope_rehome_functions(ss, first_fn, ns, s);
+    scope_lift_functions(ss, first_fn, ns, s);
     v;
   });
   if (!tu_is(r_bool, value.t.t)) return_err("CIF_CONDITION_NOT_BOOL");
@@ -57,7 +56,7 @@ static u32 lower_builtin_cif errs(superscope *ss, scope *s, astidx args) {
 }
 static u32 lower_builtin_if errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
-  if (!EQUAL_ANY(list.len, 2, 3)) return_err(ARG_COUNT_ERROR);
+  if (!EQUAL_ANY(list.len, 2, 3)) return_err("WRONG_ARG_COUNT");
   let cnds = scope_inferior(ss, s);
   let cnd = try_err(lower_truthy, (ss, cnds, list.start + 0));
   let ts = scope_inferior(ss, s);
@@ -69,7 +68,7 @@ static u32 lower_builtin_if errs(superscope *ss, scope *s, astidx args) {
 }
 static u32 lower_builtin_while errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
-  if (!EQUAL_ANY(list.len, 1, 2)) return_err(ARG_COUNT_ERROR);
+  if (!EQUAL_ANY(list.len, 1, 2)) return_err("WRONG_ARG_COUNT");
   let cnds = scope_inferior(ss, s);
   try_err(lower_truthy, (ss, cnds, list.start + 0));
   let cs = list.len == 2 ? scope_inferior(ss, s) : nullptr;
@@ -79,7 +78,7 @@ static u32 lower_builtin_while errs(superscope *ss, scope *s, astidx args) {
 }
 static u32 lower_builtin_at errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
-  if (list.len != 1) return_err(ARG_COUNT_ERROR);
+  if (list.len != 1) return_err("WRONG_ARG_COUNT");
   let l = try_err(lower, (ss, s, list.start + 0));
   let t = scope_find(ss, s, l)->t;
   if (!t.ptr_level) return_err("AT_NOT_REF");
@@ -91,7 +90,7 @@ static u32 lower_builtin_at errs(superscope *ss, scope *s, astidx args) {
 }
 static u32 lower_builtin_where errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
-  if (list.len != 1) return_err(ARG_COUNT_ERROR);
+  if (list.len != 1) return_err("WRONG_ARG_COUNT");
   let l = try_err(lower, (ss, s, list.start + 0));
   let t = scope_find(ss, s, l)->t;
   let d = scope_add_value(ss, s, TV(Type_ptr(t)));
@@ -100,7 +99,7 @@ static u32 lower_builtin_where errs(superscope *ss, scope *s, astidx args) {
 }
 static u32 lower_builtin_ref errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
-  if (list.len != 1) return_err(ARG_COUNT_ERROR);
+  if (list.len != 1) return_err("WRONG_ARG_COUNT");
   let l = try_err(lower, (ss, s, list.start + 0));
   let t = scope_find(ss, s, l)->t;
   let d = scope_add_value(ss, s, TV(Type_ref(t)));
@@ -111,7 +110,7 @@ static u32 lower_builtin_ref errs(superscope *ss, scope *s, astidx args) {
 static u32 lower_builtin_return errs(superscope *ss, scope *s, astidx args) {
   // TODO enforce return type
   let list = builtin_arg_list(ss->asts, args);
-  if (list.len > 1) return_err(ARG_COUNT_ERROR);
+  if (list.len > 1) return_err("WRONG_ARG_COUNT");
   let val = list.len ? try_err(lower, (ss, s, list.start + 0)) : scope_add_value(ss, s, void_value);
   scope_add_inst(ss, s, (ir)tu_of(ir_ret, val));
   return scope_add_value(ss, s, void_value);
@@ -138,7 +137,7 @@ static astidx qot_walk errs(superscope *ss, scope *s, astidx node) {
       let left_node = ast_at(ss->asts, left);
       if (fptr_eq(ast_text(ss, tu_catch(astId, left_node)), "@uqot")) {
         let list = builtin_arg_list(ss->asts, right);
-        if (list.len != 1) return_err(ARG_COUNT_ERROR);
+        if (list.len != 1) return_err("WRONG_ARG_COUNT");
         let tv = try_err(temporary_interpret, (ss, s, list.start + 0));
         if (!tu_is(c_ast, tv.t.t)) return_err("UNQUOTE_TYPE_ERROR");
         if (!tv.v.c_ast) return_err("UNQUOTE_UNKNOWN");
@@ -257,13 +256,13 @@ static u32 lower_builtin_qot errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
   if (!list.len) arg = ast_make_empty(ss);
   else if (list.len == 1) arg = list.start + 0;
-  else return_err(ARG_COUNT_ERROR);
+  else return_err("WRONG_ARG_COUNT");
   assertMessage(arg);
   return scope_add_value(ss, s, (typed_value){.t = T(tu_of(c_ast, {})), .v.c_ast = try_err(qot_walk, (ss, s, arg))});
 }
 static u32 lower_builtin_uqot errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
-  if (list.len != 1) return_err(ARG_COUNT_ERROR);
+  if (list.len != 1) return_err("WRONG_ARG_COUNT");
   let tv = try_err(temporary_interpret, (ss, s, list.start + 0));
   if (!tu_is(c_ast, tv.t.t)) return_err("UNQUOTE_TYPE_ERROR");
   if (!tv.v.c_ast) return_err("UNQUOTE_UNKNOWN");
@@ -272,18 +271,18 @@ static u32 lower_builtin_uqot errs(superscope *ss, scope *s, astidx args) {
 
 static u32 lower_builtin_reft errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
-  if (list.len != 1) return_err(ARG_COUNT_ERROR);
+  if (list.len != 1) return_err("WRONG_ARG_COUNT");
   Type inner = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 0))));
   return scope_add_value(ss, s, Type_asValue(ss, Type_ref(inner)));
 }
 static u32 lower_builtin_bare_type errs(superscope *ss, scope *s, astidx args, Type t) {
   let list = builtin_arg_list(ss->asts, args);
-  if (list.len != 0) return_err(ARG_COUNT_ERROR);
+  if (list.len != 0) return_err("WRONG_ARG_COUNT");
   return scope_add_value(ss, s, Type_asValue(ss, t));
 }
 static u32 lower_builtin_decor errs(superscope *ss, scope *s, astidx args, bool is_const, bool is_volatile) {
   let list = builtin_arg_list(ss->asts, args);
-  if (list.len != 1) return_err(ARG_COUNT_ERROR);
+  if (list.len != 1) return_err("WRONG_ARG_COUNT");
   Type inner = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 0))));
   inner.isconst |= is_const;
   inner.isvolatile |= is_volatile;
@@ -291,7 +290,7 @@ static u32 lower_builtin_decor errs(superscope *ss, scope *s, astidx args, bool 
 }
 static u32 lower_builtin_intty errs(superscope *ss, scope *s, astidx args, bool is_signed) {
   let list = builtin_arg_list(ss->asts, args);
-  if (list.len != 1) return_err(ARG_COUNT_ERROR);
+  if (list.len != 1) return_err("WRONG_ARG_COUNT");
   bigint largest_int = BInt.from.i64(ss->alloc, (u16)~0);
   defer { msList_deInit(ss->alloc, largest_int); };
   bigint bigbits = int_as_bigint(ss->alloc, try_err(temporary_interpret, (ss, s, list.start + 0)));
@@ -310,7 +309,7 @@ static u32 lower_builtin_typeof errs(superscope *ss, scope *s, astidx args) {
 }
 static u32 lower_builtin_arrof errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
-  if (list.len != 2) return_err(ARG_COUNT_ERROR);
+  if (list.len != 2) return_err("WRONG_ARG_COUNT");
   let count_tv = int_as_bigint(ss->alloc, try_err(temporary_interpret, (ss, s, list.start + 0)));
   defer { msList_deInit(ss->alloc, count_tv); };
   bigint_expand(ss->alloc, &count_tv, sizeof(usize) / sizeof(bigint_unit) + 1);
@@ -321,19 +320,19 @@ static u32 lower_builtin_arrof errs(superscope *ss, scope *s, astidx args) {
 }
 static u32 lower_builtin_ptrof errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
-  if (list.len != 1) return_err(ARG_COUNT_ERROR);
+  if (list.len != 1) return_err("WRONG_ARG_COUNT");
   Type inner = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 0))));
   return scope_add_value(ss, s, Type_asValue(ss, Type_ptr(inner)));
 }
 static u32 lower_builtin_sizeof errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
-  if (list.len != 1) return_err(ARG_COUNT_ERROR);
+  if (list.len != 1) return_err("WRONG_ARG_COUNT");
   let t = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 0))));
   return scope_add_value(ss, s, TV_bigint(BInt.from.i64(ss->alloc, Type_sizeof(t))));
 }
 static u32 lower_builtin_alignof errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
-  if (list.len != 1) return_err(ARG_COUNT_ERROR);
+  if (list.len != 1) return_err("WRONG_ARG_COUNT");
   let t = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 0))));
   return scope_add_value(ss, s, TV_bigint(BInt.from.i64(ss->alloc, Type_alignof(t))));
 }
@@ -347,7 +346,7 @@ static r_struct find_struct_typetree(TypeTree t) {
 }
 static u32 lower_builtin_offsetof errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
-  if (list.len != 2) return_err(ARG_COUNT_ERROR);
+  if (list.len != 2) return_err("WRONG_ARG_COUNT");
   let t = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 0))));
   let name = try_err(id_from_ast, (ss, s, list.start + 1));
   let st = find_struct_typetree(t.t);
@@ -379,7 +378,7 @@ static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
   moxmap_set(ss->type_info, tu_catch(r_tag, *_this).name, working_scope);
 
   let list = builtin_arg_list(ss->asts, args);
-  if (list.len != 1) return_err(ARG_COUNT_ERROR);
+  if (list.len != 1) return_err("WRONG_ARG_COUNT");
   let struct_node = ast_at(ss->asts, list.start + 0);
   tu_catch(astBBlock, struct_node, return_err("STRUCT_EXPECTS_BLOCK"));
   let stmts = ast_block_children(ss->asts, list.start);
@@ -426,17 +425,17 @@ static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
   return scope_add_value(ss, s, TV_type(ss_getType(ss, T(*_this))));
 }
 static u32 lower_builtin_this errs(superscope *ss, scope *s, astidx args) {
-  if (builtin_arg_list(ss->asts, args).len) return_err(ARG_COUNT_ERROR);
+  if (builtin_arg_list(ss->asts, args).len) return_err("WRONG_ARG_COUNT");
   if (!msList_len(ss->thisstack)) return_err("THIS_OUTSIDE_STRUCT");
   return scope_add_value(ss, s, (typed_value){T(tu_of(c_type, {})), msList_last(ss->thisstack)});
 }
 static u32 lower_builtin_break errs(superscope *ss, scope *s, astidx args) {
-  if (builtin_arg_list(ss->asts, args).len) return_err(ARG_COUNT_ERROR);
+  if (builtin_arg_list(ss->asts, args).len) return_err("WRONG_ARG_COUNT");
   scope_add_inst(ss, s, (ir)tu_of(ir_break, {}));
   return scope_add_value(ss, s, void_value);
 }
 static u32 lower_builtin_continue errs(superscope *ss, scope *s, astidx args) {
-  if (builtin_arg_list(ss->asts, args).len) return_err(ARG_COUNT_ERROR);
+  if (builtin_arg_list(ss->asts, args).len) return_err("WRONG_ARG_COUNT");
   scope_add_inst(ss, s, (ir)tu_of(ir_cont, {}));
   return scope_add_value(ss, s, void_value);
 }

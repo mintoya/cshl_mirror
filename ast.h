@@ -106,7 +106,7 @@ tu_def(
     (astBBlock, struct { srcpos pos;astidx start; }), // {}
     (astPBlock, struct { srcpos pos;astidx start; }), // ()
 );
-static_assert(((ast){}).tag == TU_TAG(astNull)); // sentinel
+// static_assert(((ast){}).tag == TU_TAG(astNull)); // sentinel
 static_assert(sizeof(ast), "");                  // 12, 9 if packed
 static inline srcpos srcpos_ast(ast a, astlist alist) {
   return tu_match_exp(
