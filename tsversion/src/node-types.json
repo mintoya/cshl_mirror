@@ -367,6 +367,10 @@
             "named": false
           },
           {
+            "type": "as",
+            "named": false
+          },
+          {
             "type": "band",
             "named": false
           },
@@ -621,6 +625,10 @@
   },
   {
     "type": "and",
+    "named": false
+  },
+  {
+    "type": "as",
     "named": false
   },
   {

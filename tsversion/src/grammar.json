@@ -268,6 +268,44 @@
         },
         {
           "type": "PREC_LEFT",
+          "value": "type",
+          "content": {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "FIELD",
+                "name": "left",
+                "content": {
+                  "type": "SYMBOL",
+                  "name": "_expression"
+                }
+              },
+              {
+                "type": "FIELD",
+                "name": "operator",
+                "content": {
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "STRING",
+                      "value": "as"
+                    }
+                  ]
+                }
+              },
+              {
+                "type": "FIELD",
+                "name": "right",
+                "content": {
+                  "type": "SYMBOL",
+                  "name": "_expression"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "PREC_LEFT",
           "value": "mul",
           "content": {
             "type": "SEQ",
@@ -1103,6 +1141,10 @@
       {
         "type": "STRING",
         "value": "block-call"
+      },
+      {
+        "type": "STRING",
+        "value": "type"
       },
       {
         "type": "STRING",

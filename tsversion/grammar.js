@@ -13,6 +13,7 @@ module.exports = grammar({
     [
       'access',
       'block-call',  // tight call
+      'type',
       'mul',
       'add',
       'bit',
@@ -59,6 +60,7 @@ module.exports = grammar({
       
       prec.left('access', seq(field('left', $._expression), field('operator', '.'), field('right', $._expression))),
       prec.left('access', seq(field('left', $._expression), field('operator', ':'), field('right', $._expression))),
+      prec.left('type', seq(field('left', $._expression), field('operator', choice('as')), field('right', $._expression))),
       prec.left('mul', seq(field('left', $._expression), field('operator', choice('*', '/', '%')), field('right', $._expression))),
       prec.left('add', seq(field('left', $._expression), field('operator', choice('+', '-')), field('right', $._expression))),
       prec.left('bit', seq(field('left', $._expression), field('operator', choice('and', 'or', 'band', 'bor', 'shr', 'shl', 'bxor')), field('right', $._expression))),
