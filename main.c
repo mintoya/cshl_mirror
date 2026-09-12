@@ -24,14 +24,17 @@ void on_allocation(void *, usize in, usize out, void *, const char *file, uint l
 cmd_main(
     int nargs,
     char *args[nargs],
-    (bool, help /*      */, ("-h", "--help") /**/, "print help message" /*  */, false),
-    (bool, execute /*   */, ("-r", "--run") /* */, "interpret the ast" /*   */, false),
-
-    (bool, echo_ast /*  */, ("--log-ast") /*   */, "log the ast" /*         */, false),
-    (bool, echo_file /* */, ("--log-file") /*  */, "echo read file" /*      */, false),
+    (bool, help /*      */, ("-h", "--help") /*  */, "print help message" /*      */, false),
+    (bool, lowerast /*  */, ("-l", "--lower") /* */, "lower the ast" /*           */, false),
+    (bool, execute /*   */, ("-r", "--run") /*   */, "interpret lowered ast" /*   */, false),
+    (bool, echo_ast /*  */, ("--log-ast") /*     */, "log the ast" /*             */, false),
+    (bool, echo_file /* */, ("--log-file") /*    */, "echo read file" /*          */, false),
 ) {
   let allocator = debugAllocator(.allocator = stdAlloc, .onalloc = on_allocation);
   defer {
+    // foreach (let allocation, vtable(debugallocator_iterator, allocator)) {
+    //   allocation.trace.size;
+    // }
     println("(log) stats : {dbga_stats}", debugAllocator_stats(allocator));
     debugAllocatorDeInit(allocator);
   };
@@ -61,12 +64,14 @@ cmd_main(
   if (echo_ast)
     print_wfO(sexplike, nullptr, "{astidx_full}\n", ctx);
 
-  if (execute) {
+  if (lowerast || execute) {
     let env = ss_init(allocator, ctx);
     catch_errcall((lower, (env, env->outermost, ctx.idx)), e, (err_panic(e), (u32)0));
     print_wf(sexplike, "{scope}\n", *env->outermost);
-    // interpret(env,env->outermost);
-    // print_wf(sexplike, "{scope}\n", *env->outermost);
+    if (execute) {
+      catch_errcall((interpret, (env, env->outermost)), e, (err_panic(e), TV({})));
+      print_wf(sexplike, "{scope}\n", *env->outermost);
+    }
   }
 
   return 0;

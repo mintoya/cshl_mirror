@@ -105,9 +105,6 @@ test_fn(interpret_zero_arg_call) {
   test_assert(tu_is(c_int, r.t.t));
   test_assert(!BInt.cmp(r.v.c_int, BInt.from.i64(arena, 7)));
 }
-
-// a comptime function may mutate module state (see examples/mutate.cshl); the
-// mutation lands in the global, so it is visible to later instantiations
 test_fn(interpret_global_comptime_mutation) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -128,7 +125,7 @@ test_fn(interpret_global_comptime_mutation) {
 
   test_assert(tu_is(r_arr, r.t.t));
   let arr = tu_catch(r_arr, r.t.t);
-  test_inteq(arr.count, 3); // asize started at 1 and was incremented on each call
+  test_inteq(arr.count, 3);
   test_inteq(tu_catch(r_uint, *arr.t), 16);
 }
 
@@ -169,6 +166,7 @@ test_fn(interpret_comptime_recursion) {
 /*
 // both branches are lowered, much rader to reconcile
 // not meant to work for a while
+// could work since that's n-1
 test_fn(interpret_comptime_recursion_low) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -369,6 +367,35 @@ test_fn(struct_operator_overload_vector_equality_true) {
           "a ~vec2; a.x = 1; a.y = 2;\n"
           "b ~vec2; b.x = 1; b.y = 2;\n"
           "(a == b);\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_uint, r.t.t));
+  test_inteq(tu_catch(r_uint, r.t.t), 1);
+  test_inteq(*(u8 *)r.v.value, 1);
+}
+test_fn(struct_cast_ovl) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "i ~~ @sint;\n"
+          "vec2 ~type~ @struct{\n"
+          "  Self ~type~ @this();\n"
+          "  x ~ i 32;\n"
+          "  y ~ i 32;\n"
+          "  @id(\"as\") ~~ @fn (self~Self,to ~type),to,{\n"
+          "    @cif(( to == (i 8)),\n"
+          "     (return (self.x) + (self.y))\n"
+          "    );\n"
+          "  };\n"
+          "};\n"
+          "a ~vec2; a.x = 1; a.y = 2;\n"
+          "a as (i 8) == 3 as (i 8);\n"
       ),
       nullptr
   );

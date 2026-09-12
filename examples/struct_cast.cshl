@@ -1,0 +1,15 @@
+type ~~ @type();
+i ~~ @sint;
+vec2 ~type~ @struct{
+  Self ~type~ @this();
+  x ~ i 32;
+  y ~ i 32;
+  @id("as") ~~ @fn (self~Self,to ~type),to,{
+    @cif((to == (i 8)),
+     (return (self.x) + (self.y))
+    );
+  };
+};
+a ~vec2; a.x = 1; a.y = 2;
+a as (i 8) == 3 as (i 8);
+
