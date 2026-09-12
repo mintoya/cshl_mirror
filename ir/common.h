@@ -53,7 +53,8 @@ struct superscope {
   msList(Type *) thisstack;
   moxmap(fptr, scope *) type_info;
   msList(function) functions;
-  msList(c_fun) fnctx;
+  // nullable, uses the actual stack
+  Type *current_ret;
   scope *outermost;
   u32 foldempty;
 };
@@ -89,7 +90,7 @@ Type *ss_getType(superscope *ss, Type t);
 TypeTree *ss_getTypeTree(superscope *ss, TypeTree t);
 typed_value *scope_find(superscope *env, scope *s, u32 idx);
 scope *scope_copy(superscope *ss, scope *s);
-static inline void scope_bind(superscope *env, scope *s, u32 idx, fptr name);
+static inline void scope_bind errs(superscope *env, scope *s, u32 idx, fptr name);
 #define T(...) ((Type){.t = __VA_ARGS__})
 #define TV(...) ((typed_value){__VA_ARGS__})
 
@@ -99,6 +100,7 @@ u32 lower errs /*                      */ (superscope *ss, scope *s, astidx a);
 typed_value interpret errs /*          */ (superscope *ss, scope *s);
 // if true inst was interpreted
 bool try_interpret errs /*             */ (superscope *ss, scope *s, ir inst);
+static u32 lower_function_call_values errs(superscope *ss, scope *s, u32 fn, slice(u32) vals);
 
 typed_value temporary_interpret errs(superscope *ss, scope *s, astidx a) {
   let work = P$(scope_inferior(ss, s), ($->rootable = false, $));
@@ -134,6 +136,7 @@ typedef enum enum_op {
   enop_pipe,
   enop_set,
   enop_iexpand,
+  enop_as,
 } enum_op;
 typedef enum enum_boolean_op {
   bop_oand = enop_oand,
@@ -172,6 +175,7 @@ typePrinter(enum_op) {
       (enop_pipe, (PUTS("pipe"), 0)),
       (enop_set, (PUTS("set"), 0)),
       (enop_iexpand, (PUTS("iexpand"), 0)),
+      (enop_as, (PUTS("as"), 0)),
       (default, (PUTS("unknown!!!"), 0)),
   );
 }
@@ -205,6 +209,7 @@ static inline enum_op op_as_enum(u32 opn) {
          : opn == opNumbers.pipe    ? enop_pipe
          : opn == opNumbers.set     ? enop_set
          : opn == opNumbers.iexpand ? enop_iexpand
+         : opn == opNumbers.as      ? enop_as
                                     : (assertMessage(false, "Unknown operator %x", opn), 0);
 }
 static inline u32 enum_as_op(enum_op en) {
@@ -232,6 +237,7 @@ static inline u32 enum_as_op(enum_op en) {
       (enop_pipe /*   */, opNumbers.pipe),
       (enop_set /*    */, opNumbers.set),
       (enop_iexpand /**/, opNumbers.iexpand),
+      (enop_as /*     */, opNumbers.as),
       (enop_call /*   */, opNumbers.call)
   );
 }

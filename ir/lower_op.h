@@ -52,13 +52,15 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx righ
          d;
        })),
       (r_tag, t, ({
+         // only call/as resolve here (they are not instructions); other ops go via the hook
          let result = (u32)0;
-         if_decl (let info, moxmap_get(ss->type_info, t.name)) {
+         if (opNumber == opNumbers.call || opNumber == opNumbers.as) {
            char op_str[sizeof(u32) + 1] = {};
            memcpy(op_str, &opNumber, 4);
-           if_decl (let item, moxmap_get((*info)->named, fp((char *)op_str)))
+           let m = ss_tag_named(ss, (TypeTree)tu_of(r_tag, t), fp((char *)op_str));
+           if (m.owner)
              result = P$(
-                 scope_add_value(ss, s, *scope_find(ss, (*info), *item)),
+                 scope_add_value(ss, s, *scope_find(ss, m.owner, m.idx)),
                  try_err(lower_call_extra, (ss, s, $, left, right), 0)
              );
          }
@@ -139,43 +141,25 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx righ
   return result;
 }
 
-r_bitfield find_inner_bitfield(TypeTree t) {
-  return tu_match_exp(
-      t,
-      (r_bitfield, r, r),
-      (r_tag, r, find_inner_bitfield(*r.t)),
-      (default, (r_bitfield) nullptr)
-  );
-}
-r_struct find_inner_struct(TypeTree t) {
-  return tu_match_exp(
-      t,
-      (r_struct, r, r),
-      (r_tag, r, find_inner_struct(*r.t)),
-      (default, (r_struct) nullptr)
-  );
-}
 u32 lower_dot errs(superscope *ss, scope *s, u32 left, astidx right, astLit lit) {
   let l = scope_find(ss, s, left);
   let name = astLit_str(ss, lit);
 
   if (tu_is(c_type, l->t.t)) {
     let target = try_err(value_asType, (ss, *l), 0);
-    iflet_tu (let tag, r_tag, target.t)
-      if_decl (let info, moxmap_get(ss->type_info, tag.name))
-        if_decl (let idx, moxmap_get((*info)->named, name))
-          return scope_add_value(ss, s, *scope_find(ss, *info, *idx));
+    let m = ss_tag_named(ss, target.t, name);
+    if (m.owner)
+      return scope_add_value(ss, s, *scope_find(ss, m.owner, m.idx));
     return_err("NO_MEMBER", 0);
   }
 
   if (l->t.ptr_level > 1) return_err("DOT_UNSUPPORTED", 0);
 
-  iflet_tu (let tag, r_tag, l->t.t)
-    if_decl (let info, moxmap_get(ss->type_info, tag.name))
-      if_decl (let idx, moxmap_get((*info)->named, name))
-        return scope_add_value(ss, s, *scope_find(ss, *info, *idx));
+  let m = ss_tag_named(ss, l->t.t, name);
+  if (m.owner)
+    return scope_add_value(ss, s, *scope_find(ss, m.owner, m.idx));
 
-  if_decl (let st, find_inner_struct(l->t.t)) {
+  if_decl (let st, TypeTree_inner_struct(l->t.t)) {
     u32 i = 0;
     foreach (let item, mList_iter(st)) {
       if (fptr_eq(item.name, name)) {
@@ -189,7 +173,7 @@ u32 lower_dot errs(superscope *ss, scope *s, u32 left, astidx right, astLit lit)
       }
       i++;
     }
-  } else if_decl (let bf, find_inner_bitfield(l->t.t)) {
+  } else if_decl (let bf, TypeTree_inner_bitfield(l->t.t)) {
     u32 i = 0;
     foreach (let item, mList_iter(bf)) {
       if (fptr_eq(item.name, name)) {
@@ -262,7 +246,7 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
 
         let pipscope = scope_inferior(ss, s);
         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_block, pipscope)), 0);
-        scope_bind(ss, pipscope, left, fp("_"));
+        try_err(scope_bind, (ss, pipscope, left, fp("_")), 0);
         try_err(lower, (ss, pipscope, right), 0);
         try_err(scope_yield, (ss, pipscope, result), 0);
 
@@ -298,6 +282,9 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
       (enop_colon /*  */, (assertMessage(false, "unreachable"), (u32)0)),
       (enop_set /*    */, (assertMessage(false, "unreachable"), (u32)0)),
       (enop_iexpand /**/, (assertMessage(false, "unreachable"), (u32)0)),
+      (enop_as, ({
+         try_err(cast_value, (ss, s, left, try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, right), 0)), 0)), 0);
+       })),
       (enop_call, try_err(lower_call, (ss, s, left, right), 0)),
       (enop_dot, ({
          P$(tu_match_exp(

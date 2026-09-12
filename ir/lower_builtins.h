@@ -12,27 +12,10 @@ static u32 lower_builtin_fn errs(superscope *ss, scope *s, astidx args) {
   return try_err(lower_function, (ss, s, list.start, list.start + 1, list.start + 2), 0);
 }
 static u32 lower_builtin_closure(superscope *ss, scope *s, astidx args) { TODO(); }
-u32 lower_truthy errs(superscope *ss, scope *s, astidx a) {
+// a condition is just a cast to bool
+u32 lower_condition errs(superscope *ss, scope *s, astidx a) {
   let l = try_err(lower, (ss, s, a), 0);
-  let v = scope_find(ss, s, l);
-  let t = v->t;
-  iflet_tu (let tag, r_tag, t.t)
-    if_decl (let info, moxmap_get(ss->type_info, tag.name))
-      if_decl (let idx, moxmap_get((*info)->named, fp("@truthy")))
-        TODO();
-  if (Type_isint(t)) {
-    if (tu_is(c_int, t.t))
-      return scope_add_value(ss, s, TV(T(tu_of(r_bool, {})), avalue(ss->alloc, (bool)!!BInt.cmp(v->v.c_int, nullptr))));
-    let d = scope_add_value(ss, s, TV(T(tu_of(r_bool, {}))));
-    try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_cast, {.l = l, .d = d})), 0);
-    return d;
-  } else if (tu_is(c_ast, t.t))
-    return scope_add_value(ss, s, TV(T(tu_of(r_bool, {})), avalue(ss->alloc, (bool)(v->v.c_ast && !tu_is(astEmpty, ast_at(ss->asts, v->v.c_ast))))));
-  else if (tu_is(c_type, t.t))
-    return scope_add_value(ss, s, TV(T(tu_of(r_bool, {})), avalue(ss->alloc, (bool)(!v->v.c_type || !Type_cmp(T(tu_of(r_void, {})), *v->v.c_type)))));
-  else if (tu_is(r_bool, t.t))
-    return l;
-  else return_err("NOT_TRUTHY", 0);
+  return try_err(cast_value, (ss, s, l, T(tu_of(r_bool, {}))), 0);
 }
 static u32 lower_builtin_cif errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
@@ -40,7 +23,7 @@ static u32 lower_builtin_cif errs(superscope *ss, scope *s, astidx args) {
   let value = ({
     let ns = P$(scope_inferior(ss, s), ($->rootable = false, $));
     defer { scope_destroy(ss, ns); };
-    try_err(lower_truthy, (ss, ns, list.start + 0), 0);
+    try_err(lower_condition, (ss, ns, list.start + 0), 0);
     try_err(interpret, (ss, ns), 0);
   });
   if (!tu_is(r_bool, value.t.t)) return_err("CIF_CONDITION_NOT_BOOL", 0);
@@ -55,7 +38,7 @@ static u32 lower_builtin_if errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
   if (!EQUAL_ANY(list.len, 2, 3)) return_err("WRONG_ARG_COUNT", 0);
   let cnds = scope_inferior(ss, s);
-  let cnd = try_err(lower_truthy, (ss, cnds, list.start + 0), 0);
+  let cnd = try_err(lower_condition, (ss, cnds, list.start + 0), 0);
   let ts = scope_inferior(ss, s);
   try_err(lower, (ss, ts, list.start + 1), 0);
   let fs = list.len == 3 ? scope_inferior(ss, s) : nullptr;
@@ -67,7 +50,7 @@ static u32 lower_builtin_while errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
   if (!EQUAL_ANY(list.len, 1, 2)) return_err("WRONG_ARG_COUNT", 0);
   let cnds = scope_inferior(ss, s);
-  try_err(lower_truthy, (ss, cnds, list.start + 0), 0);
+  try_err(lower_condition, (ss, cnds, list.start + 0), 0);
   let cs = list.len == 2 ? scope_inferior(ss, s) : nullptr;
   if (list.len == 2) try_err(lower, (ss, cs, list.start + 1), 0);
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_while, {.cnd = cnds, .body = cs})), 0);
@@ -105,7 +88,6 @@ static u32 lower_builtin_ref errs(superscope *ss, scope *s, astidx args) {
 }
 
 static u32 lower_builtin_return errs(superscope *ss, scope *s, astidx args) {
-  // TODO enforce return type
   let list = builtin_arg_list(ss->asts, args);
   if (list.len > 1) return_err("WRONG_ARG_COUNT", 0);
   let val = list.len ? try_err(lower, (ss, s, list.start + 0), 0) : scope_add_value(ss, s, void_value);
@@ -119,7 +101,7 @@ static u32 lower_builtin_id errs(superscope *ss, scope *s, astidx args) {
   if (tu_catchr(r_sint, arr.t[0], return_err("ID_TYPE_ERROR", 0)) != 8)
     return_err("ID_TYPE_ERROR", 0);
   let copy = slice_clone(ss->alloc, ((fptr){arr.count, (u8 *)str.v.value}));
-  return scope_add_value(ss, s, (typed_value){.t = T(tu_of(c_ast, {})), .v.c_ast = ast_make_id(ss, copy)});
+  return scope_add_value(ss, s, TV_ast(ast_make_id(ss, copy)));
 }
 
 static astidx qot_walk errs(superscope *ss, scope *s, astidx node) {
@@ -255,7 +237,7 @@ static u32 lower_builtin_qot errs(superscope *ss, scope *s, astidx args) {
   else if (list.len == 1) arg = list.start + 0;
   else return_err("WRONG_ARG_COUNT", 0);
   assertMessage(arg);
-  return scope_add_value(ss, s, (typed_value){.t = T(tu_of(c_ast, {})), .v.c_ast = try_err(qot_walk, (ss, s, arg), 0)});
+  return scope_add_value(ss, s, TV_ast(try_err(qot_walk, (ss, s, arg), 0)));
 }
 static u32 lower_builtin_uqot errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
@@ -333,20 +315,12 @@ static u32 lower_builtin_alignof errs(superscope *ss, scope *s, astidx args) {
   let t = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 0), 0)), 0);
   return scope_add_value(ss, s, TV_bigint(BInt.from.i64(ss->alloc, Type_alignof(t))));
 }
-static r_struct find_struct_typetree(TypeTree t) {
-  return tu_match_exp(
-      t,
-      (r_struct, r, r),
-      (r_tag, r, find_struct_typetree(*r.t)),
-      (default, (r_struct) nullptr)
-  );
-}
 static u32 lower_builtin_offsetof errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
   if (list.len != 2) return_err("WRONG_ARG_COUNT", 0);
   let t = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 0), 0)), 0);
   let name = try_err(id_from_ast, (ss, s, list.start + 1), 0);
-  let st = find_struct_typetree(t.t);
+  let st = TypeTree_inner_struct(t.t);
   if (!st) return_err("OFFSETOF_NOT_STRUCT", 0);
   foreach (let item, mList_iter(st))
     if (fptr_eq(item.name, name))
@@ -405,7 +379,7 @@ static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
     }
 
     if (dcl.isconst)
-      scope_bind(ss, working_scope, scope_add_value(ss, working_scope, bound), name);
+      try_err(scope_bind,(ss, working_scope, scope_add_value(ss, working_scope, bound), name),0);
 
     r_struct_item ri = {.name = name, .t = *ss_getType(ss, bound.t)};
     if (!Type_is_comptime(ri.t)) {

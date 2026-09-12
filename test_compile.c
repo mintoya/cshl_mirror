@@ -440,7 +440,7 @@ test_fn(struct_operator_overload_self_in_body) {
   test_inteq(*(i32 *)r.v.value, 10);
 }
 
-test_fn(struct_cast_overload) {
+test_fn(struct_as_overload) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
 
@@ -452,12 +452,12 @@ test_fn(struct_cast_overload) {
           "wrapped ~type~ @struct{\n"
           "  Self ~type~ @this();\n"
           "  v ~ i 32;\n"
-          "  @id(\"@cast\") ~~ @fn (self ~Self, target ~type), @sint(32), {\n"
+          "  @id(\"as\") ~~ @fn (self ~Self, target ~type), @sint(32), {\n"
           "    return self.v;\n"
           "  };\n"
           "};\n"
           "a ~wrapped; a.v = 7;\n"
-          "b ~i 32~ a;\n"
+          "b ~i 32~ a as @sint(32);\n"
           "b;\n"
       ),
       nullptr

@@ -217,6 +217,23 @@ static inline usize Type_sizeof(Type t) {
   else return TypeTree_sizeof(t.t);
 }
 
+static inline r_struct TypeTree_inner_struct(TypeTree t) {
+  return tu_match_exp(
+      t,
+      (r_struct, r, r),
+      (r_tag, r, TypeTree_inner_struct(*r.t)),
+      (default, (r_struct) nullptr)
+  );
+}
+static inline r_bitfield TypeTree_inner_bitfield(TypeTree t) {
+  return tu_match_exp(
+      t,
+      (r_bitfield, r, r),
+      (r_tag, r, TypeTree_inner_bitfield(*r.t)),
+      (default, (r_bitfield) nullptr)
+  );
+}
+
 // comparison
 
 i8 icmp(isize a, isize b) { return a - b; }

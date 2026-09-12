@@ -52,9 +52,6 @@ static inline void *irstate_data(irstate st, u32 idx) {
   typed_value tv = ir_readthrough(st, idx);
   return tv.v.value ? tv.v.value : irstate_mem(st, idx);
 }
-static r_struct ir_find_struct(TypeTree t) {
-  return tu_match_exp(t, (r_struct, r, r), (r_tag, r, ir_find_struct(*r.t)), (default, (r_struct) nullptr));
-}
 
 void irsig_break errs(irsig *_sig) {
   if (!_sig->brk) return_err("BROKE_NOT_BREAKABLE");
@@ -112,7 +109,7 @@ void interpret_cast(irstate st, ir_cast c) {
 }
 bool istrue errs(typed_value t) {
   if (Type_cmp(T(tu_of(r_bool, {})), t.t))
-    return_err("TRUTHINESS_NON_BOOL", false); // truthiness should be handled by now
+    return_err("CONDITION_NOT_BOOL", false);
   return *(bool *)t.v.value;
 }
 void interpret_block errs(irstate st, ir_block c);
@@ -263,7 +260,7 @@ void interpret_array(irstate st, ir_array c) {
 }
 void interpret_field errs(irstate st, ir_field c) {
   let l = ir_readthrough(st, c.l);
-  let strct = ir_find_struct(l.t.t);
+  let strct = TypeTree_inner_struct(l.t.t);
   if (!strct) return_err("FIELD_ACESS");
   let item = mList_arr(strct)[c.i];
   *(void **)irstate_mem(st, c.d) = (u8 *)l.v.value + item.offset;

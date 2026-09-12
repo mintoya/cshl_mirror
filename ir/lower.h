@@ -5,54 +5,6 @@
 #include "wheels/macros.h"
 #include "wheels/mytypes.h"
 #include "wheels/print/print_pre.h"
-// two types are the same once refs/qualifiers/comptime-ness are ignored
-static bool Type_similar(Type a, Type b) {
-  return a.ptr_level == b.ptr_level && !TypeTree_cmp(a.t, b.t);
-}
-static bool type_is_integer_like(Type t) {
-  return !t.ptr_level && (tu_is(r_bool, t.t) || Type_isint(t));
-}
-static u32 lower_cast_overload errs(superscope *ss, scope *s, u32 left, Type to) { // TODO: move this somewhere else
-  let ot = scope_find(ss, s, left)->t;
-  if (tu_is(r_tag, ot.t)) {
-    let tag = tu_catch(r_tag, ot.t);
-    if_decl (let info, moxmap_get(ss->type_info, tag.name)) {
-      if_decl (let item, moxmap_get((*info)->named, fp("@cast"))) {
-        let method = scope_add_value(ss, s, *scope_find(ss, (*info), *item));
-        let target = scope_add_value(ss, s, Type_asValue(ss, to));
-        u32 vals[2] = {left, target};
-        return try_err(lower_function_call_values, (ss, s, method, ((slice(u32)){2, vals})), 0);
-      }
-    }
-  }
-  return_err("CANNOT_CAST", 0);
-}
-static u32 coerce_type errs(superscope *ss, scope *s, u32 left, Type to) {
-  let ot = scope_find(ss, s, left)->t;
-  println("coersing {Type} to {Type}", ot, to);
-  if (!Type_cmp(ot, to)) return left;
-
-  // `any` absorbs anything, but a referance still needs to be loaded out
-  if (!Type_cmp(to, T(tu_of(c_any, {})))) {
-    if (!ot.isref) return left;
-    let d = scope_add_value(ss, s, TV(P$(ot, ($.isref = false, $))));
-    try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = left, .d = d})), 0);
-    return d;
-  }
-  if (!to.isref && Type_similar(ot, to)) {
-    if (!ot.isref) return left;
-    let d = scope_add_value(ss, s, TV(to));
-    try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = left, .d = d})), 0);
-    return d;
-  }
-  // all integer cast allowed
-  if (type_is_integer_like(ot) && type_is_integer_like(to)) {
-    let dest = scope_add_value(ss, s, TV(to));
-    try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_cast, {.l = left, .d = dest})), 0);
-    return dest;
-  }
-  return try_err(lower_cast_overload, (ss, s, left, to), 0);
-}
 u32 lower_op_wrap errs(superscope *ss, scope *s, astidx left, astidx right, u32 number) {
   if (number == opNumbers.call && tu_or(astOp, ast_at(ss->asts, left), {}).number_rep == opNumbers.colon) {
     let left_node = ast_at(ss->asts, left);
@@ -117,13 +69,13 @@ u32 lower errs(superscope *ss, scope *s, astidx a) {
            if (!type_idx) return_err("DECL_NO_TYPE_OR_VALUE", 0);
            value = scope_add_value(ss, s, TV(type));
          }
-         value = try_err(coerce_type, (ss, s, value, type), 0);
+         value = try_err(cast_value, (ss, s, value, type), 0);
 
          if (dcl.isconst)
            scope_find(ss, s, value)->t.isconst = true;
          if (name_idx) {
            let nn = try_err(id_from_ast, (ss, s, name_idx), 0);
-           scope_bind(ss, s, value, nn);
+           try_err(scope_bind, (ss, s, value, nn), 0);
            println("[LOG:decl] bound {*:typed_value} to {slice(c8)}", scope_find(ss, s, value), nn);
          }
          value;

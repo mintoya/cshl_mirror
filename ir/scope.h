@@ -17,15 +17,6 @@ typed_value *scope_find(superscope *env, scope *s, u32 idx) {
     else s = s->parent;
   assertMessage(false, "value %u not found in scope", idx);
 }
-// the scope that actually owns register idx, i.e. where its storage lives
-scope *scope_find_scope(superscope *env, scope *s, u32 idx) {
-  while (s)
-    if (idx > s->start && idx <= s->start + msList_len(s->values))
-      return s;
-    else s = s->parent;
-  assertMessage(false, "value %u not found in scope", idx);
-  return nullptr;
-}
 scope *scope_inferior(superscope *b, scope *s) {
   let res = avalue(
       b->alloc,
@@ -101,6 +92,88 @@ u32 scope_add_value(superscope *env, scope *s, typed_value v) {
   msList_push(env->alloc, s->values, v);
   return msList_len(s->values) + s->start;
 }
+// find named type's info
+struct type_named {
+  scope *owner;
+  u32 idx;
+};
+static inline struct type_named ss_tag_named(superscope *ss, TypeTree t, fptr name) {
+  iflet_tu (let tag, r_tag, t)
+    if_decl (let info, moxmap_get(ss->type_info, tag.name))
+      if_decl (let idx, moxmap_get((*info)->named, name))
+        return (struct type_named){*info, *idx};
+  return (struct type_named){};
+}
+static inline void scope_emit_inst errs(superscope *env, scope *s, ir i) {
+  if (!try_err(try_interpret, (env, s, i))) msList_push(env->alloc, s->instructions, i);
+}
+static bool Type_similar(Type a, Type b) {
+  return a.ptr_level == b.ptr_level && !TypeTree_cmp(a.t, b.t);
+}
+static bool Type_is_integer_like(Type t) {
+  return !t.ptr_level && (tu_is(r_bool, t.t) || Type_isint(t));
+}
+static inline void scope_add_inst errs(superscope *env, scope *s, ir i);
+static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i);
+
+static u32 cast_value errs(superscope *ss, scope *s, u32 left, Type to) {
+  let ot = scope_find(ss, s, left)->t;
+  if (!Type_cmp(ot, to)) return left;
+  if (!Type_cmp(to, T(tu_of(c_any, {})))) return left;
+  let d = scope_add_value(ss, s, TV(to));
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_cast, {.l = left, .d = d})), 0);
+  return d;
+}
+static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i) {
+  if (tu_is(ir_rawop, *i)) {
+    // an overload on the left operand's tag wins; it is the receiver, so passed first
+    let c = &tu_catch(ir_rawop, *i);
+    Type lt = scope_find(env, s, c->r)->t;
+    if (lt.ptr_level <= 1) {
+      char op_str[sizeof(u32) + 1] = {};
+      memcpy(op_str, &c->o, 4);
+      let m = ss_tag_named(env, lt.t, fp((char *)op_str));
+      if (m.owner) {
+        let method = scope_add_value(env, s, *scope_find(env, m.owner, m.idx));
+        u32 vals[2] = {c->r, c->l};
+        u32 res = try_err(lower_function_call_values, (env, s, method, ((slice(u32)){2, vals})), 0);
+        try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_set, {.l = res, .d = c->d})), 0);
+        return nullptr;
+      }
+    }
+  } else if (tu_is(ir_set, *i)) {
+    let c = &tu_catch(ir_set, *i);
+    Type dt = scope_find(env, s, c->d)->t;
+    dt.isref = false; //
+    c->l = try_err(cast_value, (env, s, c->l, dt), 0);
+  } else if (tu_is(ir_cast, *i)) {
+    let c = &tu_catch(ir_cast, *i);
+    Type lt = scope_find(env, s, c->l)->t;
+    Type dt = scope_find(env, s, c->d)->t;
+    dt.isref = false;
+    if (Type_similar(lt, dt)) *i = (ir)tu_of(ir_set, {.l = c->l, .d = c->d});
+    else if (!(Type_is_integer_like(lt) && Type_is_integer_like(dt))) return_err("CANNOT_CAST", nullptr);
+  } else if (tu_is(ir_ret, *i)) {
+    if (env->current_ret) {
+      let c = &tu_catch(ir_ret, *i);
+      *c = try_err(cast_value, (env, s, *c, *env->current_ret), 0);
+    }
+  } else if (tu_is(ir_call, *i)) {
+    let c = &tu_catch(ir_call, *i);
+    if (c->l.fn && c->l.fn <= msList_len(env->functions)) {
+      let inst = &env->functions[c->l.fn - 1].instances[c->l.spec];
+      usize key_len = inst->key_len;
+      typed_value *key = inst->key;
+      foreach (let a, span(c->args.ptr, c->args.len)) {
+        let index = (usize)(a - c->args.ptr);
+        if (index >= key_len) continue;
+        Type target = key[index].t;
+        *a = try_err(cast_value, (env, s, *a, target), 0);
+      }
+    }
+  }
+  return i;
+}
 static inline void scope_add_inst errs(superscope *env, scope *s, ir i) {
   if (tu_is(ir_if, i))
     P$(&tu_catch(ir_if, i),
@@ -111,15 +184,11 @@ static inline void scope_add_inst errs(superscope *env, scope *s, ir i) {
     P$(&tu_catch(ir_while, i),
        ($->cnd ? $->cnd->rootable = false : 0, $),
        ($->body ? $->body->rootable = false : 0, $));
-  if (!catch_errcall(
-          (try_interpret, (env, s, i)),
-          _,
-          (println("[ERROR] try_interpret encountered an error"), false)
-      ))
-    msList_push(env->alloc, s->instructions, i);
+  ir *hooked = try_err(scope_add_inst_typecheck, (env, s, &i));
+  if (hooked) try_err(scope_emit_inst, (env, s, *hooked));
 }
-static inline void scope_bind(superscope *env, scope *s, u32 idx, fptr name) {
-  // if (moxmap_get(s->named, name)) ss_error_at_ptr(env, name.ptr, snprint(env->alloc, "already bound {slice(c8)}", name));
+static inline void scope_bind errs(superscope *env, scope *s, u32 idx, fptr name) {
+  if (moxmap_get(s->named, name)) return_err("SHADOWING_SAME_SCOPE");
   assertMessage(!moxmap_get(s->named, name));
   assertMessage(idx <= msList_len(s->values) + s->start, "%zu <= %zu + %zu", idx, msList_len(s->values), s->start);
   moxmap_set(s->named, name, idx);
@@ -225,7 +294,6 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
     .type_info = moxmap_init(allocator, fptr, scope *, fptr_cmp_hash),
     .thisstack = msList_init(allocator , Type*),
     .functions = msList_init(allocator,function),
-    .fnctx = msList_init(allocator,c_fun),
   }));
   // clang-format on
   res->alloc = cba_init(allocator, nullptr, irb_cbb, res->pointers);
@@ -269,11 +337,14 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
       {"@while", builtin_while},
   };
   foreach (let i, vla(builtins))
-    scope_bind(
-        res,
-        res->outermost,
-        scope_add_value(res, res->outermost, TV(T(tu_of(builtin, i.id)))),
-        fp(i.name)
+    catch_errcall(
+        (scope_bind,
+         (res,
+          res->outermost,
+          scope_add_value(res, res->outermost, TV(T(tu_of(builtin, i.id)))),
+          fp(i.name))),
+        e,
+        (assertMessage(false), 0)
     );
   return res;
 }

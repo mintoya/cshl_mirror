@@ -49,6 +49,7 @@ static struct { // opNumbers
       pipe,
       colon,
       iexpand,
+      as,
       set;
 } opNumbers = {};
 [[gnu::constructor]] static void initOpNumbers() {
@@ -79,6 +80,7 @@ static struct { // opNumbers
   opNumbers.pipe = /*   */ ((opS){"|>"}).n;
   opNumbers.set = /*    */ ((opS){"="}).n;
   opNumbers.iexpand = /**/ ((opS){"'"}).n;
+  opNumbers.as = /*      */ ((opS){"as"}).n;
 }
 tu_def(
     (ast, u8),
