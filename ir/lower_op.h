@@ -11,17 +11,17 @@
 u32 lower_call_extra errs(superscope *ss, scope *s, u32 left, u32 first, astidx args) {
   let l = scope_find(ss, s, left);
   iflet_tu (let fn, c_fun, l->t.t)
-    return try_err(lower_function_call_with, (ss, s, left, args, first),0);
+    return try_err(lower_function_call_with, (ss, s, left, args, first), 0);
   println("calling {Type}", l->t);
-  return_err("UNSUPPORTED_CALL",0);
+  return_err("UNSUPPORTED_CALL", 0);
 }
 u32 lower_call errs(superscope *ss, scope *s, u32 left, astidx args) {
   let l = scope_find(ss, s, left);
   iflet_tu (let builtin, builtin, l->t.t)
-    return try_err(lower_builtin, (ss, s, builtin, args),0);
+    return try_err(lower_builtin, (ss, s, builtin, args), 0);
   iflet_tu (let fn, c_fun, l->t.t)
-    return try_err(lower_function_call, (ss, s, left, args),0);
-  return_err("UNSUPPORTED_CALL",0);
+    return try_err(lower_function_call, (ss, s, left, args), 0);
+  return_err("UNSUPPORTED_CALL", 0);
 }
 tu_def(
     (astLit, u8),
@@ -40,15 +40,15 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx righ
       (default, (u32)0),
       (r_arr, arr, ({ // array index
                       // no bounds checking, because there is no pointer arithmatic
-         if (opNumber != opNumbers.call) return_err("ARRAY_NO_OP",0);
+         if (opNumber != opNumbers.call) return_err("ARRAY_NO_OP", 0);
          let right_node = ast_at(ss->asts, right);
-         (void)tu_catch(astABlock, right_node, return_err("ARRAY_NEEDS_ABLOCK",0));
+         (void)tu_catch(astABlock, right_node, return_err("ARRAY_NEEDS_ABLOCK", 0));
          let items = ast_block_children(ss->asts, right);
-         if (items.len != 1) return_err("ARRAY_INDEX_ONE_ARG",0);
+         if (items.len != 1) return_err("ARRAY_INDEX_ONE_ARG", 0);
          let d = scope_add_value(ss, s, TV(T(*arr.t, .isref = true)));
-         let r = try_err(lower, (ss, s, items.start),0);
-         if (!Type_isint(scope_find(ss, s, r)->t)) return_err("ARRAY_INDEX_NON_INT",0);
-         scope_add_inst(ss, s, (ir)tu_of(ir_array, {.d = d, .r = r, .l = left}));
+         let r = try_err(lower, (ss, s, items.start), 0);
+         if (!Type_isint(scope_find(ss, s, r)->t)) return_err("ARRAY_INDEX_NON_INT", 0);
+         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_array, {.d = d, .r = r, .l = left})), 0);
          d;
        })),
       (r_tag, t, ({
@@ -59,7 +59,7 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx righ
            if_decl (let item, moxmap_get((*info)->named, fp((char *)op_str)))
              result = P$(
                  scope_add_value(ss, s, *scope_find(ss, (*info), *item)),
-                 try_err(lower_call_extra, (ss, s, $, left, right),0)
+                 try_err(lower_call_extra, (ss, s, $, left, right), 0)
              );
          }
          result;
@@ -112,7 +112,7 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx righ
            // ast == ast is identity; id/number/string nodes compare their
            // spelling when the other side is a string
            let self = scope_find(ss, s, left)->v.c_ast;
-           let other = scope_find(ss, s, try_err(lower, (ss, s, right),0));
+           let other = scope_find(ss, s, try_err(lower, (ss, s, right), 0));
            bool res = false;
            iflet_tu (let arr, r_arr, other->t.t) {
              if (self) {
@@ -160,15 +160,15 @@ u32 lower_dot errs(superscope *ss, scope *s, u32 left, astidx right, astLit lit)
   let name = astLit_str(ss, lit);
 
   if (tu_is(c_type, l->t.t)) {
-    let target = try_err(value_asType, (ss, *l),0);
+    let target = try_err(value_asType, (ss, *l), 0);
     iflet_tu (let tag, r_tag, target.t)
       if_decl (let info, moxmap_get(ss->type_info, tag.name))
         if_decl (let idx, moxmap_get((*info)->named, name))
           return scope_add_value(ss, s, *scope_find(ss, *info, *idx));
-    return_err("NO_MEMBER",0);
+    return_err("NO_MEMBER", 0);
   }
 
-  if (l->t.ptr_level > 1) return_err("DOT_UNSUPPORTED",0);
+  if (l->t.ptr_level > 1) return_err("DOT_UNSUPPORTED", 0);
 
   iflet_tu (let tag, r_tag, l->t.t)
     if_decl (let info, moxmap_get(ss->type_info, tag.name))
@@ -180,11 +180,11 @@ u32 lower_dot errs(superscope *ss, scope *s, u32 left, astidx right, astLit lit)
     foreach (let item, mList_iter(st)) {
       if (fptr_eq(item.name, name)) {
         if (Type_is_comptime(item.t))
-          return_err("NO_STORAGE",0);
+          return_err("NO_STORAGE", 0);
         Type rt = item.t;
         rt.isref = true;
         let d = scope_add_value(ss, s, TV(rt));
-        scope_add_inst(ss, s, (ir)tu_of(ir_field, {.l = left, .d = d, .i = i}));
+        try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_field, {.l = left, .d = d, .i = i})), 0);
         return d;
       }
       i++;
@@ -196,14 +196,14 @@ u32 lower_dot errs(superscope *ss, scope *s, u32 left, astidx right, astLit lit)
         Type rt = item.t;
         rt.isref = true;
         let d = scope_add_value(ss, s, TV(rt));
-        scope_add_inst(ss, s, (ir)tu_of(ir_field, {.l = left, .d = d, .i = i})); // maybe it's own ir entry, if porting to c without bitfields
+        try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_field, {.l = left, .d = d, .i = i})), 0); // maybe it's own ir entry, if porting to c without bitfields
         return d;
       }
       i++;
     }
   }
 
-  return_err("NO_MEMBER",0);
+  return_err("NO_MEMBER", 0);
 }
 typedef enum {
   math_mul = enop_mul,
@@ -224,7 +224,7 @@ typedef enum {
   math_neq = enop_neq,
   math_eq = enop_eq,
 } math_operation;
-u32 lower_math(superscope *ss, scope *s, u32 left, u32 right, math_operation op) {
+u32 lower_math errs(superscope *ss, scope *s, u32 left, u32 right, math_operation op) {
   let opNumber = enum_as_op((enum_op)op);
   let lhs = scope_find(ss, s, left);
   let rhs_value = scope_find(ss, s, right);
@@ -249,7 +249,7 @@ u32 lower_math(superscope *ss, scope *s, u32 left, u32 right, math_operation op)
       break;
   }
   let d = scope_add_value(ss, s, TV(rt));
-  scope_add_inst(ss, s, (ir)tu_of(ir_rawop, {.r = left, .l = right, .d = d, .o = opNumber}));
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_rawop, {.r = left, .l = right, .d = d, .o = opNumber})), 0);
   return d;
 }
 u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber) {
@@ -261,10 +261,10 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
         let result = scope_add_value(ss, s, TV_any());
 
         let pipscope = scope_inferior(ss, s);
-        scope_add_inst(ss, s, (ir)tu_of(ir_block, pipscope));
+        try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_block, pipscope)), 0);
         scope_bind(ss, pipscope, left, fp("_"));
-        try_err(lower, (ss, pipscope, right),0);
-        scope_yield(ss, pipscope, result);
+        try_err(lower, (ss, pipscope, right), 0);
+        try_err(scope_yield, (ss, pipscope, result), 0);
 
         return result;
       }),
@@ -273,12 +273,12 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
          // a'b
          // ->
          // @uqot a @qot b
-         let argument = scope_find(ss, s, try_err(lower_builtin_qot, (ss, s, right),0));
-         if (Type_cmp(TV_ast(0).t, argument->t)) return_err("EXPECTED_AST",0);
-         let result = scope_find(ss, s, try_err(lower_call, (ss, s, left, argument->v.c_ast),0));
-         if (Type_cmp(TV_ast(0).t, result->t)) return_err("EXPECTED_AST",0);
-         if (!result->v.c_ast) return_err("EXPECTED_AST",0);
-         return try_err(lower, (ss, s, result->v.c_ast),0);
+         let argument = scope_find(ss, s, try_err(lower_builtin_qot, (ss, s, right), 0));
+         if (Type_cmp(TV_ast(0).t, argument->t)) return_err("EXPECTED_AST", 0);
+         let result = scope_find(ss, s, try_err(lower_call, (ss, s, left, argument->v.c_ast), 0));
+         if (Type_cmp(TV_ast(0).t, result->t)) return_err("EXPECTED_AST", 0);
+         if (!result->v.c_ast) return_err("EXPECTED_AST", 0);
+         return try_err(lower, (ss, s, result->v.c_ast), 0);
        })),
       (default, ),
   );
@@ -286,19 +286,19 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
   switch_tuple(
       op_as_enum(opNumber),
       (enop_set, {
-        scope_add_inst(ss, s, (ir)tu_of(ir_set, {.d = left, .l = try_err(lower, (ss, s, right),0)}));
+        try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = left, .l = try_err(lower, (ss, s, right), 0)})), 0);
         return left;
       }),
       (default, ),
   );
-  if_decl (let ovl, try_err(lower_overload_possible, (ss, s, left, right, opNumber),0)) return ovl;
+  if_decl (let ovl, try_err(lower_overload_possible, (ss, s, left, right, opNumber), 0)) return ovl;
   let res = switch_exp(
       (op_as_enum(opNumber)),
       (enop_pipe /*   */, (assertMessage(false, "unreachable"), (u32)0)),
       (enop_colon /*  */, (assertMessage(false, "unreachable"), (u32)0)),
       (enop_set /*    */, (assertMessage(false, "unreachable"), (u32)0)),
       (enop_iexpand /**/, (assertMessage(false, "unreachable"), (u32)0)),
-      (enop_call, try_err(lower_call, (ss, s, left, right),0)),
+      (enop_call, try_err(lower_call, (ss, s, left, right), 0)),
       (enop_dot, ({
          P$(tu_match_exp(
                 ast_at(ss->asts, right),
@@ -307,27 +307,27 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
                 (astNumber, num, (astLit)tu_of(astNumLit, num)),
                 (default, (assertMessage(false, "non-overloaded dot only works on literals"), (astLit){}))
             ),
-            try_err(lower_dot, (ss, s, left, right, $),0));
+            try_err(lower_dot, (ss, s, left, right, $), 0));
        })),
       // operators are handled, so it should just be math now
-      (enop_mul, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right),0), math_mul)),
-      (enop_div, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right),0), math_div)),
-      (enop_mod, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right),0), math_mod)),
-      (enop_plus, /*    */ lower_math(ss, s, left, try_err(lower, (ss, s, right),0), math_add)),
-      (enop_minus, /*   */ lower_math(ss, s, left, try_err(lower, (ss, s, right),0), math_sub)),
-      (enop_shr, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right),0), math_shr)),
-      (enop_shl, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right),0), math_shl)),
-      (enop_oand, /*    */ lower_math(ss, s, left, try_err(lower, (ss, s, right),0), math_and)),
-      (enop_oor, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right),0), math_or)),
-      (enop_oband, /*   */ lower_math(ss, s, left, try_err(lower, (ss, s, right),0), math_band)),
-      (enop_obor, /*    */ lower_math(ss, s, left, try_err(lower, (ss, s, right),0), math_bor)),
-      (enop_les, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right),0), math_les)),
-      (enop_mor, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right),0), math_mor)),
-      (enop_moq, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right),0), math_moq)),
-      (enop_eq, /*      */ lower_math(ss, s, left, try_err(lower, (ss, s, right),0), math_eq)),
-      (enop_neq, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right),0), math_neq)),
-      (enop_leq, /*     */ lower_math(ss, s, left, try_err(lower, (ss, s, right),0), math_leq)),
+      (enop_mul, /*     */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), math_mul), 0)),
+      (enop_div, /*     */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), math_div), 0)),
+      (enop_mod, /*     */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), math_mod), 0)),
+      (enop_plus, /*    */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), math_add), 0)),
+      (enop_minus, /*   */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), math_sub), 0)),
+      (enop_shr, /*     */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), math_shr), 0)),
+      (enop_shl, /*     */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), math_shl), 0)),
+      (enop_oand, /*    */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), math_and), 0)),
+      (enop_oor, /*     */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), math_or), 0)),
+      (enop_oband, /*   */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), math_band), 0)),
+      (enop_obor, /*    */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), math_bor), 0)),
+      (enop_les, /*     */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), math_les), 0)),
+      (enop_mor, /*     */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), math_mor), 0)),
+      (enop_moq, /*     */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), math_moq), 0)),
+      (enop_eq, /*      */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), math_eq), 0)),
+      (enop_neq, /*     */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), math_neq), 0)),
+      (enop_leq, /*     */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), math_leq), 0)),
   );
-  if (!res) return_err("LOWER_FAILED",0);
+  if (!res) return_err("LOWER_FAILED", 0);
   return res;
 }

@@ -101,7 +101,7 @@ u32 scope_add_value(superscope *env, scope *s, typed_value v) {
   msList_push(env->alloc, s->values, v);
   return msList_len(s->values) + s->start;
 }
-static inline void scope_add_inst(superscope *env, scope *s, ir i) {
+static inline void scope_add_inst errs(superscope *env, scope *s, ir i) {
   if (tu_is(ir_if, i))
     P$(&tu_catch(ir_if, i),
        ($->cnd ? $->cnd->rootable = false : 0, $),
@@ -124,12 +124,12 @@ static inline void scope_bind(superscope *env, scope *s, u32 idx, fptr name) {
   assertMessage(idx <= msList_len(s->values) + s->start, "%zu <= %zu + %zu", idx, msList_len(s->values), s->start);
   moxmap_set(s->named, name, idx);
 }
-static inline void scope_yield(superscope *ss, scope *s, u32 result) {
+static inline void scope_yield errs(superscope *ss, scope *s, u32 result) {
   assertMessage(result <= s->start);
   let v = scope_find(ss, s, result);
   assertMessage(tu_is(c_any, v->t.t));
   v->t = msList_last(s->values).t;
-  scope_add_inst(ss, s, (ir)tu_of(ir_set, {.l = s->start + msList_len(s->values), .d = result})); // TODO operator stuff
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = s->start + msList_len(s->values), .d = result}))); // TODO operator stuff
 }
 
 static inline Type Type_ptr(Type t) {
@@ -157,17 +157,17 @@ static inline u32 ss_get_named_failable_noref(superscope *env, scope *s, fptr n)
 }
 static inline u32 ss_get_named errs(superscope *env, scope *s, fptr n) {
   let val = ss_get_named_failable_noref(env, s, n);
-  if (!val) return_err("UNBOUND_ID",0);
+  if (!val) return_err("UNBOUND_ID", 0);
   let vo = scope_find(env, s, val);
   if (vo->t.isref) return val;
   if (Type_is_comptime(vo->t)) return scope_add_value(env, s, *vo);
   let res = scope_add_value(env, s, TV(Type_ref(vo->t)));
-  scope_add_inst(env, s, (ir)tu_of(ir_getref, {.d = res, .l = val}));
+  try_err(scope_add_inst, (env, s, (ir)tu_of(ir_getref, {.d = res, .l = val})), 0);
   return res;
 }
 static inline u32 ss_get_named_mut errs(superscope *env, scope *s, fptr n) {
   let val = ss_get_named_failable_noref(env, s, n);
-  if (!val) return_err("UNBOUND_ID",0);
+  if (!val) return_err("UNBOUND_ID", 0);
   return val;
 }
 

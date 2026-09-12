@@ -115,7 +115,7 @@ static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_
   if_decl (let inst, moxmap_get(function_item->mp, key)) {
     let instance = &function_item->instances[*inst];
     let result = scope_add_value(ss, s, TV(instance->ret));
-    scope_add_inst(ss, s, (ir)tu_of(ir_call, {.l = {.fn = fn, .spec = instance - function_item->instances}, .d = result, .args = aargs}));
+    try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_call, {.l = {.fn = fn, .spec = instance - function_item->instances}, .d = result, .args = aargs})), 0);
     return result;
   }
 
@@ -143,7 +143,7 @@ static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_
       value = scope_add_value(ss, spec, *param);
     } else {
       value = scope_add_value(ss, spec, TV(param->t));
-      scope_add_inst(ss, spec, (ir)tu_of(ir_farg, {.l = index, .d = value}));
+      try_err(scope_add_inst, (ss, spec, (ir)tu_of(ir_farg, {.l = index, .d = value})), 0);
     }
     scope_bind(ss, spec, value, name);
   }
@@ -156,11 +156,11 @@ static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_
 
   let result = scope_add_value(ss, s, TV(instance.ret));
   // clang-format off
-  scope_add_inst(ss, s, (ir)tu_of(ir_call, {
+  try_err(scope_add_inst,(ss, s, (ir)tu_of(ir_call, {
    .l = {.fn = fn, .spec = spec_number},
    .d = result,
    .args = aargs,
-  }));
+  })),0);
   // clang-format on
   return result;
 }

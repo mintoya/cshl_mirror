@@ -24,7 +24,7 @@ u32 lower_truthy errs(superscope *ss, scope *s, astidx a) {
     if (tu_is(c_int, t.t))
       return scope_add_value(ss, s, TV(T(tu_of(r_bool, {})), avalue(ss->alloc, (bool)!!BInt.cmp(v->v.c_int, nullptr))));
     let d = scope_add_value(ss, s, TV(T(tu_of(r_bool, {}))));
-    scope_add_inst(ss, s, (ir)tu_of(ir_cast, {.l = l, .d = d}));
+    try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_cast, {.l = l, .d = d})), 0);
     return d;
   } else if (tu_is(c_ast, t.t))
     return scope_add_value(ss, s, TV(T(tu_of(r_bool, {})), avalue(ss->alloc, (bool)(v->v.c_ast && !tu_is(astEmpty, ast_at(ss->asts, v->v.c_ast))))));
@@ -60,7 +60,7 @@ static u32 lower_builtin_if errs(superscope *ss, scope *s, astidx args) {
   try_err(lower, (ss, ts, list.start + 1), 0);
   let fs = list.len == 3 ? scope_inferior(ss, s) : nullptr;
   if (fs) try_err(lower, (ss, fs, list.start + 2), 0);
-  scope_add_inst(ss, s, (ir)tu_of(ir_if, {.cnd = cnds, .t = ts, .f = fs}));
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_if, {.cnd = cnds, .t = ts, .f = fs})), 0);
   return scope_add_value(ss, s, TV(T(tu_of(r_void, {}))));
 }
 static u32 lower_builtin_while errs(superscope *ss, scope *s, astidx args) {
@@ -70,7 +70,7 @@ static u32 lower_builtin_while errs(superscope *ss, scope *s, astidx args) {
   try_err(lower_truthy, (ss, cnds, list.start + 0), 0);
   let cs = list.len == 2 ? scope_inferior(ss, s) : nullptr;
   if (list.len == 2) try_err(lower, (ss, cs, list.start + 1), 0);
-  scope_add_inst(ss, s, (ir)tu_of(ir_while, {.cnd = cnds, .body = cs}));
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_while, {.cnd = cnds, .body = cs})), 0);
   return scope_add_value(ss, s, TV(T(tu_of(r_void, {}))));
 }
 static u32 lower_builtin_at errs(superscope *ss, scope *s, astidx args) {
@@ -82,7 +82,7 @@ static u32 lower_builtin_at errs(superscope *ss, scope *s, astidx args) {
   Type inner = t;
   inner.ptr_level--;
   let d = scope_add_value(ss, s, TV(inner));
-  scope_add_inst(ss, s, (ir)tu_of(ir_putptr, {.l = l, .d = d}));
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_putptr, {.l = l, .d = d})), 0);
   return d;
 }
 static u32 lower_builtin_where errs(superscope *ss, scope *s, astidx args) {
@@ -91,7 +91,7 @@ static u32 lower_builtin_where errs(superscope *ss, scope *s, astidx args) {
   let l = try_err(lower, (ss, s, list.start + 0), 0);
   let t = scope_find(ss, s, l)->t;
   let d = scope_add_value(ss, s, TV(Type_ptr(t)));
-  scope_add_inst(ss, s, (ir)tu_of(ir_getptr, {.l = l, .d = d}));
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_getptr, {.l = l, .d = d})), 0);
   return d;
 }
 static u32 lower_builtin_ref errs(superscope *ss, scope *s, astidx args) {
@@ -100,7 +100,7 @@ static u32 lower_builtin_ref errs(superscope *ss, scope *s, astidx args) {
   let l = try_err(lower, (ss, s, list.start + 0), 0);
   let t = scope_find(ss, s, l)->t;
   let d = scope_add_value(ss, s, TV(Type_ref(t)));
-  scope_add_inst(ss, s, (ir)tu_of(ir_getref, {.l = l, .d = d}));
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_getref, {.l = l, .d = d})), 0);
   return d;
 }
 
@@ -109,7 +109,7 @@ static u32 lower_builtin_return errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
   if (list.len > 1) return_err("WRONG_ARG_COUNT", 0);
   let val = list.len ? try_err(lower, (ss, s, list.start + 0), 0) : scope_add_value(ss, s, void_value);
-  scope_add_inst(ss, s, (ir)tu_of(ir_ret, val));
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_ret, val)), 0);
   return scope_add_value(ss, s, void_value);
 }
 
@@ -427,12 +427,12 @@ static u32 lower_builtin_this errs(superscope *ss, scope *s, astidx args) {
 }
 static u32 lower_builtin_break errs(superscope *ss, scope *s, astidx args) {
   if (builtin_arg_list(ss->asts, args).len) return_err("WRONG_ARG_COUNT",0);
-  scope_add_inst(ss, s, (ir)tu_of(ir_break, {}));
+  try_err (scope_add_inst,(ss, s, (ir)tu_of(ir_break, {})),0);
   return scope_add_value(ss, s, void_value);
 }
 static u32 lower_builtin_continue errs(superscope *ss, scope *s, astidx args) {
   if (builtin_arg_list(ss->asts, args).len) return_err("WRONG_ARG_COUNT",0);
-  scope_add_inst(ss, s, (ir)tu_of(ir_cont, {}));
+  try_err (scope_add_inst,(ss, s, (ir)tu_of(ir_cont, {})),0);
   return scope_add_value(ss, s, void_value);
 }
 

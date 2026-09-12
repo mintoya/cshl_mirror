@@ -36,19 +36,19 @@ static u32 coerce_type errs(superscope *ss, scope *s, u32 left, Type to) {
   if (!Type_cmp(to, T(tu_of(c_any, {})))) {
     if (!ot.isref) return left;
     let d = scope_add_value(ss, s, TV(P$(ot, ($.isref = false, $))));
-    scope_add_inst(ss, s, (ir)tu_of(ir_set, {.l = left, .d = d}));
+    try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = left, .d = d})), 0);
     return d;
   }
   if (!to.isref && Type_similar(ot, to)) {
     if (!ot.isref) return left;
     let d = scope_add_value(ss, s, TV(to));
-    scope_add_inst(ss, s, (ir)tu_of(ir_set, {.l = left, .d = d}));
+    try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = left, .d = d})), 0);
     return d;
   }
   // all integer cast allowed
   if (type_is_integer_like(ot) && type_is_integer_like(to)) {
     let dest = scope_add_value(ss, s, TV(to));
-    scope_add_inst(ss, s, (ir)tu_of(ir_cast, {.l = left, .d = dest}));
+    try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_cast, {.l = left, .d = dest})), 0);
     return dest;
   }
   return try_err(lower_cast_overload, (ss, s, left, to), 0);
@@ -64,7 +64,7 @@ u32 lower_op_wrap errs(superscope *ss, scope *s, astidx left, astidx right, u32 
   if (number == opNumbers.set && tu_is(astId, ast_at(ss->asts, left))) {
     let left_node = ast_at(ss->asts, left);
     let dst = try_err(ss_get_named_mut, (ss, s, ast_text(ss, tu_catch(astId, left_node))), 0);
-    scope_add_inst(ss, s, (ir)tu_of(ir_set, {.d = dst, .l = try_err(lower, (ss, s, right), 0)}));
+    try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = dst, .l = try_err(lower, (ss, s, right), 0)})), 0);
     return dst;
   }
   return try_err(lower_op, (ss, s, try_err(lower, (ss, s, left), 0), right, number), 0);
@@ -92,11 +92,11 @@ u32 lower errs(superscope *ss, scope *s, astidx a) {
       (astBBlock, bb, ({
          let res = scope_add_value(ss, s, TV(T(tu_of(c_any, {}))));
          let sc = scope_inferior(ss, s);
-         scope_add_inst(ss, s, (ir)tu_of(ir_block, sc));
+         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_block, sc)), 0);
          let stmts = ast_block_children(ss->asts, a);
          foreach (let i, span(stmts.start, stmts.len))
            try_err(lower, (ss, sc, i), 0);
-         scope_yield(ss, sc, res);
+         try_err(scope_yield, (ss, sc, res), 0);
          res;
        })),
       (astABlock, _, (return_err("LONE_AB", 0), (u32)0)),
