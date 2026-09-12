@@ -1,6 +1,7 @@
 #include "ast.h"
 #include "ir/interpret.h"
 #include "ir/lower.h"
+#include "ir/scope.h"
 
 astidx_full parse_source errs(allocfn out_allocator, fptr input, const char *filename);
 
@@ -552,7 +553,7 @@ test_fn(lower_error_too_many_args) {
       )
   );
   test_assert(e.err_code);
-  test_assert(!strcmp(e.err_code, "WRONG_ARG_COUNT"));
+  test_streq(e.err_code, "WRONG_ARG_COUNT");
   test_assert(e.line > 0);
   test_assert(e.file != nullptr);
 }
@@ -562,7 +563,7 @@ test_fn(lower_error_builtin_arg_count) {
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("@cif(1);"));
   test_assert(e.err_code);
-  test_assert(!strcmp(e.err_code, "WRONG_ARG_COUNT"));
+  test_streq(e.err_code, "WRONG_ARG_COUNT");
 }
 
 test_fn(lower_error_type_not_value) {
@@ -570,7 +571,7 @@ test_fn(lower_error_type_not_value) {
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("@arr(2, 5);"));
   test_assert(e.err_code);
-  test_assert(!strcmp(e.err_code, "TYPE_IS_NOT_VALUE"));
+  test_streq(e.err_code, "TYPE_IS_NOT_VALUE");
 }
 
 test_fn(lower_error_function_cannot_capture_frame) {
@@ -590,7 +591,7 @@ test_fn(lower_error_function_cannot_capture_frame) {
       )
   );
   test_assert(e.err_code);
-  test_assert(!strcmp(e.err_code, "UNBOUND_ID"));
+  test_streq(e.err_code, "UNBOUND_ID");
 }
 
 test_fn(lower_error_tuple) {
@@ -598,7 +599,7 @@ test_fn(lower_error_tuple) {
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("(1, 2);"));
   test_assert(e.err_code);
-  test_assert(!strcmp(e.err_code, "TUPLE"));
+  test_streq(e.err_code, "TUPLE");
 }
 
 test_fn(lower_error_id_requires_astid) {
@@ -613,7 +614,7 @@ test_fn(lower_error_id_requires_astid) {
       )
   );
   test_assert(e.err_code);
-  test_assert(!strcmp(e.err_code, "ID_REQUIRES_ASTID"));
+  test_streq(e.err_code, "ID_REQUIRES_ASTID");
 }
 
 test_fn(lower_error_lone_ab) {
@@ -621,7 +622,7 @@ test_fn(lower_error_lone_ab) {
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("[1, 2];"));
   test_assert(e.err_code);
-  test_assert(!strcmp(e.err_code, "LONE_AB"));
+  test_streq(e.err_code, "LONE_AB");
 }
 
 test_fn(lower_error_compare_type_with_number) {
@@ -629,7 +630,7 @@ test_fn(lower_error_compare_type_with_number) {
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("(@sint(8) == 3);"));
   test_assert(e.err_code);
-  test_assert(!strcmp(e.err_code, "OP_UNSUPPORTED_OPERANDS"));
+  test_streq(e.err_code, "OP_UNSUPPORTED_OPERANDS");
 }
 
 test_fn(lower_error_order_types) {
@@ -637,7 +638,7 @@ test_fn(lower_error_order_types) {
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("(@sint(8) < @sint(16));"));
   test_assert(e.err_code);
-  test_assert(!strcmp(e.err_code, "OP_UNSUPPORTED_OPERANDS"));
+  test_streq(e.err_code, "OP_UNSUPPORTED_OPERANDS");
 }
 
 test_fn(lower_error_op_on_struct_without_overload) {
@@ -653,7 +654,7 @@ test_fn(lower_error_op_on_struct_without_overload) {
       )
   );
   test_assert(e.err_code);
-  test_assert(!strcmp(e.err_code, "OP_UNSUPPORTED_OPERANDS"));
+  test_streq(e.err_code, "OP_UNSUPPORTED_OPERANDS");
 }
 
 test_fn(interpret_error_yield_empty) {
@@ -662,5 +663,5 @@ test_fn(interpret_error_yield_empty) {
   let env = ss_init(arena, (astidx_full){});
   let e = call_err(interpret, (env, env->outermost)).err;
   test_assert(e.err_code);
-  test_assert(!strcmp(e.err_code, "YIELD_EMPTY"));
+  test_streq(e.err_code, "YIELD_EMPTY");
 }
