@@ -112,7 +112,7 @@ void interpret_cast(irstate st, ir_cast c) {
 }
 bool istrue errs(typed_value t) {
   if (Type_cmp(T(tu_of(r_bool, {})), t.t))
-    return_err("TRUTHINESS_NON_BOOL"); // truthiness should be handled by now
+    return_err("TRUTHINESS_NON_BOOL", false); // truthiness should be handled by now
   return *(bool *)t.v.value;
 }
 void interpret_block errs(irstate st, ir_block c);
@@ -155,7 +155,9 @@ void interpret_call errs(irstate st, ir_call c) {
   usize nargs = st.fnctx.ftype.len - 1;
   // a zero-length allocation is not a valid allocator call, so a no-arg call keeps null args
   st.fnctx.args = nargs ? acreate(st.ss->alloc, value_store[nargs]) : nullptr;
-  defer { if (nargs) adestroy(st.ss->alloc, (value_store(*)[nargs]) st.fnctx.args); };
+  defer {
+    if (nargs) adestroy(st.ss->alloc, (value_store(*)[nargs])st.fnctx.args);
+  };
   if (nargs)
     foreach (let it, span(*st.fnctx.args, nargs))
       *it = irstate_find(st, c.args.ptr[it - *st.fnctx.args])->v;
@@ -291,20 +293,20 @@ void interpret_op errs(irstate st, ir inst) {
 static inline bool try_reg_known errs(superscope *ss, scope *s, u32 idx) {
   let it = scope_find(ss, s, idx);
   if (Type_is_comptime(it->t) && !it->v.value && Type_cmp(it->t, TV_ast(0).t))
-    return_err("COMPTIME_UNKNOWN");
+    return_err("COMPTIME_UNKNOWN", false);
   return Type_is_comptime(it->t) && it->v.value;
 }
 bool try_interpret errs(superscope *ss, scope *s, ir inst) {
   irstate st = {.ss = ss, .s = s, .root = s, .sig = {}};
   let fold = tu_match_exp(
       inst,
-      (ir_rawop, c, (bool)(try_err(try_reg_known, (ss, s, c.l)) && try_err(try_reg_known, (ss, s, c.r)))),
-      (ir_set, c, (bool)(try_err(try_reg_known, (ss, s, c.l)) && !irstate_find(st, c.d)->t.isref)),
+      (ir_rawop, c, (bool)(try_err(try_reg_known, (ss, s, c.l), 0) && try_err(try_reg_known, (ss, s, c.r), 0))),
+      (ir_set, c, (bool)(try_err(try_reg_known, (ss, s, c.l), 0) && !irstate_find(st, c.d)->t.isref)),
       (ir_call, c, ({
          let it = &ss->functions[c.l.fn - 1].instances[c.l.spec];
          if (!Type_is_comptime(it->ret)) return false;
          foreach (let a, span(c.args.ptr, c.args.len))
-           if (!try_err(try_reg_known, (ss, s, *a))) return false;
+           if (!try_err(try_reg_known, (ss, s, *a), 0)) return false;
          true;
        })),
       (ir_cast, _, false),
@@ -330,12 +332,12 @@ bool try_interpret errs(superscope *ss, scope *s, ir inst) {
       }),
       (default),
   );
-  try_err(interpret_op, (st, inst));
+  try_err(interpret_op, (st, inst), 0);
   return true;
 }
 typed_value interpret errs(superscope *ss, scope *s) {
-  try_err(interpret_block, ((irstate){.ss = ss, .s = s, .root = s, .sig = {}}, s));
+  try_err(interpret_block, ((irstate){.ss = ss, .s = s, .root = s, .sig = {}}, s), TV({}));
   let result = msList_last(s->values);
-  if (!result.v.value) return_err("YIELD_EMPTY");
+  if (!result.v.value) return_err("YIELD_EMPTY", TV({}));
   return result;
 }

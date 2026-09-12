@@ -103,8 +103,8 @@ bool try_interpret errs /*             */ (superscope *ss, scope *s, ir inst);
 typed_value temporary_interpret errs(superscope *ss, scope *s, astidx a) {
   let work = P$(scope_inferior(ss, s), ($->rootable = false, $));
   defer { scope_destroy(ss, work); };
-  try_err(lower, (ss, work, a));
-  let result = try_err(interpret, (ss, work));
+  try_err(lower, (ss, work, a), TV({}));
+  let result = try_err(interpret, (ss, work), TV({}));
   if (tu_is(c_int, result.t.t) && result.v.c_int)
     result.v.c_int = BInt.copy(ss->alloc, result.v.c_int);
   return result;
@@ -250,8 +250,8 @@ static inline bool Type_isint(Type t) {
 
 static inline Type value_asType errs(superscope *ss, typed_value t) {
   if (!tu_is(c_type, t.t.t))
-    return_err("TYPE_IS_NOT_VALUE");
-  if (!t.v.c_type) return_err("UNKNOWN_TYPE");
+    return_err("TYPE_IS_NOT_VALUE", T({}));
+  if (!t.v.c_type) return_err("UNKNOWN_TYPE", T({}));
   return *t.v.c_type;
 }
 static inline typed_value Type_asValue(superscope *s, Type t) { return TV_type(ss_getType(s, t)); }
@@ -410,10 +410,10 @@ static inline astidx_full ss_ast_full(superscope *ss, astidx idx) {
 
 static inline fptr id_from_ast errs(superscope *ss, scope *s, astidx name) {
   iflet_tu (let id, astId, ast_at(ss->asts, name)) return ast_text(ss, id);
-  let tv = try_err(temporary_interpret, (ss, s, name));
-  if (!tu_is(c_ast, tv.t.t) || !tv.v.c_ast) return_err("ID_REQUIRES_ASTID");
+  let tv = try_err(temporary_interpret, (ss, s, name), nullFptr);
+  if (!tu_is(c_ast, tv.t.t) || !tv.v.c_ast) return_err("ID_REQUIRES_ASTID", nullFptr);
   let inner = ast_at(ss->asts, tv.v.c_ast);
-  if (!tu_is(astId, inner)) return_err("ID_REQUIRES_ASTID");
+  if (!tu_is(astId, inner)) return_err("ID_REQUIRES_ASTID", nullFptr);
   return ast_text(ss, tu_catch(astId, inner));
 }
 

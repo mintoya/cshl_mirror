@@ -157,7 +157,7 @@ static inline u32 ss_get_named_failable_noref(superscope *env, scope *s, fptr n)
 }
 static inline u32 ss_get_named errs(superscope *env, scope *s, fptr n) {
   let val = ss_get_named_failable_noref(env, s, n);
-  if (!val) return_err("UNBOUND_ID");
+  if (!val) return_err("UNBOUND_ID",0);
   let vo = scope_find(env, s, val);
   if (vo->t.isref) return val;
   if (Type_is_comptime(vo->t)) return scope_add_value(env, s, *vo);
@@ -167,7 +167,7 @@ static inline u32 ss_get_named errs(superscope *env, scope *s, fptr n) {
 }
 static inline u32 ss_get_named_mut errs(superscope *env, scope *s, fptr n) {
   let val = ss_get_named_failable_noref(env, s, n);
-  if (!val) return_err("UNBOUND_ID");
+  if (!val) return_err("UNBOUND_ID",0);
   return val;
 }
 
