@@ -47,10 +47,16 @@ struct superscope {
     filelist flist;
   };
 
+  // the type tree lives here, just like the ast does
+  typelist tlist;
+  typestructlist sitems;
+  typebitflist bitems;
+
+  moxmap(Type, typeidx) typeindex;
+  // the core compile time types, interned up front so constants need no lookup
+  typeidx t_void, t_any, t_int, t_ast, t_type;
   moxmap(void *, usize) pointers;
-  moxmap(TypeTree, TypeTree *) typetrees;
-  moxmap(Type, Type *) types;
-  msList(Type *) thisstack;
+  msList(typeidx) thisstack;
   moxmap(fptr, scope *) type_info;
   msList(function) functions;
   // nullable, uses the actual stack
@@ -59,6 +65,29 @@ struct superscope {
   u32 foldempty;
 };
 
+// the lists a type needs to be walked, mirrors ast_at's need for an astlist
+static inline typeenv ss_typeenv(superscope *ss) {
+  return (typeenv){
+      .tlist = &ss->tlist,
+      .sitems = &ss->sitems,
+      .bitems = &ss->bitems,
+      .plist = &ss->plist,
+      .flist = &ss->flist,
+  };
+}
+// reserves a run of Type slots and the null that ends it, up front so nothing can interleave
+static inline typeidx ss_type_reserve(superscope *ss, usize count) {
+  typeidx start = (typeidx)ss->tlist.len + 1;
+  foreach (let i, range(0, count + 1))
+    sglist_push(ss->tlist, (Type){});
+  return start;
+}
+static inline typeidx ss_member_reserve(superscope *ss, usize count) {
+  typeidx start = (typeidx)ss->sitems.len + 1;
+  foreach (let i, range(0, count + 1))
+    sglist_push(ss->sitems, (r_struct_item){});
+  return start;
+}
 static inline ast ast_at(astlist al, astidx idx) {
   return (!idx || idx > al.len) ? (ast)tu_of(astNull, {}) : sglist_get(al, idx - 1);
 }
@@ -70,11 +99,15 @@ static inline usize ast_loc(superscope *ss, astidx idx) {
   let p = srcpos_ast(ast_at(ss->asts, idx), ss->asts);
   return (!p || p > ss->plist.len) ? (usize)-1 : sglist_get(ss->plist, p - 1).offset;
 }
-static inline astidx ast_make_id(superscope *ss, fptr text) {
+// a source position that spells text, for generated ids and names
+static inline srcpos ss_srcpos_of_text(superscope *ss, fptr text) {
   sglist_push(ss->flist, (fileItem){.filename = nullptr, .filecontent = text, .fileptr = nullptr});
   u32 fidx = (u32)ss->flist.len; // 1-based
   sglist_push(ss->plist, (posItem){.fidx = fidx, .offset = 0, .length = (u32)text.len});
-  sglist_push(ss->asts, (ast)tu_of(astId, (srcpos)ss->plist.len));
+  return (srcpos)ss->plist.len;
+}
+static inline astidx ast_make_id(superscope *ss, fptr text) {
+  sglist_push(ss->asts, (ast)tu_of(astId, ss_srcpos_of_text(ss, text)));
   return (astidx)ss->asts.len;
 }
 static inline astidx ast_make_empty(superscope *ss) {
@@ -86,13 +119,32 @@ scope *scope_inferior(superscope *b, scope *s);
 scope *scope_find_rootable(superscope *b, scope *s);
 void scope_destroy(superscope *b, scope *s);
 u32 scope_add_value(superscope *env, scope *s, typed_value v);
-Type *ss_getType(superscope *ss, Type t);
-TypeTree *ss_getTypeTree(superscope *ss, TypeTree t);
+typeidx ss_type_intern(superscope *ss, Type t);
+static inline Type *ss_getType(superscope *ss, Type t) {
+  return &sglist_get(ss->tlist, ss_type_intern(ss, t) - 1);
+}
+static inline Type ss_type(superscope *ss, typeidx idx) { return type_at(ss_typeenv(ss), idx); }
+// a value of type t, interning t
+static inline typed_value TV_of(superscope *ss, Type t) { return (typed_value){.t = ss_type_intern(ss, t)}; }
+// an existing value retyped as t, interning t
+static inline typed_value TV_with(superscope *ss, typed_value v, Type t) {
+  v.t = ss_type_intern(ss, t);
+  return v;
+}
+// the core type constants, they need no lookup because ss_init interns them once
+static inline typed_value TV_void(superscope *ss) { return (typed_value){.t = ss->t_void}; }
+static inline typed_value TV_any(superscope *ss) { return (typed_value){.t = ss->t_any}; }
+static inline typed_value TV_bigint(superscope *ss, bigint b) { return (typed_value){.t = ss->t_int, .v = {.c_int = b}}; }
+static inline typed_value TV_ast(superscope *ss, astidx a) { return (typed_value){.t = ss->t_ast, .v = {.c_ast = a}}; }
+static inline typed_value TV_type(superscope *ss, typeidx t) { return (typed_value){.t = ss->t_type, .v = {.c_type = t}}; }
+// the ast type as a Type, for comparisons
+static inline Type ss_ast_type(superscope *ss) { return ss_type(ss, ss->t_ast); }
+// a value's Type, for the places that cannot take a superscope: tests, map comparators
+static inline Type tv_type(typed_value v) { return type_at(typeenv_current, v.t); }
 typed_value *scope_find(superscope *env, scope *s, u32 idx);
 scope *scope_copy(superscope *ss, scope *s);
 static inline void scope_bind errs(superscope *env, scope *s, u32 idx, fptr name);
 #define T(...) ((Type){.t = __VA_ARGS__})
-#define TV(...) ((typed_value){__VA_ARGS__})
 
 // lowers an ast and gives you the resulting value's index. all instructions go into scope s
 u32 lower errs /*                      */ (superscope *ss, scope *s, astidx a);
@@ -105,9 +157,9 @@ static u32 lower_function_call_values errs(superscope *ss, scope *s, u32 fn, sli
 typed_value temporary_interpret errs(superscope *ss, scope *s, astidx a) {
   let work = P$(scope_inferior(ss, s), ($->rootable = false, $));
   defer { scope_destroy(ss, work); };
-  try_err(lower, (ss, work, a), TV({}));
-  let result = try_err(interpret, (ss, work), TV({}));
-  if (tu_is(c_int, result.t.t) && result.v.c_int)
+  try_err(lower, (ss, work, a), (typed_value){});
+  let result = try_err(interpret, (ss, work), (typed_value){});
+  if (tu_is(c_int, ss_type(ss, result.t).t) && result.v.c_int)
     result.v.c_int = BInt.copy(ss->alloc, result.v.c_int);
   return result;
 }
@@ -180,10 +232,7 @@ typePrinter(enum_op) {
   );
 }
 
-[[gnu::const]] typed_value TV_bigint(bigint b) { return TV(T(tu_of(c_int, {})), b); }
-[[gnu::const]] typed_value TV_type(Type *t) { return TV(T(tu_of(c_type, {})), t); }
-[[gnu::const]] typed_value TV_ast(astidx ats) { return (typed_value){.t = T(tu_of(c_ast, {})), .v.c_ast = ats}; }
-[[gnu::const]] typed_value TV_any() { return TV(T(tu_of(c_any, {}))); }
+
 
 static inline enum_op op_as_enum(u32 opn) {
   return opn == opNumbers.call      ? enop_call
@@ -242,25 +291,25 @@ static inline u32 enum_as_op(enum_op en) {
   );
 }
 
-static inline bool Type_isint(Type t) {
+static inline bool Type_isint(Type t, typeenv e) {
   return !t.ptr_level &&
          tu_match_exp(
              t.t,
              (c_int, _, true),
              (r_uint, _, true),
              (r_sint, _, true),
-             (r_tag, tg, Type_isint((Type){.t = *tg.t})),
+             (r_tag, tg, Type_isint(type_at(e, tg.t), e)),
              (default, false),
          );
 }
 
 static inline Type value_asType errs(superscope *ss, typed_value t) {
-  if (!tu_is(c_type, t.t.t))
+  if (!tu_is(c_type, ss_type(ss, t.t).t))
     return_err("TYPE_IS_NOT_VALUE", T({}));
   if (!t.v.c_type) return_err("UNKNOWN_TYPE", T({}));
-  return *t.v.c_type;
+  return type_at(ss_typeenv(ss), t.v.c_type);
 }
-static inline typed_value Type_asValue(superscope *s, Type t) { return TV_type(ss_getType(s, t)); }
+static inline typed_value Type_asValue(superscope *s, Type t) { return TV_type(s, ss_type_intern(s, t)); }
 static inline fptr string_escape(allocfn allocator, fptr in) {
   assertMessage(in.len > 1 && in.ptr[0] == '"' && in.ptr[in.len - 1] == '"');
   let result = mList_init(allocator, u8, in.len - 2);
@@ -308,29 +357,33 @@ static inline u32 ss_compileInt(superscope *b, scope *s, fptr in) {
   else if (fptr_eq(front, "0b"))
     result = BInt.from.fptr(b->alloc, 2, slice_split(in, (2, -1))[0]);
   else result = BInt.from.fptr(b->alloc, 10, in);
-  return scope_add_value(b, s, TV_bigint(result));
+  return scope_add_value(b, s, TV_bigint(b, result));
 }
 static inline u32 ss_compileString(superscope *b, scope *s, fptr in) {
   assertMessage(in.len > 1 && in.ptr[0] == '"' && in.ptr[in.len - 1] == '"');
   in = string_escape(b->alloc, in);
-  let t = T(tu_of(r_arr, {ss_getTypeTree(b, (TypeTree)tu_of(r_sint, 8)), in.len}));
+  r_arr strrec = {.t = ss_type_intern(b, T(TypeTree_sint(8)))};
+  TypeTree_arr_set_count(&strrec, (u32)in.len);
+  let t = T(tu_of(r_arr, strrec));
   t.iscomptime = true;
-  return scope_add_value(b, s, TV(*ss_getType(b, t), in.ptr));
+  return scope_add_value(b, s, TV_with(b, (typed_value){.v = {.value = in.ptr}}, t));
 }
-static inline bigint int_as_bigint(allocfn allocator, typed_value t) {
-  assertMessage(!t.t.ptr_level);
-  assertMessage(!t.t.isref, "todo");
+static inline bigint int_as_bigint(allocfn allocator, typed_value t, typeenv e) {
+  let tt = type_at(e, t.t);
+  assertMessage(!tt.ptr_level);
+  assertMessage(!tt.isref, "todo");
   assertMessage(t.v.value, "tried to convert unknown value");
   return tu_match_exp(
-      t.t.t,
+      tt.t,
       (c_int, _, BInt.copy(allocator, t.v.c_int)),
-      (r_sint, si, BInt.from.bits(allocator, t.v.value, si, 1)),
-      (r_uint, si, BInt.from.bits(allocator, t.v.value, si, 0)),
+      (r_sint, si, BInt.from.bits(allocator, t.v.value, si.bits, 1)),
+      (r_uint, si, BInt.from.bits(allocator, t.v.value, si.bits, 0)),
       (r_bool, _, BInt.from.i64(allocator, !!*(u8 *)t.v.value)),
-      (r_tag, tg, int_as_bigint(allocator, TV(T(*tg.t), t.v))),
+      // the tag's child index is already interned, so no lookup is needed here
+      (r_tag, tg, int_as_bigint(allocator, (typed_value){.t = tg.t, .v = t.v}, e)),
       (default,
        (({
-          if (Type_isint(t.t))
+          if (Type_isint(tt, e))
             assertMessage(
                 false,
                 "unhandled integer case , %s",
@@ -346,28 +399,30 @@ static inline bigint int_as_bigint(allocfn allocator, typed_value t) {
   );
 }
 static inline void bigint_into_int(superscope *ss, typed_value *t, bigint b) {
+  let e = ss_typeenv(ss);
+  let tt = type_at(e, t->t);
   tu_match_void(
-      t->t.t,
+      tt.t,
       (c_int, _, {
         let o = &t->v.c_int;
         msList_deInit(ss->alloc, *o);
         *o = BInt.copy(ss->alloc, b);
       }),
       (r_sint, si, {
-        let allocated_len = Type_sizeof(t->t);
+        let allocated_len = Type_sizeof(tt, e);
         memcpy(t->v.value, b, allocated_len);
       }),
       (r_uint, si, {
-        let allocated_len = Type_sizeof(t->t);
+        let allocated_len = Type_sizeof(tt, e);
         memcpy(t->v.value, b, allocated_len);
       }),
       (r_bool, _, { *(u8 *)t->v.value = !!BInt.cmp(b, nullptr); }),
       (r_tag, tg, {
-        let temp = (typed_value){.t = T(*tg.t), .v = t->v};
+        let temp = (typed_value){.t = tg.t, .v = t->v};
         return bigint_into_int(ss, &temp, b);
       }),
       (default, {
-        if (Type_isint(t->t))
+        if (Type_isint(tt, e))
           assertMessage(
               false,
               "unhandled integer case , %s",
@@ -417,27 +472,33 @@ static inline astidx_full ss_ast_full(superscope *ss, astidx idx) {
 static inline fptr id_from_ast errs(superscope *ss, scope *s, astidx name) {
   iflet_tu (let id, astId, ast_at(ss->asts, name)) return ast_text(ss, id);
   let tv = try_err(temporary_interpret, (ss, s, name), nullFptr);
-  if (!tu_is(c_ast, tv.t.t) || !tv.v.c_ast) return_err("ID_REQUIRES_ASTID", nullFptr);
+  if (!tu_is(c_ast, ss_type(ss, tv.t).t) || !tv.v.c_ast) return_err("ID_REQUIRES_ASTID", nullFptr);
   let inner = ast_at(ss->asts, tv.v.c_ast);
   if (!tu_is(astId, inner)) return_err("ID_REQUIRES_ASTID", nullFptr);
   return ast_text(ss, tu_catch(astId, inner));
 }
+// the position an id node names, or a synthetic one when the id was computed
+static inline srcpos id_srcpos(superscope *ss, astidx name, fptr text) {
+  iflet_tu (let id, astId, ast_at(ss->asts, name)) return id;
+  return ss_srcpos_of_text(ss, text);
+}
 
-constexpr typed_value void_value = TV(T(tu_of(r_void, {})));
+
 
 // printers
 typePrinter(typed_value) {
+  let t = type_at(typeenv_current, in.t);
   PUTS("(tv ");
-  USETYPEPRINTER(Type, in.t), PUTS(",");
+  USETYPEPRINTER(Type, t), PUTS(",");
   tu_match_void(
-      in.t.t,
+      t.t,
       (c_int, _, in.v.c_int ? USENAMEDPRINTER("bigint", in.v.c_int) : PUTS("??");),
       (c_ast, _, in.v.c_ast ? (PUTS("(ast "), USETYPEPRINTER(u32, in.v.c_ast), PUTS(")")) : PUTS("??");),
-      (c_type, _, in.v.value ? USETYPEPRINTER(Type, *(Type *)in.v.value) : PUTS("??");),
+      (c_type, _, in.v.c_type ? USETYPEPRINTER(Type, type_at(typeenv_current, in.v.c_type)) : PUTS("??");),
       (c_fun, _, in.v.value ? PUTS("("), USETYPEPRINTER(u32, in.v.c_fun.fn), USETYPEPRINTER(u32, in.v.c_fun.spec), PUTS(")") : PUTS("??");),
       (default, {
         if (in.v.value)
-          USETYPEPRINTER(fptr, ((fptr){Type_sizeof(in.t), in.v.value}));
+          USETYPEPRINTER(fptr, ((fptr){Type_sizeof(t, typeenv_current), in.v.value}));
         else PUTS("(nil)");
       })
   );

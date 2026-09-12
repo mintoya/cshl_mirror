@@ -69,7 +69,7 @@ cmd_main(
     catch_errcall((lower, (env, env->outermost, ctx.idx)), e, (err_panic(e), (u32)0));
     print_wf(sexplike, "{scope}\n", *env->outermost);
     if (execute) {
-      catch_errcall((interpret, (env, env->outermost)), e, (err_panic(e), TV({})));
+      catch_errcall((interpret, (env, env->outermost)), e, (err_panic(e), (typed_value){}));
       print_wf(sexplike, "{scope}\n", *env->outermost);
     }
   }

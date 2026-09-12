@@ -22,11 +22,11 @@ u32 lower_op_wrap errs(superscope *ss, scope *s, astidx left, astidx right, u32 
   return try_err(lower_op, (ss, s, try_err(lower, (ss, s, left), 0), right, number), 0);
 }
 u32 lower errs(superscope *ss, scope *s, astidx a) {
-  if (!a) return (println("[WARNING] null ast in lower"), scope_add_value(ss, s, void_value));
+  if (!a) return (println("[WARNING] null ast in lower"), scope_add_value(ss, s, TV_void(ss)));
   let res = tu_match_exp(
       ast_at(ss->asts, a),
       (astNull, _, (return_err("ENCOUNTERED_NULL_AST", 0), (u32)0)),
-      (astEmpty, _, scope_add_value(ss, s, void_value)),
+      (astEmpty, _, scope_add_value(ss, s, TV_void(ss))),
       (astOp, op, try_err(lower_op_wrap, (ss, s, ast_child(ss->asts, op.left_right), ast_child(ss->asts, op.left_right + 1), op.number_rep), 0)),
       (astId, id, try_err(ss_get_named, (ss, s, ast_text(ss, id)), 0)),
       (astNumber, n, ss_compileInt(ss, s, ast_text(ss, n))),
@@ -42,7 +42,7 @@ u32 lower errs(superscope *ss, scope *s, astidx a) {
          try_err(lower, (ss, s, stmts.start), 0);
        })),
       (astBBlock, bb, ({
-         let res = scope_add_value(ss, s, TV(T(tu_of(c_any, {}))));
+         let res = scope_add_value(ss, s, TV_any(ss));
          let sc = scope_inferior(ss, s);
          try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_block, sc)), 0);
          let stmts = ast_block_children(ss->asts, a);
@@ -67,12 +67,17 @@ u32 lower errs(superscope *ss, scope *s, astidx a) {
            assertMessage(value);
          } else {
            if (!type_idx) return_err("DECL_NO_TYPE_OR_VALUE", 0);
-           value = scope_add_value(ss, s, TV(type));
+           value = scope_add_value(ss, s, TV_of(ss, type));
          }
          value = try_err(cast_value, (ss, s, value, type), 0);
 
-         if (dcl.isconst)
-           scope_find(ss, s, value)->t.isconst = true;
+         if (dcl.isconst) {
+           // types are values here, so a modifier change has to be re-interned
+           let v = scope_find(ss, s, value);
+           let vt = ss_type(ss, v->t);
+           vt.isconst = true;
+           v->t = ss_type_intern(ss, vt);
+         }
          if (name_idx) {
            let nn = try_err(id_from_ast, (ss, s, name_idx), 0);
            try_err(scope_bind, (ss, s, value, nn), 0);

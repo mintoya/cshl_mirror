@@ -1,5 +1,6 @@
 #pragma once
 #include "ast.h"
+#include "srcpos.h"
 #include <assert.h>
 #include <limits.h>
 #include <wheels/bigint.h>
@@ -28,7 +29,7 @@ typedef enum : u8 {
   builtin_ast,      // @ast() type of ast
   builtin_any,      // @any() type of any
   builtin_void,     // @void() the void type
-  builtin_bool,     // @bool() compile time bigint
+  builtin_bool,     // @bool() the bool type
   builtin_int,      // @int() compile time bigint
   builtin_type,     // @type() the type of a type
   builtin_const,    // @const(T) constant
@@ -55,48 +56,74 @@ typedef enum : u8 {
   builtin_where,    // @where(arg) referance to arg
 } builtin_id;
 //{type
-typedef struct Type Type;
-sliceDef(Type);
+// one based index into a typelist, 0 means null. same as astidx but for types
+typedef u32 typeidx;
 
+typedef struct Type Type;
 typedef struct TypeTree TypeTree;
 typedef struct r_struct_item r_struct_item;
 typedef struct r_bitf_item r_bitf_item;
 
+sliceDef(Type);
+sliceDef(typeidx);
+typedef sglist(Type) typelist;
+
 tu_def( // type
     (TypeTree, u8),
+    // the null type, first so its tag is literally 0: invalid except as a run terminator
+    (r_null /*       */, struct {}),
     (builtin /*      */, builtin_id),
     // runtime
     (r_void /*       */, struct {}),
     (r_bool /*       */, struct {}),
-    (r_uint /*       */, u16),
-    (r_sint /*       */, u16),
+    (r_uint /*       */, struct { u16 bits; }),
+    (r_sint /*       */, struct { u16 bits; }),
 
-    (r_tag /*        */, struct { TypeTree *t/*maybe nullable in the future, like extern*/; fptr name; }),
-    (r_arr /*        */, struct { TypeTree *t; usize count; }),
+    // a 1-based run in the superscope's member lists, ending at the first null member
+    (r_struct /*     */, struct { typeidx start; }),
+    (r_bitfield /*   */, struct { typeidx start; }),
 
-    (r_struct /*     */, mList(r_struct_item)),
-    (r_bitfield /*   */, mList(r_bitf_item)),
+    (r_tag /*        */, struct { typeidx t; srcpos name; }), /*maybe nullable in the future, like extern*/
+    (r_arr /*        */, struct { typeidx t; u32 count; }),
 
-    // compile time
-    // they could all be nothing_t's, i'd rather show here what they a re but also
-    // not have them take up any storage space
+    // compile time: they carry no payload, the variant names say what they are
     (c_any /*        */, struct {}),
-    (c_int /*        */, typeof(bigint[0])),
-    (c_type /*       */, typeof(Type *[0])),
-    (c_ast /*        */, typeof(astidx[0])),
+    (c_int /*        */, struct {}),
+    (c_type /*       */, struct {}),
+    (c_ast /*        */, struct {}),
     // something else
-    (c_fun /*       */, mList(Type)),
-    (r_closure /*    */, struct { c_fun captures, args; }),
+    // a run of Type slots, the return type last, terminated by a null
+    (c_fun /*        */, struct { typeidx start; }),
+    // one run [captures..., null, args..., null], the null also separating the two
+    (r_closure /*    */, struct { typeidx start; }),
 );
 #define T(...) ((Type){.t = __VA_ARGS__})
-#define TV(...) ((typed_value){__VA_ARGS__})
+
+static inline void TypeTree_tag_set_name(r_tag *t, srcpos p) { t->name = p; }
+static inline void TypeTree_arr_set_count(r_arr *a, u32 n) { a->count = n; }
+static inline TypeTree TypeTree_uint(u16 width) {
+  TypeTree t = {.tag = r_uint_enum};
+  t.r_uint.bits = width;
+  return t;
+}
+static inline TypeTree TypeTree_sint(u16 width) {
+  TypeTree t = {.tag = r_sint_enum};
+  t.r_sint.bits = width;
+  return t;
+}
+
 struct Type {
   TypeTree t;
-  u32 ptr_level : 32;
-  bool isref : 1;
-  bool isconst : 1;
-  bool iscomptime : 1; // meaningless for int,type,ast
-  bool isvolatile : 1;
+  union {
+    u32 decorations;
+    struct {
+      u32 ptr_level : 28; // 268 million levels of indirection, unreachable by any real program
+      u32 isref : 1;
+      u32 isconst : 1;
+      u32 iscomptime : 1; // meaningless for int,type,ast
+      u32 isvolatile : 1;
+    };
+  };
 };
 typedef union {
   void *value;
@@ -104,32 +131,100 @@ typedef union {
     u32 fn;
     u32 spec;
   } c_fun; // function index in list + 1
-  arrstype(itypeof(TypeTree, c_int)) c_int;
-  arrstype(itypeof(TypeTree, c_ast)) c_ast; // index into the ast2 arena, 0 = null
-  arrstype(itypeof(TypeTree, c_type)) c_type;
+  bigint c_int;
+  astidx c_ast;   // index into the ast arena, 0 = null
+  typeidx c_type; // index into the typelist, 0 = null
 } value_store;
 
+// a value is its type's index plus its payload: two words, the type itself in the typelist
 typedef struct typed_value {
-  Type t;
+  typeidx t;
   value_store v;
 } typed_value;
 typedef struct r_struct_item {
   Type t;
-  fptr name;
+  srcpos name;
   usize offset, alignment;
 } r_struct_item;
 typedef struct r_bitf_item {
   Type t;
-  fptr name;
+  srcpos name;
   usize width;
 } r_bitf_item;
+typedef sglist(r_struct_item) typestructlist;
+typedef sglist(r_bitf_item) typebitflist;
+
+// what a type needs walked: the lists it indexes into and the source its names point at, all
+// pointed to so that a copy sees them grow
+typedef struct typeenv {
+  typelist *tlist;
+  typestructlist *sitems;
+  typebitflist *bitems;
+  poslist *plist;
+  filelist *flist;
+} typeenv;
+
+// the bound typeenv, for the places that cannot take one (printers, map comparators)
+static typeenv typeenv_current = {};
+static inline void typeenv_set(typeenv e) { typeenv_current = e; }
+
+// ast style accessors
+static inline Type type_at(typeenv e, typeidx idx) {
+  if (!idx || !e.tlist || idx > e.tlist->len) return (Type){};
+  return sglist_get(*e.tlist, idx - 1);
+}
+static inline TypeTree type_tree(typeenv e, typeidx idx) { return type_at(e, idx).t; }
+static inline fptr type_name(typeenv e, srcpos p) {
+  if (!e.plist || !e.flist) return nullFptr;
+  return fp_from_srcpos((srcpos_full){.pidx = p, .plist = *e.plist, .flist = *e.flist});
+}
+// a run ends at the first null type, so its length is walked
+static inline u32 type_run_len(typeenv e, typeidx start) {
+  u32 n = 0;
+  if (!start) return 0;
+  while (!tu_is(r_null, type_at(e, start + n).t))
+    n++;
+  return n;
+}
+// the member runs end the same way, but their list is the bound: it hands back no null
+static inline u32 type_struct_len(typeenv e, r_struct s) {
+  u32 n = 0;
+  if (!s.start) return 0;
+  while (s.start - 1 + n < e.sitems->len &&
+         !tu_is(r_null, sglist_get(*e.sitems, s.start - 1 + n).t.t))
+    n++;
+  return n;
+}
+static inline u32 type_bitf_len(typeenv e, r_bitfield b) {
+  u32 n = 0;
+  if (!b.start) return 0;
+  while (b.start - 1 + n < e.bitems->len &&
+         !tu_is(r_null, sglist_get(*e.bitems, b.start - 1 + n).t.t))
+    n++;
+  return n;
+}
+static inline typeidx type_closure_args(typeenv e, typeidx start) {
+  return start + type_run_len(e, start) + 1;
+}
+static inline r_struct_item *type_struct_item(typeenv e, r_struct r, usize i) {
+  assertMessage(e.sitems && r.start && r.start - 1 + i < e.sitems->len, "struct member out of range");
+  return &sglist_get(*e.sitems, r.start - 1 + i);
+}
+static inline r_bitf_item *type_bitf_item(typeenv e, r_bitfield b, usize i) {
+  assertMessage(e.bitems && b.start && b.start - 1 + i < e.bitems->len, "bitfield member out of range");
+  return &sglist_get(*e.bitems, b.start - 1 + i);
+}
+static inline typeidx type_run_at(typeenv e, typeidx start, usize i) {
+  assertMessage(start, "null type run");
+  return start + (typeidx)i;
+}
 
 // size/alignment
 
-static usize TypeTree_alignof(TypeTree t);
-static usize TypeTree_sizeof(TypeTree t);
-static inline usize Type_alignof(Type t);
-static inline usize Type_sizeof(Type t);
+static usize TypeTree_alignof(TypeTree t, typeenv e);
+static usize TypeTree_sizeof(TypeTree t, typeenv e);
+static inline usize Type_alignof(Type t, typeenv e);
+static inline usize Type_sizeof(Type t, typeenv e);
 static inline bool Type_is_comptime(Type t) {
   return t.iscomptime ||
          tu_is(builtin, t.t) ||
@@ -140,12 +235,13 @@ static inline bool Type_is_comptime(Type t) {
          tu_is(c_type, t.t) ||
          tu_is(c_ast, t.t);
 }
-static usize TypeTree_alignof(TypeTree t) {
+static usize TypeTree_alignof(TypeTree t, typeenv e) {
   return tu_match_exp(
       t,
       // alias
-      (r_tag, tag, TypeTree_alignof(*tag.t)),
+      (r_tag, tag, TypeTree_alignof(type_tree(e, tag.t), e)),
       // no representation
+      (r_null, _, (usize)1),
       (builtin, _, (usize)1),
       (c_fun, _, (usize)1),
       (r_closure, _, (usize)1),
@@ -156,30 +252,33 @@ static usize TypeTree_alignof(TypeTree t) {
       // own reason
       (r_void, _, (usize)1),
 
-      (r_uint, u, lineup(u, CHAR_BIT) / CHAR_BIT),
-      (r_bool, _, TypeTree_alignof((TypeTree)tu_of(r_uint, 1))),
-      (r_sint, u, TypeTree_alignof((TypeTree)tu_of(r_uint, u))),
-      (r_arr, a, TypeTree_alignof(*a.t)),
+      (r_uint, u, lineup(u.bits, CHAR_BIT) / CHAR_BIT),
+      (r_bool, _, TypeTree_alignof(TypeTree_uint(1), e)),
+      (r_sint, u, TypeTree_alignof(TypeTree_uint(u.bits), e)),
+      (r_arr, a, TypeTree_alignof(type_tree(e, a.t), e)),
       (r_bitfield, b, ({
          usize s = 0;
-         foreach (let b, mList_iter(b))
-           s += b.width;
-         TypeTree_alignof((TypeTree)tu_of(r_uint, s));
+         foreach (let i, range(0, type_bitf_len(e, b)))
+           s += type_bitf_item(e, b, i)->width;
+         TypeTree_alignof(TypeTree_uint((u16)s), e);
        })),
       (r_struct, s, ({
          usize a = 1;
-         foreach (let i, mList_iter(s))
-           a = Type_is_comptime(i.t) ? a : MAX$(i.alignment, a);
+         foreach (let i, range(0, type_struct_len(e, s))) {
+           let item = type_struct_item(e, s, i);
+           a = Type_is_comptime(item->t) ? a : MAX$(item->alignment, a);
+         }
          a;
        })),
   );
 }
-static usize TypeTree_sizeof(TypeTree t) {
+static usize TypeTree_sizeof(TypeTree t, typeenv e) {
   return tu_match_exp(
       t,
       // alias
-      (r_tag, tag, TypeTree_sizeof(*tag.t)),
+      (r_tag, tag, TypeTree_sizeof(type_tree(e, tag.t), e)),
       // no runtime representation
+      (r_null, _, (usize)0),
       (builtin, _, (usize)0),
       (c_type, _, (usize)0),
       (c_ast, _, (usize)0),
@@ -190,79 +289,77 @@ static usize TypeTree_sizeof(TypeTree t) {
       //  0 for it's own reason
       (r_void, _, (usize)0),
       //
-      (r_uint, u, lineup(u, CHAR_BIT) / CHAR_BIT),
-      (r_bool, _, TypeTree_sizeof((TypeTree)tu_of(r_uint, 1))),
-      (r_sint, u, TypeTree_sizeof((TypeTree)tu_of(r_uint, u))),
-      (r_arr, a, TypeTree_sizeof(*a.t) * a.count),
+      (r_uint, u, lineup(u.bits, CHAR_BIT) / CHAR_BIT),
+      (r_bool, _, TypeTree_sizeof(TypeTree_uint(1), e)),
+      (r_sint, u, TypeTree_sizeof(TypeTree_uint(u.bits), e)),
+      // the element size is what must not wrap, the count is only a factor of it
+      (r_arr, a, TypeTree_sizeof(type_tree(e, a.t), e) * (usize)a.count),
       (r_bitfield, b, ({
          usize s = 0;
-         foreach (let b, mList_iter(b))
-           s += b.width;
-         TypeTree_sizeof((TypeTree)tu_of(r_uint, s));
+         foreach (let i, range(0, type_bitf_len(e, b)))
+           s += type_bitf_item(e, b, i)->width;
+         TypeTree_sizeof(TypeTree_uint((u16)s), e);
        })),
       (r_struct, s, ({
          usize sz = 0;
-         foreach (let i, mList_iter(s))
-           sz = Type_is_comptime(i.t) ? sz : MAX$((i.offset + Type_sizeof(i.t)), sz);
-         lineup(sz, TypeTree_alignof(t));
+         foreach (let i, range(0, type_struct_len(e, s))) {
+           let item = type_struct_item(e, s, i);
+           sz = Type_is_comptime(item->t) ? sz : MAX$((item->offset + Type_sizeof(item->t, e)), sz);
+         }
+         lineup(sz, TypeTree_alignof(t, e));
        })),
   );
 }
-static inline usize Type_alignof(Type t) {
+static inline usize Type_alignof(Type t, typeenv e) {
   if (t.isref || t.ptr_level) return alignof(void *);
-  else return TypeTree_alignof(t.t);
+  else return TypeTree_alignof(t.t, e);
 }
-static inline usize Type_sizeof(Type t) {
+static inline usize Type_sizeof(Type t, typeenv e) {
   if (t.isref || t.ptr_level) return sizeof(void *);
-  else return TypeTree_sizeof(t.t);
+  else return TypeTree_sizeof(t.t, e);
 }
 
-static inline r_struct TypeTree_inner_struct(TypeTree t) {
+static inline r_struct TypeTree_inner_struct(TypeTree t, typeenv e) {
   return tu_match_exp(
       t,
       (r_struct, r, r),
-      (r_tag, r, TypeTree_inner_struct(*r.t)),
-      (default, (r_struct) nullptr)
+      (r_tag, r, TypeTree_inner_struct(type_tree(e, r.t), e)),
+      (default, (r_struct){0})
   );
 }
-static inline r_bitfield TypeTree_inner_bitfield(TypeTree t) {
+static inline r_bitfield TypeTree_inner_bitfield(TypeTree t, typeenv e) {
   return tu_match_exp(
       t,
       (r_bitfield, r, r),
-      (r_tag, r, TypeTree_inner_bitfield(*r.t)),
-      (default, (r_bitfield) nullptr)
+      (r_tag, r, TypeTree_inner_bitfield(type_tree(e, r.t), e)),
+      (default, (r_bitfield){0})
   );
 }
 
 // comparison
 
 i8 icmp(isize a, isize b) { return a - b; }
-typedef struct {
-  TypeTree *a;
-  TypeTree *b;
-} type_cmp_pair;
+i8 TypeTree_cmp(TypeTree a, TypeTree b, typeenv e);
 
-i8 TypeTree_cmp(TypeTree a, TypeTree b);
-
-i8 Type_cmp(Type a, Type b) {
-  if_decl (let cmp, icmp(a.ptr_level, b.ptr_level)) return cmp;
-  if_decl (let cmp, icmp(a.isref, b.isref)) return cmp;
-  if_decl (let cmp, icmp(a.isconst, b.isconst)) return cmp;
-  if_decl (let cmp, icmp(a.isvolatile, b.isvolatile)) return cmp;
-  if_decl (let cmp, icmp(a.iscomptime, b.iscomptime)) return cmp;
-  return TypeTree_cmp(a.t, b.t);
+// one word of decorations, so one comparison. not icmp: it returns i8, and a single flag bit is
+// 2^28, which truncates to 0 and would read as equal
+i8 Type_cmp(Type a, Type b, typeenv e) {
+  if (a.decorations != b.decorations) return a.decorations < b.decorations ? -1 : 1;
+  return TypeTree_cmp(a.t, b.t, e);
 }
 
-i8 TypeTree_cmp(TypeTree a, TypeTree b) {
+i8 TypeTree_cmp(TypeTree a, TypeTree b, typeenv e) {
   if (!mcmp(a, b)) return 0;
   if_decl (let cmp, icmp(a.tag, b.tag)) return cmp;
 
   tu_match_void(
       a,
+      (r_null, _, return 0),
       (builtin, ai, return icmp(ai, tu_catch(builtin, b))),
-      (r_uint, ai, return icmp(ai, tu_catch(r_uint, b))),
-      (r_sint, ai, return icmp(ai, tu_catch(r_sint, b))),
-      (r_tag, ai, return fptr_cmp(ai.name, tu_catch(r_tag, b).name)),
+      (r_uint, ai, return icmp(ai.bits, tu_catch(r_uint, b).bits)),
+      (r_sint, ai, return icmp(ai.bits, tu_catch(r_sint, b).bits)),
+      // names are srcpos's, so they only compare equal when they spell the same thing
+      (r_tag, ai, return fptr_cmp(type_name(e, ai.name), type_name(e, tu_catch(r_tag, b).name))),
 
       (r_bool, _, return 0),
       (r_void, _, return 0),
@@ -274,75 +371,78 @@ i8 TypeTree_cmp(TypeTree a, TypeTree b) {
       (r_arr, ai, {
         let bi = tu_catch(r_arr, b);
         if_decl (let cmp, icmp(ai.count, bi.count)) return cmp;
-        return TypeTree_cmp(*ai.t, *bi.t);
+        return TypeTree_cmp(type_tree(e, ai.t), type_tree(e, bi.t), e);
       }),
 
       (c_fun, ai, {
         let bi = tu_catch(c_fun, b);
-        if_decl (let cmp, icmp(mList_len(ai), mList_len(bi))) return cmp;
+        u32 an = type_run_len(e, ai.start), bn = type_run_len(e, bi.start);
+        if_decl (let cmp, icmp(an, bn)) return cmp;
 
-        foreach (let i, range(0, mList_len(ai)))
-          if_decl (let cmp, Type_cmp(mList_arr(ai)[i], mList_arr(bi)[i]))
+        foreach (let i, range(0, an))
+          if_decl (let cmp, Type_cmp(type_at(e, type_run_at(e, ai.start, i)), type_at(e, type_run_at(e, bi.start, i)), e))
             return cmp;
         return 0;
       }),
-
       (r_closure, ai, {
         let bi = tu_catch(r_closure, b);
-        if_decl (let cmp, icmp(mList_len(ai.captures), mList_len(bi.captures))) return cmp;
-        if_decl (let cmp, icmp(mList_len(ai.args), mList_len(bi.args))) return cmp;
+        // equal capture counts put the separator at the same offset on both sides
+        u32 ac = type_run_len(e, ai.start), bc = type_run_len(e, bi.start);
+        if_decl (let cmp, icmp(ac, bc)) return cmp;
+        u32 an = ac + type_run_len(e, type_closure_args(e, ai.start));
+        u32 bn = bc + type_run_len(e, type_closure_args(e, bi.start));
+        if_decl (let cmp, icmp(an, bn)) return cmp;
 
-        foreach (let i, range(0, mList_len(ai.captures)))
-          if_decl (let cmp, Type_cmp(mList_arr(ai.captures)[i], mList_arr(bi.captures)[i]))
-            return cmp;
-
-        foreach (let i, range(0, mList_len(ai.args)))
-          if_decl (let cmp, Type_cmp(mList_arr(ai.args)[i], mList_arr(bi.args)[i]))
+        foreach (let i, range(0, an))
+          if_decl (let cmp, Type_cmp(type_at(e, type_run_at(e, ai.start, i)), type_at(e, type_run_at(e, bi.start, i)), e))
             return cmp;
         return 0;
       }),
 
       (r_struct, ai, {
         let bi = tu_catch(r_struct, b);
-        if_decl (let cmp, icmp(mList_len(ai), mList_len(bi))) return cmp;
+        u32 an = type_struct_len(e, ai), bn = type_struct_len(e, bi);
+        if_decl (let cmp, icmp(an, bn)) return cmp;
 
-        foreach (let i, range(0, mList_len(ai))) {
-          let a_i = mList_arr(ai)[i];
-          let b_i = mList_arr(bi)[i];
-          if_decl (let cmp, fptr_cmp(a_i.name, b_i.name)) return cmp;
-          if_decl (let cmp, icmp(a_i.offset, b_i.offset)) return cmp;
-          if_decl (let cmp, icmp(a_i.alignment, b_i.alignment)) return cmp;
-          if_decl (let cmp, Type_cmp(a_i.t, b_i.t)) return cmp;
+        foreach (let i, range(0, an)) {
+          let a_i = type_struct_item(e, ai, i);
+          let b_i = type_struct_item(e, bi, i);
+          if_decl (let cmp, fptr_cmp(type_name(e, a_i->name), type_name(e, b_i->name))) return cmp;
+          if_decl (let cmp, icmp(a_i->offset, b_i->offset)) return cmp;
+          if_decl (let cmp, icmp(a_i->alignment, b_i->alignment)) return cmp;
+          if_decl (let cmp, Type_cmp(a_i->t, b_i->t, e)) return cmp;
         }
         return 0;
       }),
 
       (r_bitfield, ai, {
         let bi = tu_catch(r_bitfield, b);
-        if_decl (let cmp, icmp(mList_len(ai), mList_len(bi))) return cmp;
+        u32 an = type_bitf_len(e, ai), bn = type_bitf_len(e, bi);
+        if_decl (let cmp, icmp(an, bn)) return cmp;
 
-        foreach (let i, range(0, mList_len(ai))) {
-          let a_i = mList_arr(ai)[i];
-          let b_i = mList_arr(bi)[i];
-          if_decl (let cmp, fptr_cmp(a_i.name, b_i.name)) return cmp;
-          if_decl (let cmp, icmp(a_i.width, b_i.width)) return cmp;
-          if_decl (let cmp, Type_cmp(a_i.t, b_i.t)) return cmp;
+        foreach (let i, range(0, an)) {
+          let a_i = type_bitf_item(e, ai, i);
+          let b_i = type_bitf_item(e, bi, i);
+          if_decl (let cmp, fptr_cmp(type_name(e, a_i->name), type_name(e, b_i->name))) return cmp;
+          if_decl (let cmp, icmp(a_i->width, b_i->width)) return cmp;
+          if_decl (let cmp, Type_cmp(a_i->t, b_i->t, e)) return cmp;
         }
         return 0;
       })
   );
 }
 
+// map comparators cannot take a typeenv, so they use the bound one
 i8 TypeTree_cmp_hash(const void *a, const void *b) {
-  return TypeTree_cmp(*(TypeTree *)a, *(TypeTree *)b);
+  return TypeTree_cmp(*(TypeTree *)a, *(TypeTree *)b, typeenv_current);
 }
 
 i8 Type_cmp_hash(const void *a, const void *b) {
-  return Type_cmp(*(Type *)a, *(Type *)b);
+  return Type_cmp(*(Type *)a, *(Type *)b, typeenv_current);
 }
 
 // printer
-void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printerfunction_context _ctx);
+void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, typeenv e, printerfunction_context _ctx);
 
 static inline void typeTreePrinterWorker_add(TypeTree t, moxmap(TypeTree, u32) visitedmap) {
   moxmap_set(visitedmap, t, ((u32)((oxmap *)visitedmap)->keys->length));
@@ -386,8 +486,7 @@ typePrinter(builtin_id) {
       (builtin_volatile, /**/ PUTS("volatile")),
   );
 }
-void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printerfunction_context _ctx);
-void typePrinterWorker(Type in, moxmap(TypeTree, u32) visitedmap, printerfunction_context _ctx) {
+void typePrinterWorker(Type in, moxmap(TypeTree, u32) visitedmap, typeenv e, printerfunction_context _ctx) {
   bool has_env = in.iscomptime || in.ptr_level || in.isref || in.isconst || in.isvolatile;
   if (has_env) {
     PUTS("(");
@@ -397,10 +496,10 @@ void typePrinterWorker(Type in, moxmap(TypeTree, u32) visitedmap, printerfunctio
     if (in.isvolatile) PUTS("volatile,");
     if (in.iscomptime) PUTS("comptime,");
   }
-  typeTreePrinterWorker(in.t, visitedmap, _ctx);
+  typeTreePrinterWorker(in.t, visitedmap, e, _ctx);
   if (has_env) PUTS(")");
 }
-void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printerfunction_context _ctx) {
+void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, typeenv e, printerfunction_context _ctx) {
   if_decl (let idx, moxmap_get(visitedmap, in)) {
     USETYPEPRINTER(usize, *idx);
     return;
@@ -412,63 +511,72 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printe
         USETYPEPRINTER(builtin_id, builtin);
         PUTS(")");
       }),
+      (r_null, /**/ _, PUTS("null")),
       (r_bool, /**/ _, PUTS("bool")),
       (c_int, /* */ _, PUTS("int")),
       (c_type, /**/ _, PUTS("type")),
       (c_ast, /* */ _, PUTS("ast")),
       (c_any, /* */ _, PUTS("any")),
       (r_void, /**/ _, PUTS("void")),
-      (r_tag, t, PUTS("(id "), USENAMEDPRINTER("slice(c8)", t.name), PUTS(")")),
-      (r_uint, bits, PUTS("u"), USETYPEPRINTER(usize, bits)),
-      (r_sint, bits, PUTS("s"), USETYPEPRINTER(usize, bits)),
+      (r_tag, t, PUTS("(id "), USETYPEPRINTER(fptr, type_name(e, t.name)), PUTS(")")),
+      (r_uint, bits, PUTS("u"), USETYPEPRINTER(usize, (usize)bits.bits)),
+      (r_sint, bits, PUTS("s"), USETYPEPRINTER(usize, (usize)bits.bits)),
 
       // Complex, require recursion
       (r_arr, arr, {
         typeTreePrinterWorker_add(in, visitedmap);
-        PUTS("(a ["), USETYPEPRINTER(usize, arr.count), PUTS("],");
-        typeTreePrinterWorker(*arr.t, visitedmap, _ctx);
+        PUTS("(a ["), USETYPEPRINTER(usize, (usize)arr.count), PUTS("],");
+        typeTreePrinterWorker(type_tree(e, arr.t), visitedmap, e, _ctx);
         PUTS(")");
       }),
       (r_struct, st, {
         typeTreePrinterWorker_add(in, visitedmap);
         PUTS("(s,");
-        foreach (let type, span(mList_arr(st), mList_len(st))) {
-          if (type != mList_arr(st)) PUTS(",");
-          USENAMEDPRINTER("slice(c8)", type->name);
-          Type_is_comptime(type->t)
+        foreach (let i, range(0, type_struct_len(e, st))) {
+          let item = type_struct_item(e, st, i);
+          if (i) PUTS(",");
+          USETYPEPRINTER(fptr, type_name(e, item->name));
+          Type_is_comptime(item->t)
               ? PUTS("~")
-              : (PUTS("@"), USETYPEPRINTER(usize, type->offset), PUTS("="));
-          typePrinterWorker(type->t, visitedmap, _ctx);
+              : (PUTS("@"), USETYPEPRINTER(usize, item->offset), PUTS("="));
+          typePrinterWorker(item->t, visitedmap, e, _ctx);
         }
         PUTS(")");
       }),
       (r_bitfield, st, {
         typeTreePrinterWorker_add(in, visitedmap);
         PUTS("(bf,");
-        foreach (let type, span(mList_arr(st), mList_len(st))) {
-          if (type != mList_arr(st)) PUTS(",");
-          USENAMEDPRINTER("slice(c8)", type->name), PUTS(":");
-          USETYPEPRINTER(usize, type->width), PUTS("~");
-          typePrinterWorker(type->t, visitedmap, _ctx);
+        foreach (let i, range(0, type_bitf_len(e, st))) {
+          let item = type_bitf_item(e, st, i);
+          if (i) PUTS(",");
+          USETYPEPRINTER(fptr, type_name(e, item->name)), PUTS(":");
+          USETYPEPRINTER(usize, item->width), PUTS("~");
+          typePrinterWorker(item->t, visitedmap, e, _ctx);
         }
         PUTS(")");
       }),
       (c_fun, fn, {
         typeTreePrinterWorker_add(in, visitedmap);
         PUTS("(fn (");
-        foreach (let it, mList_iter(fn))
-          (_foreach_._foreach_._current) ? (void)PUTS(" ") : (void)0,
-              typePrinterWorker(it, visitedmap, _ctx);
+        foreach (let i, range(0, type_run_len(e, fn.start))) {
+          if (i) PUTS(" ");
+          typePrinterWorker(type_at(e, type_run_at(e, fn.start, i)), visitedmap, e, _ctx);
+        }
         PUTS("))");
       }),
       (r_closure, fn, {
         typeTreePrinterWorker_add(in, visitedmap);
         PUTS("(clos (");
-        foreach (let it, mList_iter(fn.captures))
-          (_foreach_._foreach_._current) ? PUTS(" ") : (void)0, typePrinterWorker(it, visitedmap, _ctx);
+        foreach (let i, range(0, type_run_len(e, fn.start))) {
+          if (i) PUTS(" ");
+          typePrinterWorker(type_at(e, type_run_at(e, fn.start, i)), visitedmap, e, _ctx);
+        }
         PUTS("),(");
-        foreach (let it, mList_iter(fn.args))
-          (_foreach_._foreach_._current) ? PUTS(" ") : (void)0, typePrinterWorker(it, visitedmap, _ctx);
+        typeidx args = type_closure_args(e, fn.start);
+        foreach (let i, range(0, type_run_len(e, args))) {
+          if (i) PUTS(" ");
+          typePrinterWorker(type_at(e, type_run_at(e, args, i)), visitedmap, e, _ctx);
+        }
         PUTS("))");
       })
   );
@@ -477,75 +585,78 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, printe
 typePrinter(TypeTree) {
   let visited = moxmap_init(PRINTARGS_ALLOCATOR(), TypeTree, u32, TypeTree_cmp_hash);
   defer { moxmap_deinit(visited); };
-  typeTreePrinterWorker(in, visited, _ctx);
+  typeTreePrinterWorker(in, visited, typeenv_current, _ctx);
 }
 typePrinter(Type) {
   let visited = moxmap_init(PRINTARGS_ALLOCATOR(), TypeTree, u32, TypeTree_cmp_hash);
   defer { moxmap_deinit(visited); };
-  typePrinterWorker(in, visited, _ctx);
+  typePrinterWorker(in, visited, typeenv_current, _ctx);
 }
 // test
 
 test_fn(type_bools) {
   // i dereferance bools later
+  typeenv e = {};
   let boolean = T(tu_of(r_bool, {}));
-  test_inteq(sizeof(bool), Type_sizeof(boolean));
-  test_inteq(alignof(bool), Type_alignof(boolean));
+  test_inteq(sizeof(bool), Type_sizeof(boolean, e));
+  test_inteq(alignof(bool), Type_alignof(boolean, e));
 }
 test_fn(type_linked_list) {
   let typeArena = arena_new_ext(allocator, 1024);
   defer { arena_cleanup(typeArena); };
 
-  let element = (TypeTree)tu_of(r_sint, 32);
-  let structItems = mList_init(typeArena, r_struct_item);
-  let _struct = (TypeTree)tu_of(r_struct, structItems);
-  let _final = (Type){_struct};
-
-  let ptr = (Type){_struct, 1};
-  let uint = (Type){element};
-
   struct analog {
     struct analog *prev, *next;
     i32 element;
   };
-  let signatures = mList_initArr(typeArena, ((Type[]){_final, _final}));
+
+  // a self referential struct reserves its slot first, then fills it in once its members exist
+  typelist tlist = {.allocator = typeArena};
+  typestructlist sitems = {.allocator = typeArena};
+  typebitflist bitems = {.allocator = typeArena};
+  typeenv e = {.tlist = &tlist, .sitems = &sitems, .bitems = &bitems};
+
+  let structIdx = (sglist_push(tlist, (Type){}), (typeidx)tlist.len);
+  let elementIdx = (sglist_push(tlist, T(TypeTree_sint(32))), (typeidx)tlist.len);
+  // getNext/getPrev: (Self) -> Self, so the run is [arg, Self, null]
+  let signatureStart = (typeidx)tlist.len + 1;
+  sglist_push(tlist, (Type){});
+  sglist_push(tlist, (Type){});
+  sglist_push(tlist, (Type){});
+
+  let signature = T(tu_of(c_fun, {.start = signatureStart}));
+  let members = (r_struct){.start = (typeidx)sitems.len + 1};
+  let pointer = P$(T(tu_of(r_struct, members)), ($.ptr_level = 1, $));
   // clang-format off
-  mList_pushArr(structItems, ((r_struct_item[]){
-    {
-       .name = fp("Self"),
-       .t =(((Type){tu_of(c_type,{})})),
-    },
-    {
-       .name = fp("getNext"),
-       .t =(((Type){tu_of(c_fun,signatures)})),
-    },
-    {
-       .name = fp("getPrev"),
-       .t =(((Type){tu_of(c_fun,signatures)})),
-    },
-    {
-       .alignment = alignof(itypeof(struct analog, prev)),
-       .offset = offsetof(struct analog, prev),
-       .name = fp("prev"),
-       .t = ptr,
-    },
-    {
-       .alignment = alignof(itypeof(struct analog, next)),
-       .offset = offsetof(struct analog, next),
-       .name = fp("next"),
-       .t = ptr,
-    },
-    {
-       .alignment = alignof(itypeof(struct analog, element)),
-       .offset = offsetof(struct analog, element),
-       .name = fp("element"),
-       .t = uint,
-    },
-  }));
+  sglist_push(sitems, (r_struct_item){.t = T(tu_of(c_type, {}))}); // Self
+  sglist_push(sitems, (r_struct_item){.t = signature});           // getNext
+  sglist_push(sitems, (r_struct_item){.t = signature});           // getPrev
+  sglist_push(sitems, (r_struct_item){
+    .t = pointer,
+    .alignment = alignof(itypeof(struct analog, prev)),
+    .offset = offsetof(struct analog, prev),
+  });
+  sglist_push(sitems, (r_struct_item){
+    .t = pointer,
+    .alignment = alignof(itypeof(struct analog, next)),
+    .offset = offsetof(struct analog, next),
+  });
+  sglist_push(sitems, (r_struct_item){
+    .t = type_at(e, elementIdx),
+    .alignment = alignof(itypeof(struct analog, element)),
+    .offset = offsetof(struct analog, element),
+  });
+  sglist_push(sitems, (r_struct_item){}); // a null type ends the member run
   // clang-format on
 
+  let _final = T(tu_of(r_struct, members));
+  sglist_get(tlist, structIdx - 1) = _final;
+  foreach (let i, range(0, type_run_len(e, signature.t.c_fun.start)))
+    sglist_get(tlist, signatureStart - 1 + i) = _final;
+
+  typeenv_set(e);
   void sexplike(const char *data, void *userdata, usize len, bool flush);
   print_wf(sexplike, "{Type}\n", _final);
-  test_inteq(alignof(struct analog), Type_alignof(_final));
-  test_inteq(sizeof(struct analog), Type_sizeof(_final));
+  test_inteq(alignof(struct analog), Type_alignof(_final, e));
+  test_inteq(sizeof(struct analog), Type_sizeof(_final, e));
 }

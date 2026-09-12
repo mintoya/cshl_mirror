@@ -29,7 +29,7 @@ scope *scope_inferior(superscope *b, scope *s) {
           .rootable = s ? s->rootable : true,
       })
   );
-  scope_add_value(b, res, TV(T(tu_of(r_void, {}))));
+  scope_add_value(b, res, TV_void(b));
   return res;
 }
 
@@ -57,9 +57,11 @@ static scope *scope_copy_deep(superscope *ss, scope *s, scope *parent) {
           .rootable = s->rootable,
       })
   );
-  foreach (let v, span(res->values, msList_len(res->values)))
-    if (tu_is(c_int, v->t.t) && !v->t.isref && v->v.c_int)
+  foreach (let v, span(res->values, msList_len(res->values))) {
+    let vt = ss_type(ss, v->t);
+    if (tu_is(c_int, vt.t) && !vt.isref && v->v.c_int)
       v->v.c_int = BInt.copy(ss->alloc, v->v.c_int);
+  }
   let rec = scope_copy_deep;
   foreach (let i, span(res->instructions, msList_len(res->instructions))) {
     *i = tu_match_exp(
@@ -74,9 +76,11 @@ static scope *scope_copy_deep(superscope *ss, scope *s, scope *parent) {
 }
 scope *scope_copy(superscope *ss, scope *s) { return scope_copy_deep(ss, s, s->parent); }
 void scope_destroy(superscope *b, scope *s) {
-  foreach (let item, span(s->values, msList_len(s->values))) // -1?
-    if (tu_is(c_int, item->t.t) && !item->t.isref)
+  foreach (let item, span(s->values, msList_len(s->values))) { // -1?
+    let it = ss_type(b, item->t);
+    if (tu_is(c_int, it.t) && !it.isref)
       msList_deInit(b->alloc, item->v.c_int);
+  }
   msList_deInit(b->alloc, s->values);
   foreach (let scope, span(s->instructions, msList_len(s->instructions)))
     iflet_tu (let s, ir_block, *scope)
@@ -86,8 +90,8 @@ void scope_destroy(superscope *b, scope *s) {
   adestroy(b->alloc, s);
 }
 u32 scope_add_value(superscope *env, scope *s, typed_value v) {
-  v.t = *ss_getType(env, v.t);
-  if (tu_is(c_int, v.t.t) && v.v.c_int) // explicitly destroyed in scope_destroy
+  // the type was interned where the value was made, this only stores it
+  if (tu_is(c_int, ss_type(env, v.t).t) && v.v.c_int) // explicitly destroyed in scope_destroy
     v.v.c_int = BInt.copy(env->alloc, v.v.c_int);
   msList_push(env->alloc, s->values, v);
   return msList_len(s->values) + s->start;
@@ -99,7 +103,7 @@ struct type_named {
 };
 static inline struct type_named ss_tag_named(superscope *ss, TypeTree t, fptr name) {
   iflet_tu (let tag, r_tag, t)
-    if_decl (let info, moxmap_get(ss->type_info, tag.name))
+    if_decl (let info, moxmap_get(ss->type_info, type_name(ss_typeenv(ss), tag.name)))
       if_decl (let idx, moxmap_get((*info)->named, name))
         return (struct type_named){*info, *idx};
   return (struct type_named){};
@@ -107,20 +111,21 @@ static inline struct type_named ss_tag_named(superscope *ss, TypeTree t, fptr na
 static inline void scope_emit_inst errs(superscope *env, scope *s, ir i) {
   if (!try_err(try_interpret, (env, s, i))) msList_push(env->alloc, s->instructions, i);
 }
-static bool Type_similar(Type a, Type b) {
-  return a.ptr_level == b.ptr_level && !TypeTree_cmp(a.t, b.t);
+static bool Type_similar(Type a, Type b, typeenv e) {
+  return a.ptr_level == b.ptr_level && !TypeTree_cmp(a.t, b.t, e);
 }
-static bool Type_is_integer_like(Type t) {
-  return !t.ptr_level && (tu_is(r_bool, t.t) || Type_isint(t));
+static bool Type_is_integer_like(Type t, typeenv e) {
+  return !t.ptr_level && (tu_is(r_bool, t.t) || Type_isint(t, e));
 }
 static inline void scope_add_inst errs(superscope *env, scope *s, ir i);
 static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i);
 
 static u32 cast_value errs(superscope *ss, scope *s, u32 left, Type to) {
-  let ot = scope_find(ss, s, left)->t;
-  if (!Type_cmp(ot, to)) return left;
-  if (!Type_cmp(to, T(tu_of(c_any, {})))) return left;
-  let d = scope_add_value(ss, s, TV(to));
+  let e = ss_typeenv(ss);
+  let ot = ss_type(ss, scope_find(ss, s, left)->t);
+  if (!Type_cmp(ot, to, e)) return left;
+  if (!Type_cmp(to, T(tu_of(c_any, {})), e)) return left;
+  let d = scope_add_value(ss, s, TV_of(ss, to));
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_cast, {.l = left, .d = d})), 0);
   return d;
 }
@@ -128,7 +133,7 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
   if (tu_is(ir_rawop, *i)) {
     // an overload on the left operand's tag wins; it is the receiver, so passed first
     let c = &tu_catch(ir_rawop, *i);
-    Type lt = scope_find(env, s, c->r)->t;
+    Type lt = ss_type(env, scope_find(env, s, c->r)->t);
     if (lt.ptr_level <= 1) {
       char op_str[sizeof(u32) + 1] = {};
       memcpy(op_str, &c->o, 4);
@@ -141,18 +146,26 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
         return nullptr;
       }
     }
+    // with no overload to take it, the operation has to be one the interpreter can do on the
+    // operands themselves, which means both have to be integers. this is where that kind of type
+    // error belongs: int_as_bigint is a long way from the source, and traps when it gets there
+    let e = ss_typeenv(env);
+    if (!Type_is_integer_like(lt, e) ||
+        !Type_is_integer_like(ss_type(env, scope_find(env, s, c->l)->t), e))
+      return_err("OP_UNSUPPORTED_OPERANDS", nullptr);
   } else if (tu_is(ir_set, *i)) {
     let c = &tu_catch(ir_set, *i);
-    Type dt = scope_find(env, s, c->d)->t;
+    Type dt = ss_type(env, scope_find(env, s, c->d)->t);
     dt.isref = false; //
     c->l = try_err(cast_value, (env, s, c->l, dt), 0);
   } else if (tu_is(ir_cast, *i)) {
     let c = &tu_catch(ir_cast, *i);
-    Type lt = scope_find(env, s, c->l)->t;
-    Type dt = scope_find(env, s, c->d)->t;
+    Type lt = ss_type(env, scope_find(env, s, c->l)->t);
+    Type dt = ss_type(env, scope_find(env, s, c->d)->t);
     dt.isref = false;
-    if (Type_similar(lt, dt)) *i = (ir)tu_of(ir_set, {.l = c->l, .d = c->d});
-    else if (!(Type_is_integer_like(lt) && Type_is_integer_like(dt))) return_err("CANNOT_CAST", nullptr);
+    let e = ss_typeenv(env);
+    if (Type_similar(lt, dt, e)) *i = (ir)tu_of(ir_set, {.l = c->l, .d = c->d});
+    else if (!(Type_is_integer_like(lt, e) && Type_is_integer_like(dt, e))) return_err("CANNOT_CAST", nullptr);
   } else if (tu_is(ir_ret, *i)) {
     if (env->current_ret) {
       let c = &tu_catch(ir_ret, *i);
@@ -167,7 +180,7 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
       foreach (let a, span(c->args.ptr, c->args.len)) {
         let index = (usize)(a - c->args.ptr);
         if (index >= key_len) continue;
-        Type target = key[index].t;
+        Type target = ss_type(env, key[index].t);
         *a = try_err(cast_value, (env, s, *a, target), 0);
       }
     }
@@ -196,7 +209,7 @@ static inline void scope_bind errs(superscope *env, scope *s, u32 idx, fptr name
 static inline void scope_yield errs(superscope *ss, scope *s, u32 result) {
   assertMessage(result <= s->start);
   let v = scope_find(ss, s, result);
-  assertMessage(tu_is(c_any, v->t.t));
+  assertMessage(tu_is(c_any, ss_type(ss, v->t).t));
   v->t = msList_last(s->values).t;
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = s->start + msList_len(s->values), .d = result}))); // TODO operator stuff
 }
@@ -228,9 +241,10 @@ static inline u32 ss_get_named errs(superscope *env, scope *s, fptr n) {
   let val = ss_get_named_failable_noref(env, s, n);
   if (!val) return_err("UNBOUND_ID", 0);
   let vo = scope_find(env, s, val);
-  if (vo->t.isref) return val;
-  if (Type_is_comptime(vo->t)) return scope_add_value(env, s, *vo);
-  let res = scope_add_value(env, s, TV(Type_ref(vo->t)));
+  let vt = ss_type(env, vo->t);
+  if (vt.isref) return val;
+  if (Type_is_comptime(vt)) return scope_add_value(env, s, *vo);
+  let res = scope_add_value(env, s, TV_of(env, Type_ref(vt)));
   try_err(scope_add_inst, (env, s, (ir)tu_of(ir_getref, {.d = res, .l = val})), 0);
   return res;
 }
@@ -240,38 +254,17 @@ static inline u32 ss_get_named_mut errs(superscope *env, scope *s, fptr n) {
   return val;
 }
 
-TypeTree *ss_getTypeTree(superscope *ss, TypeTree t) {
-  if_decl (let t, moxmap_get(ss->typetrees, t)) return *t;
-  let pt = acreate(ss->alloc, TypeTree);
-  moxmap_set(ss->typetrees, t, pt);
-  *pt = tu_match_exp(
-      t,
-      (builtin, b, (TypeTree)tu_of(builtin, b)),
-      //
-      (r_uint, u, (TypeTree)tu_of(r_uint, u)),
-      (r_sint, s, (TypeTree)tu_of(r_sint, s)),
-      (r_bool, _, (TypeTree)tu_of(r_bool, {})),
-      //
-      (r_tag, tag, (TypeTree)tu_of(r_tag, {tag.t, tag.name})),
-      (r_arr, arr, (TypeTree)tu_of(r_arr, {ss_getTypeTree(ss, *arr.t), arr.count})),
-      //
-      (r_struct, items, (TypeTree)tu_of(r_struct, items)),
-      (r_bitfield, items, (TypeTree)tu_of(r_bitfield, items)),
-      (r_closure, params, (TypeTree)tu_of(r_closure, params)),
-      (c_fun, params, (TypeTree)tu_of(c_fun, params)),
-      //
-      (r_void, v, (TypeTree)tu_of(r_void, {})),
-      (c_any, _, (TypeTree)tu_of(c_any, {})),
-      (c_ast, _, (TypeTree)tu_of(c_ast, {})),
-      (c_int, _, (TypeTree)tu_of(c_int, {})),
-      (c_type, _, (TypeTree)tu_of(c_type, {}))
-  );
-  return *moxmap_set(ss->typetrees, *pt, pt);
-}
-Type *ss_getType(superscope *ss, Type t) {
-  t.t = *ss_getTypeTree(ss, t.t);
-  if_decl (let t, moxmap_get(ss->types, t)) return *t;
-  return *moxmap_set(ss->types, t, avalue(ss->alloc, t));
+// pushing dedupes, so equal types share an index and index equality is type equality
+typeidx ss_type_intern(superscope *ss, Type t) {
+  // the null type is index 0 by definition, never a real entry
+  if (tu_is(r_null, t.t)) return 0;
+  // the map comparator resolves names, so it needs the bound source lists
+  typeenv_set(ss_typeenv(ss));
+  if_decl (let found, moxmap_get(ss->typeindex, t)) return *found;
+  sglist_push(ss->tlist, t);
+  let idx = (typeidx)ss->tlist.len; // 1 based
+  moxmap_set(ss->typeindex, t, idx);
+  return idx;
 }
 
 static inline void irb_cbb(const callbackallocatorhandle *h, void *p) {
@@ -288,14 +281,23 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
     .asts = ctx.alist,
     .plist = ctx.plist,
     .flist  = ctx.flist,
+    .tlist = {.allocator = allocator},
+    .sitems = {.allocator = allocator},
+    .bitems = {.allocator = allocator},
     .pointers = moxmap_init(allocator, void*, usize),
-    .typetrees = moxmap_init(allocator, TypeTree, TypeTree *,TypeTree_cmp_hash),
-    .types = moxmap_init(allocator, Type, Type *,Type_cmp_hash),
+    .typeindex = moxmap_init(allocator, Type, typeidx, Type_cmp_hash),
     .type_info = moxmap_init(allocator, fptr, scope *, fptr_cmp_hash),
-    .thisstack = msList_init(allocator , Type*),
+    .thisstack = msList_init(allocator , typeidx),
     .functions = msList_init(allocator,function),
   }));
   // clang-format on
+  typeenv_set(ss_typeenv(res));
+  // the core compile time types, interned once so that constants need no lookup
+  res->t_void = ss_type_intern(res, T(tu_of(r_void, {})));
+  res->t_any = ss_type_intern(res, T(tu_of(c_any, {})));
+  res->t_int = ss_type_intern(res, T(tu_of(c_int, {})));
+  res->t_ast = ss_type_intern(res, T(tu_of(c_ast, {})));
+  res->t_type = ss_type_intern(res, T(tu_of(c_type, {})));
   res->alloc = cba_init(allocator, nullptr, irb_cbb, res->pointers);
   res->outermost = scope_inferior(res, nullptr);
   struct {
@@ -315,6 +317,7 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
       {"@id", builtin__id},
       {"@any", builtin_any},
       {"@void", builtin_void},
+      {"@bool", builtin_bool},
       {"@int", builtin_int},
       {"@sint", builtin_sint},
       {"@uint", builtin_uint},
@@ -341,7 +344,7 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
         (scope_bind,
          (res,
           res->outermost,
-          scope_add_value(res, res->outermost, TV(T(tu_of(builtin, i.id)))),
+          scope_add_value(res, res->outermost, TV_of(res, T(tu_of(builtin, i.id)))),
           fp(i.name))),
         e,
         (assertMessage(false), 0)
@@ -355,9 +358,11 @@ static inline void ss_deInit(superscope *ss) {
   foreach (let it, moxmap_iter(ss->pointers, void *, usize))
     adestroy(allocator, (u8(*)[*it.val])it.key);
   moxmap_deinit(ss->pointers);
-  moxmap_deinit(ss->typetrees);
-  moxmap_deinit(ss->types);
+  moxmap_deinit(ss->typeindex);
   moxmap_deinit(ss->type_info);
+  sglist_deinit(ss->tlist);
+  sglist_deinit(ss->sitems);
+  sglist_deinit(ss->bitems);
   cba_deinit(ss->alloc);
   adestroy(allocator, ss);
 }
