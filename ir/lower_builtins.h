@@ -25,7 +25,6 @@ static u32 lower_builtin_cif errs(superscope *ss, scope *s, astidx args) {
     try_err(lower_condition, (ss, ns, list.start + 0), 0);
     try_err(interpret, (ss, ns), 0);
   });
-  if (!tu_is(r_bool, ss_type(ss, value.t).t)) return_err("CIF_CONDITION_NOT_BOOL", 0);
   if (!value.v.value) return_err("CIF_CONDITION_NOT_COMPTIME", 0);
 
   if (!!*(bool *)value.v.value) try_err(lower, (ss, s, list.start + 1), 0);
@@ -59,23 +58,7 @@ static u32 lower_builtin_at errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
   if (list.len != 1) return_err("WRONG_ARG_COUNT", 0);
   let l = try_err(lower, (ss, s, list.start + 0), 0);
-  // a lowered name is a referance to the pointer, not the pointer, so read the value out of it
-  // first. that read is a value of its own, and the type check recurses onto it until it
-  // reaches the plain value against a referance to it, which is handled
-  if (ss_type(ss, scope_find(ss, s, l)->t).isref) {
-    Type value = ss_type(ss, scope_find(ss, s, l)->t);
-    value.isref = false;
-    let read = scope_add_value(ss, s, TV_of(ss, value));
-    try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = l, .d = read})), 0);
-    l = read;
-  }
-  Type t = ss_type(ss, scope_find(ss, s, l)->t);
-  Type inner;
-  if (t.isref || !Type_if_deref(t, &inner)) return_err("AT_NOT_REF", 0);
-  // the thing is mutable, so @at is an lvalue and therefore a referance to it, like every
-  // other lowered lvalue
-  inner.isref = true;
-  let d = scope_add_value(ss, s, TV_of(ss, inner));
+  let d = scope_add_value(ss, s, TV_any(ss));
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_putptr, {.l = l, .d = d})), 0);
   return d;
 }
@@ -83,11 +66,7 @@ static u32 lower_builtin_where errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
   if (list.len != 1) return_err("WRONG_ARG_COUNT", 0);
   let l = try_err(lower, (ss, s, list.start + 0), 0);
-  // &(*l): a lowered lvalue is a referance, so what l denotes is one deref down, and a plain
-  // value is addressed as itself
-  Type t = ss_type(ss, scope_find(ss, s, l)->t);
-  Type_if_deref(t, &t);
-  let d = scope_add_value(ss, s, TV_of(ss, try_err(Type_ptr, (t), 0)));
+  let d = scope_add_value(ss, s, TV_any(ss));
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_getptr, {.l = l, .d = d})), 0);
   return d;
 }
@@ -95,9 +74,7 @@ static u32 lower_builtin_ref errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
   if (list.len != 1) return_err("WRONG_ARG_COUNT", 0);
   let l = try_err(lower, (ss, s, list.start + 0), 0);
-  let t = ss_type(ss, scope_find(ss, s, l)->t);
-  if (t.isref) return l;
-  let d = scope_add_value(ss, s, TV_of(ss, try_err(Type_ref, (t), 0)));
+  let d = scope_add_value(ss, s, TV_any(ss));
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_getref, {.l = l, .d = d})), 0);
   return d;
 }

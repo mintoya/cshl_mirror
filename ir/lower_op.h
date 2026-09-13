@@ -21,7 +21,13 @@ u32 lower_call errs(superscope *ss, scope *s, u32 left, astidx args) {
     return try_err(lower_builtin, (ss, s, builtin, args), 0);
   iflet_tu (let fn, c_fun, ss_type(ss, l->t).t)
     return try_err(lower_function_call, (ss, s, left, args), 0);
-  return_err("UNSUPPORTED_CALL", 0);
+  let alist = builtin_arg_list(ss->asts, args);
+  slice(u32) vals = alist.len ? slice_alloc(ss->alloc, u32, alist.len) : (slice(u32)){};
+  foreach (let i, range(0, alist.len))
+    vals.ptr[i] = try_err(lower, (ss, s, alist.start + i), 0);
+  let d = scope_add_value(ss, s, TV_any(ss));
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_opcall, {.l = left, .d = d, .o = opNumbers.call, .args = vals})), 0);
+  return d;
 }
 tu_def(
     (astLit, u8),
@@ -46,25 +52,9 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx righ
          let items = ast_block_children(ss->asts, right);
          if (items.len != 1) return_err("ARRAY_INDEX_ONE_ARG", 0);
          let r = try_err(lower, (ss, s, items.start), 0);
-         // TODO: scope should write the type if it sees an any
          let d = scope_add_value(ss, s, TV_any(ss));
          try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_array, {.d = d, .r = r, .l = left})), 0);
          d;
-       })),
-      (r_tag, t, ({
-         // TODO: find way to move this to type checking
-         let result = (u32)0;
-         if (opNumber == opNumbers.call || opNumber == opNumbers.as) {
-           char op_str[sizeof(u32) + 1] = {};
-           memcpy(op_str, &opNumber, 4);
-           let m = ss_tag_named(ss, (TypeTree)tu_of(r_tag, t), fp((char *)op_str));
-           if (m.owner)
-             result = P$(
-                 scope_add_value(ss, s, *scope_find(ss, m.owner, m.idx)),
-                 try_err(lower_call_extra, (ss, s, $, left, right), 0)
-             );
-         }
-         result;
        })),
       (c_ast, _, ({
          u32 ovl = 0;
@@ -172,14 +162,9 @@ u32 lower_dot errs(superscope *ss, scope *s, u32 left, astidx right, astLit lit)
   if (st.start) {
     foreach (let i, range(0, type_struct_len(e, st))) {
       let item = type_struct_item(e, st, i);
-      // member names are positions, so they only match when they spell the same thing
       if (!fptr_cmp(type_name(e, item->name), name)) {
         if (Type_is_comptime(item->t))
           return_err("NO_STORAGE", 0);
-        // the access register is the member itself, aliasing its storage in the struct, and its type
-        // is the member's: a ref member stays a ref and dereferences on use, a plain member is just
-        // its type. giving a plain member a referance type here would make a.b = c bind instead of
-        // copy, so a by-value capture would alias the frame it was written in
         let d = scope_add_value(ss, s, TV_of(ss, item->t));
         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_field, {.l = left, .d = d, .i = (u32)i})), 0);
         return d;
@@ -223,9 +208,9 @@ u32 lower_math errs(superscope *ss, scope *s, u32 left, u32 right, math_operatio
   let opNumber = enum_as_op((enum_op)op);
   let l = scope_find(ss, s, left);
   let r = scope_find(ss, s, right);
-  let lt = ss_type(ss, l->t);
-  if ((tu_is(c_type, lt.t) && tu_is(c_type, ss_type(ss, r->t).t)) &&
-      (op == math_eq || op == math_neq)) {
+  // comparing two comptime types is a structural compare, so it folds here instead of becoming an op
+  if ((op == math_eq || op == math_neq) && tu_is(c_type, ss_type(ss, l->t).t) &&
+      tu_is(c_type, ss_type(ss, r->t).t)) {
     bool res = l->v.c_type == r->v.c_type;
     if (op == math_neq) res = !res;
     return scope_add_value(
@@ -234,28 +219,7 @@ u32 lower_math errs(superscope *ss, scope *s, u32 left, u32 right, math_operatio
         TV_with(ss, T(tu_of(r_bool, {})), VS(avalue(ss->alloc, res)))
     );
   }
-  Type rt;
-  switch (op) {
-    case math_mor:
-    case math_les:
-    case math_moq:
-    case math_leq:
-    case math_neq:
-    case math_eq:
-    case math_and:
-    case math_or:
-      rt = T(tu_of(r_bool, {}));
-      break;
-    default:
-      rt = lt;
-      rt.isref = false;
-      rt.isconst = false;
-      rt.isvolatile = false;
-      break;
-  }
-  // TODO: make helper that retrieves the weaker type
-  let resT = Type_is_comptime(rt) ? lt : rt;
-  let d = scope_add_value(ss, s, TV_of(ss, resT));
+  let d = scope_add_value(ss, s, TV_any(ss));
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_rawop, {.r = left, .l = right, .d = d, .o = opNumber})), 0);
   return d;
 }
@@ -296,8 +260,6 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
       op_as_enum(opNumber),
       (enop_set, {
         let src = try_err(lower, (ss, s, right), 0);
-        let dt = ss_type(ss, scope_find(ss, s, left)->t);
-        let st = ss_type(ss, scope_find(ss, s, src)->t);
         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = left, .l = src})), 0);
         return left;
       }),
@@ -311,7 +273,10 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
       (enop_set /*    */, (assertMessage(false, "unreachable"), (u32)0)),
       (enop_iexpand /**/, (assertMessage(false, "unreachable"), (u32)0)),
       (enop_as, ({
-         try_err(cast_value, (ss, s, left, try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, right), 0)), 0)), 0);
+         let arg = try_err(lower, (ss, s, right), 0);
+         let d = scope_add_value(ss, s, TV_any(ss));
+         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_opcall, {.l = left, .d = d, .o = opNumbers.as, .args = ((slice(u32)){1, (u32[1]){arg}})})), 0);
+         d;
        })),
       (enop_call, try_err(lower_call, (ss, s, left, right), 0)),
       (enop_dot, ({
