@@ -3,7 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
+#define STRFRYH(x) #x
+#define STRFRY(x) STRFRYH(x)
 #if !defined CC
   #define CC "clang"
 #endif
@@ -55,13 +56,12 @@ int main(int argc, char **argv) {
 
   if (rename("nob" EXTENSION, "nob.old" EXTENSION))
     return puts("Failed to rename self\n"), 1;
-
-  if (system(strcats_space(((char[256]){}), CC, "-o", "nob" EXTENSION, "nob.c", "-w")))
+  if (system(strcats_space(((char[256]){}), CC, "-o", "nob" EXTENSION, "nob.c", "-w", "'-DCC=" STRFRY(CC) "'")))
     return puts("Failed to recompile self\n"), 1;
 
   if (chdir("deps/wheels"))
     return puts("chdir failed idk"), 1;
-  if (system(strcats_space(((char[256]){}), CC, "-o", "nob" EXTENSION, "nob.c", "-w")))
+  if (system(strcats_space(((char[256]){}), CC, "-o", "nob" EXTENSION, "nob.c", "-w", "'-DCC=" STRFRY(CC) "'")))
     return puts("failed to run nob for wheels dependency"), 1;
   if (system(PREFIX "nob" EXTENSION)) return 1;
   if (chdir("../.."))
