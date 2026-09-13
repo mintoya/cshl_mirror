@@ -1,0 +1,64 @@
+type ~~ @type();
+s32 ~~ @sint(32);
+ref ~~ @refT;
+ast ~~ @ast();
+any ~~ @any();
+
+// a closure is still a struct: one member per capture and a "()" overload.
+// `closure` builds that struct, makes one instance with the captures initialized,
+// and yields it. captures never surface as members the caller has to poke by hand.
+
+// one generated piece, chosen by mode:
+//   0 -> a struct member: name ~ type
+//   1 -> a capture init:  inst.name = value
+//   2 -> a body binding:  name ~type = self.name
+piece ~~ @fn (mode ~@int(), inst ~ast, v ~ast), ast, {
+  @cif((mode == 0), (return @qot (@uqot(v.name) ~ @uqot(v.type))));
+  @cif((mode == 1), (return @qot (@uqot(@ast_op(".", inst, v.name)) = @uqot(v.value))));
+  return @qot (@uqot(v.name) ~@uqot(v.type) = @uqot(@ast_op(".", @qot(self), v.name)));
+};
+
+// every piece for every value, as one block (@apply passes the asts by value)
+pieces ~~ @fn (values ~ast, inst ~ast, mode ~@int(), i ~@int()), ast, {
+  @cif(
+    (i < @ast_len(values)),
+    (return @qot {
+      @uqot(@apply(piece, mode, inst, @ast_at(values, i)));
+      @splice(@apply(pieces, values, inst, mode, i + 1));
+    }),
+    (return @qot [])
+  );
+};
+
+//   values : [ name ~ type = expr, ... ] the captures, initialized from expr
+//   args   : [ name ~ type, ... ]         the call parameters
+//   ret    : the return type
+//   body   : { ... } naming the captures directly
+closure ~~ @fn (values ~ast, args ~ast, ret ~ast, body ~ast), any, {
+  return @uqot(@qot {
+    ClosureType ~type~ @struct {
+      Self ~type~ @this();
+      @splice(@apply(pieces, values, @qot(inst), 0, 0));
+      @id("()") ~~ @fn((self ~Self, @splice(args)), @uqot(ret), {
+        @splice(@apply(pieces, values, @qot(inst), 2, 0));
+        @splice(body);
+      });
+    };
+    inst ~ClosureType;
+    @splice(@apply(pieces, values, @qot(inst), 1, 0));
+    inst;
+  });
+};
+
+counter ~s32 = 0;
+
+add ~~ closure [n ~(@refT s32)=counter], (j ~ s32), s32, {
+  n = n + j;
+  return n; 
+};
+
+result ~~ @fn (), s32, {
+  add(3)|>add(_)|>return _;
+};
+
+result();

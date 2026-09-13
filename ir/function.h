@@ -43,6 +43,8 @@ static cmpres typed_value_cmp_typed(Type ta, value_store av, Type tb, value_stor
                    ?: icmp(av.c_fun.spec, bv.c_fun.spec);
       }),
       (c_type, _, return icmp(av.c_type, bv.c_type)),
+      // asts have no size, so memcmp below would call every ast equal
+      (c_ast, _, return icmp(av.c_ast, bv.c_ast)),
       (default),
   );
   return cmp_memcmp(av.value, bv.value, Type_sizeof(ta, e));

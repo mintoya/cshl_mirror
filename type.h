@@ -15,7 +15,6 @@
 cmpres fptr_cmp_hash(void *, const void *a, const void *b) { return fptr_cmp(*(fptr *)a, *(fptr *)b); }
 typedef enum : u8 {
   builtin_fn,       // @fn((decl|type...) ,decl|type,body) c_func of this type,
-  builtin_closure,  // @closure((captures...),(decl|type...) ,decl|type,body) c_func of this type,
   builtin_if,       // @if(cnd , then ,)
   builtin_cif,      // @cif same as if, comptime, produces only one branch
   builtin_while,    // @while(cnd , then) //
@@ -49,6 +48,11 @@ typedef enum : u8 {
                     //
   builtin_qot,      // @qot(arg) ast of arg
   builtin_uqot,     // @unqot(arg) evaluate arg
+  builtin_splice,   // @splice(arg) inside a quote, splice a list ast's children in place
+  builtin_ast_len,  // @ast_len(arg) comptime count of a list ast's children
+  builtin_ast_at,   // @ast_at(arg,i) the i-th child of a list ast
+  builtin_ast_op,   // @ast_op(sym,a,b) build the ast of "a sym b", sym a comptime string
+  builtin_apply,    // @apply(f,args...) call f with evaluated args (ast params get values)
                     //
   builtin_ref,      // @ref(value) produces a referance to value
   builtin_reft,     // @reft(value) produces the type of a referance to a value
@@ -94,8 +98,6 @@ tu_def( // type
     // something else
     // a run of Type slots, the return type last, terminated by a null
     (c_fun /*        */, struct { typeidx start; }),
-    // one run [captures..., null, args..., null], the null also separating the two
-    (r_closure /*    */, struct { typeidx start; }),
 );
 #define T(...) ((Type){.t = __VA_ARGS__})
 
@@ -193,9 +195,6 @@ static inline u32 type_bitf_len(typeenv e, r_bitfield b) {
     n++;
   return n;
 }
-static inline typeidx type_closure_args(typeenv e, typeidx start) {
-  return start + type_run_len(e, start) + 1;
-}
 static inline r_struct_item *type_struct_item(typeenv e, r_struct r, usize i) {
   assertMessage(r.start - 1 + i < e.sitems.len, "struct member out of range");
   return &sglist_get(e.sitems, r.start - 1 + i);
@@ -219,7 +218,6 @@ static inline bool Type_is_comptime(Type t) {
   return t.iscomptime ||
          tu_is(builtin, t.t) ||
          tu_is(c_fun, t.t) ||
-         tu_is(r_closure, t.t) ||
          tu_is(c_int, t.t) ||
          tu_is(c_any, t.t) ||
          tu_is(c_type, t.t) ||
@@ -234,7 +232,6 @@ static usize TypeTree_alignof(TypeTree t, typeenv e) {
       (r_null, _, (assertMessage(false, "whos askin"), (usize)1)),
       (builtin, _, (usize)1),
       (c_fun, _, (usize)1),
-      (r_closure, _, (usize)1),
       (c_int, _, (usize)1),
       (c_any, _, (usize)1),
       (c_type, _, (usize)1),
@@ -275,7 +272,6 @@ static usize TypeTree_sizeof(TypeTree t, typeenv e) {
       (c_int, _, (usize)0),
       (c_any, _, (usize)0),
       (c_fun, _, (usize)0),
-      (r_closure, _, (usize)0),
       //  0 for it's own reason
       (r_void, _, (usize)0),
       //
@@ -325,6 +321,14 @@ static inline r_bitfield TypeTree_inner_bitfield(TypeTree t, typeenv e) {
       (default, (r_bitfield){0})
   );
 }
+static inline r_arr TypeTree_inner_array(TypeTree t, typeenv e) {
+  return tu_match_exp(
+      t,
+      (r_arr, r, r),
+      (r_tag, r, TypeTree_inner_array(type_tree(e, r.t), e)),
+      (default, (r_arr){0})
+  );
+}
 
 // comparison
 
@@ -371,20 +375,6 @@ cmpres TypeTree_cmp(typeenv e, TypeTree a, TypeTree b) {
             return cmp;
         return 0;
       }),
-      (r_closure, ai, {
-        let bi = tu_catch(r_closure, b);
-        u32 ac = type_run_len(e, ai.start), bc = type_run_len(e, bi.start);
-        if_decl (let cmp, icmp(ac, bc)) return cmp;
-        u32 an = ac + type_run_len(e, type_closure_args(e, ai.start));
-        u32 bn = bc + type_run_len(e, type_closure_args(e, bi.start));
-        if_decl (let cmp, icmp(an, bn)) return cmp;
-
-        foreach (let i, range(0, an))
-          if_decl (let cmp, Type_cmp(e, type_at(e, type_run_at(e, ai.start, i)), type_at(e, type_run_at(e, bi.start, i))))
-            return cmp;
-        return 0;
-      }),
-
       (r_struct, ai, {
         let bi = tu_catch(r_struct, b);
         u32 an = type_struct_len(e, ai), bn = type_struct_len(e, bi);
@@ -446,6 +436,11 @@ typePrinter(builtin_id) {
       (builtin_cif, /*     */ PUTS("cif")),
       (builtin_ast, /*     */ PUTS("ast")),
       (builtin_uqot, /*    */ PUTS("uqot")),
+      (builtin_splice, /**/ PUTS("splice")),
+      (builtin_ast_len, /**/ PUTS("ast_len")),
+      (builtin_ast_at, /*  */ PUTS("ast_at")),
+      (builtin_ast_op, /*  */ PUTS("ast_op")),
+      (builtin_apply, /*   */ PUTS("apply")),
       (builtin_reft, /*    */ PUTS("reft")),
       (builtin_type, /*    */ PUTS("type")),
       (builtin_void, /*    */ PUTS("void")),
@@ -464,7 +459,6 @@ typePrinter(builtin_id) {
       (builtin_return, /*  */ PUTS("return")),
       (builtin_typeof, /*  */ PUTS("typeof")),
       (builtin_alignof, /* */ PUTS("alignof")),
-      (builtin_closure, /* */ PUTS("closure")),
       (builtin_continue, /**/ PUTS("continue")),
       (builtin_offsetof, /**/ PUTS("offsetof")),
       (builtin_volatile, /**/ PUTS("volatile")),
@@ -548,21 +542,6 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, typeen
         }
         PUTS("))");
       }),
-      (r_closure, fn, {
-        typeTreePrinterWorker_add(in, visitedmap);
-        PUTS("(clos (");
-        foreach (let i, range(0, type_run_len(e, fn.start))) {
-          if (i) PUTS(" ");
-          typePrinterWorker(type_at(e, type_run_at(e, fn.start, i)), visitedmap, e, _ctx);
-        }
-        PUTS("),(");
-        typeidx args = type_closure_args(e, fn.start);
-        foreach (let i, range(0, type_run_len(e, args))) {
-          if (i) PUTS(" ");
-          typePrinterWorker(type_at(e, type_run_at(e, args, i)), visitedmap, e, _ctx);
-        }
-        PUTS("))");
-      })
   );
 }
 

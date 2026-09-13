@@ -9,52 +9,89 @@ e = x();
 nothing_t _gen_fn1(){}
 e = _gen_fn1();
 ```
+
 closures
+
+there is no closure construct. a @fn roots at the module and so cannot name a
+variable of the frame it was written in:
+
 ```cshl
-ct ~~@closureT ((@refT i32)),(i32),i32;
-x ~~ @fn (i~i32),ct,{
-  @closure (@ref i),(j~i32),i32,{
-    return ( i = i + j );
-  }|> return _;
+outer ~~ @fn (x ~@int()),@int(),{
+  hidden ~ @int() = 7;
+  inner ~~ @fn (y ~@int()),@int(),{ return hidden; }; // UNBOUND_ID
+  return inner(1);
 };
-x(1)(2);
+```
+
+a closure is instead an ordinary struct: one member per capture, plus a "()"
+overload so it can be called like anything else.
+
+```cshl
+type ~~ @type();
+s32  ~~ @sint(32);
+
+adder ~type~ @struct{
+  Self ~type~ @this();
+  captured ~ s32;
+  @id("()") ~~ @fn (self ~Self, extra ~s32), s32, {
+    base ~s32 = self.captured;
+    return base + extra;
+  };
+};
+
+make_adder ~~ @fn (start ~s32), adder, {
+  c ~adder;
+  c.captured = start;
+  return c;
+};
+
+result ~~ @fn (), s32, {
+  add5 ~adder = make_adder(5);
+  return add5(2); // 7
+};
 ```
 ```c
 typedef struct _closuretype_1 {
-  struct {
-    int *i;
-  } captures;
-  struct {
-    int j;
-  } args;
-  int *result;
-  void (*function)(struct _closuretype_1);
+  int captured;
 } _closuretype_1;
 
-void _closure_1(struct _closuretype_1 a) {
-  int *i = a.captures.i; // all referances are a pointer that are themselves dereferanced
-  int j = a.args.j;
-  {
-    (*a.result) = (*i) = (*i) + j;
-    return;
-  }
+int _closure_1(_closuretype_1 self, int extra) {
+  int base = self.captured;
+  return base + extra;
 }
-_closuretype_1 _gen_fn1(int i) {
-  return (_closuretype_1){
-      {&i}, // leak but who cares
-      {},
-      {},
-      _closure_1
+_closuretype_1 make_adder(int start) {
+  _closuretype_1 c;
+  c.captured = start;
+  return c;
+}
+int result(void) {
+  _closuretype_1 add5 = make_adder(5);
+  return _closure_1(add5, 2);
+}
+```
+
+a capture is explicit, so capturing by reference is just a `@ref` member. the
+member stores the address, and the body binds it to a local ref to write through:
+
+```cshl
+counter ~s32 = 5;
+
+cell ~type~ @struct{
+  Self ~type~ @this();
+  r ~ (ref s32);
+  @id("()") ~~ @fn (self ~Self, j ~s32), s32, {
+    v ~(ref s32) = self.r;
+    v = v + j;
+    return v;
   };
 };
-int main(void) {
-  int _result = {};
-  {
-    auto _1 = _gen_fn1(1);
-    _1.args.j = 2;
-    _1.result = &_result;
-    _1.function(_1);
-  }
-  _result;
-}
+
+make ~~ @fn (), cell, {
+  c ~cell;
+  c.r = @ref counter;
+  return c;
+};
+
+k ~cell = make();
+k(2);      // counter is 7
 ```

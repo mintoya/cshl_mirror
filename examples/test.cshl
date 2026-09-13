@@ -1,31 +1,31 @@
-int ~~@int();
-ast ~~@ast();
-void  ~~@void();
-type  ~~@type();
+type ~~ @type();
+s32  ~~ @sint(32);
+ref  ~~ @refT;
 
-i8  ~~@sint(8);
+// a closure is a struct: one member per capture and a "()" overload.
+// the capture is explicit, so a ref member aliases its source.
+counter ~s32 = 0;
 
-arr ~~ @fn (N ~ast),ast,{
-  @qot(@fn (T ~type),type,{ 
-    return @arr(@uqot(N) , T);
-  })|> return _;
+add ~type~ @struct{
+  Self ~type~ @this();
+  n ~ (ref s32);
+  @id("()") ~~ @fn (self ~Self, j ~s32), s32, {
+    total ~(ref s32) = self.n;
+    total = total + j;
+    return total;
+  };
 };
-arr2 ~~ @fn (N ~int),ast,{
-  (@closure (N),(T ~type),type,{ 
-    return @arr(N,T);
-  })|> return _;
+
+make ~~ @fn (n ~(ref s32)), add, {
+  c ~add;
+  c.n = n;
+  return c;
 };
 
-hello   ~arr'(5)i8~ "yello";
-hello2  ~arr2(5)i8~ "y2llo";
+result ~~ @fn (), s32, {
+  c ~add = make(counter);
+  c(3);
+  return c(4);
+};
 
-ten ~~ (@fn (i ~int),int,{
-  (@closure (@ref(i)),(j ~int),void,{i = i+j;}) 
-    |> _(i);
-  return i;
-})(5);
-five ~~ (@fn (i ~int),int,{
-  (@closure (i),(j ~int),void,{i = i+j;}) 
-    |> _(i);
-  return i;
-})(5);
+result();

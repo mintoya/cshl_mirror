@@ -4,11 +4,27 @@
 #include "ir.h"
 #include "wheels/macros.h"
 #include "wheels/oxmap.h"
+#include "wheels/print/print_pre.h"
 #include <assert.h>
 #include <wheels/allocators/cballocator.h>
 #include <wheels/sList.h>
 #include <wheels/smap.h>
-
+static struct {
+  char buf[1024];
+  usize len;
+} errors_buffer = {};
+void errors_buffer_printer(const char *c, void *v, usize len, bool flush) {
+  for (int i = 0; i < len && errors_buffer.len < countof(errors_buffer.buf) - 1; i++)
+    errors_buffer.buf[errors_buffer.len++] = c[i];
+  if (flush)
+    errors_buffer.buf[errors_buffer.len] = 0,
+    errors_buffer.len = 0;
+}
+char *print_errsbuffer(void *) { return (char *)errors_buffer.buf; }
+#define print_ebuff(fmt, ...) ({                               \
+  print_wfO(errors_buffer_printer, nullptr, fmt, __VA_ARGS__); \
+  print_errsbuffer;                                            \
+})
 // scope helpers
 typed_value *scope_find(superscope *env, scope *s, u32 idx) {
   while (s)
@@ -108,6 +124,21 @@ static inline void scope_emit_inst errs(superscope *env, scope *s, ir i) {
 static bool Type_similar(Type a, Type b, typeenv e) {
   return a.ptr_level == b.ptr_level && !TypeTree_cmp(e, a.t, b.t);
 }
+// a referance is one level of indirection kept in its own bit, so the level of a type is
+// ptr_level + isref. dropping one level is what &(*x) and *x are built out of
+static inline bool Type_deref(Type t, Type *out) {
+  if (t.isref) {
+    t.isref = false;
+    *out = t;
+    return true;
+  }
+  if (t.ptr_level) {
+    t.ptr_level--;
+    *out = t;
+    return true;
+  }
+  return false;
+}
 static bool Type_is_integer_like(Type t, typeenv e) {
   return !t.ptr_level && (tu_is(r_bool, t.t) || Type_isint(t, e));
 }
@@ -124,61 +155,179 @@ static u32 cast_value errs(superscope *ss, scope *s, u32 left, Type to) {
   return d;
 }
 static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i) {
-  if (tu_is(ir_rawop, *i)) {
-    // an overload on the left operand's tag wins; it is the receiver, so passed first
-    let c = &tu_catch(ir_rawop, *i);
-    Type lt = ss_type(env, scope_find(env, s, c->r)->t);
-    if (lt.ptr_level <= 1) {
-      char op_str[sizeof(u32) + 1] = {};
-      memcpy(op_str, &c->o, 4);
-      let m = ss_tag_named(env, lt.t, fp((char *)op_str));
-      if (m.owner) {
-        let method = scope_add_value(env, s, *scope_find(env, m.owner, m.idx));
-        u32 vals[2] = {c->r, c->l};
-        u32 res = try_err(lower_function_call_values, (env, s, method, ((slice(u32)){2, vals})), 0);
-        try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_set, {.l = res, .d = c->d})), 0);
-        return nullptr;
-      }
-    }
-    // with no overload to take it, the operation has to be one the interpreter can do on the
-    // operands themselves, which means both have to be integers. this is where that kind of type
-    // error belongs: int_as_bigint is a long way from the source, and traps when it gets there
-    let e = ss_typeenv(env);
-    if (!Type_is_integer_like(lt, e) ||
-        !Type_is_integer_like(ss_type(env, scope_find(env, s, c->l)->t), e))
-      return_err("OP_UNSUPPORTED_OPERANDS", nullptr);
-  } else if (tu_is(ir_set, *i)) {
-    let c = &tu_catch(ir_set, *i);
-    Type dt = ss_type(env, scope_find(env, s, c->d)->t);
-    dt.isref = false; //
-    c->l = try_err(cast_value, (env, s, c->l, dt), 0);
-  } else if (tu_is(ir_cast, *i)) {
-    let c = &tu_catch(ir_cast, *i);
-    Type lt = ss_type(env, scope_find(env, s, c->l)->t);
-    Type dt = ss_type(env, scope_find(env, s, c->d)->t);
-    dt.isref = false;
-    let e = ss_typeenv(env);
-    if (Type_similar(lt, dt, e)) *i = (ir)tu_of(ir_set, {.l = c->l, .d = c->d});
-    else if (!(Type_is_integer_like(lt, e) && Type_is_integer_like(dt, e))) return_err("CANNOT_CAST", nullptr);
-  } else if (tu_is(ir_ret, *i)) {
-    if (env->current_ret) {
-      let c = &tu_catch(ir_ret, *i);
-      *c = try_err(cast_value, (env, s, *c, *env->current_ret), 0);
-    }
-  } else if (tu_is(ir_call, *i)) {
-    let c = &tu_catch(ir_call, *i);
-    if (c->l.fn && c->l.fn <= msList_len(env->functions)) {
-      let inst = &env->functions[c->l.fn - 1].instances[c->l.spec];
-      usize key_len = inst->key_len;
-      typed_value *key = inst->key;
-      foreach (let a, span(c->args.ptr, c->args.len)) {
-        let index = (usize)(a - c->args.ptr);
-        if (index >= key_len) continue;
-        Type target = ss_type(env, key[index].t);
-        *a = try_err(cast_value, (env, s, *a, target), 0);
-      }
-    }
-  }
+  let tenv = ss_typeenv(env);
+  tu_match_void(
+      *i,
+      (ir_putptr, _, {
+        let pp = &tu_catch(ir_putptr, *i);
+        let lt = ss_type(env, scope_find(env, s, pp->l)->t);
+        let dt = ss_type(env, scope_find(env, s, pp->d)->t);
+        // d = *l, so l has to be a pointer with something to point at. a referance is not a
+        // pointer here: *ref unfolds into the referent, so this would be *(*x), not a deref.
+        // d is the thing itself, and since it is mutable it may be spelled as a referance to
+        // it or as a plain value holding it
+        Type pointee = {};
+        Type asref;
+        bool matches = !lt.isref && Type_deref(lt, &pointee);
+        if (matches) {
+          asref = pointee;
+          asref.isref = true;
+          matches = !Type_cmp(tenv, pointee, dt) || !Type_cmp(tenv, asref, dt);
+        }
+        if (!matches)
+          return_err_extras(
+              "TYPE_ERROR",
+              print_ebuff("{Type_full} not ptr to {Type_full}", ss_typeF(env, lt), ss_typeF(env, dt)),
+              0,
+              0
+          );
+        return i;
+      }),
+      (ir_getptr, _, {
+        let pp = &tu_catch(ir_getptr, *i);
+        let lt = ss_type(env, scope_find(env, s, pp->l)->t);
+        let dt = ss_type(env, scope_find(env, s, pp->d)->t);
+        // d = &(*l): the address of whatever l denotes. a plain value is addressed as itself,
+        // a referance or pointer is addressed at what it denotes, and the address may be
+        // spelled either as a pointer or as a referance, because they are the same address
+        Type obj = lt;
+        Type_deref(lt, &obj);
+        Type asp = obj;
+        asp.ptr_level++;
+        Type asr = obj;
+        asr.isref = true;
+        if (Type_cmp(tenv, asp, dt) && Type_cmp(tenv, asr, dt))
+          return_err_extras(
+              "TYPE_ERROR",
+              print_ebuff("{Type_full} not ptr to {Type_full}", ss_typeF(env, dt), ss_typeF(env, lt)),
+              0,
+              0
+          );
+        return i;
+      }),
+      (ir_getref, _, {
+        let pp = &tu_catch(ir_getref, *i);
+        let lt = ss_type(env, scope_find(env, s, pp->l)->t);
+        let dt = ss_type(env, scope_find(env, s, pp->d)->t);
+        if (Type_cmp(tenv, P$(lt, ($.isref = true, $)), dt))
+          return_err_extras(
+              "TYPE_ERROR",
+              print_ebuff("{Type_full} not ref to {Type_full}", ss_typeF(env, dt), ss_typeF(env, lt)),
+              0,
+              0
+          );
+        return i;
+      }),
+      (ir_rawop, _, {
+        let c = &tu_catch(ir_rawop, *i);
+        Type lt = ss_type(env, scope_find(env, s, c->r)->t);
+        if (lt.ptr_level <= 1) {
+          char op_str[sizeof(u32) + 1] = {};
+          memcpy(op_str, &c->o, 4);
+          let m = ss_tag_named(env, lt.t, fp((char *)op_str));
+          if (m.owner) {
+            let method = scope_add_value(env, s, *scope_find(env, m.owner, m.idx));
+            u32 vals[2] = {c->r, c->l};
+            u32 res = try_err(lower_function_call_values, (env, s, method, ((slice(u32)){2, vals})), 0);
+            try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_set, {.l = res, .d = c->d})), 0);
+            return nullptr;
+          }
+        }
+        let e = ss_typeenv(env);
+        if (!Type_is_integer_like(lt, e) ||
+            !Type_is_integer_like(ss_type(env, scope_find(env, s, c->l)->t), e))
+          return_err("OP_UNSUPPORTED_OPERANDS", nullptr);
+      }),
+      (ir_set, _, {
+        let c = &tu_catch(ir_set, *i);
+        Type dt = ss_type(env, scope_find(env, s, c->d)->t);
+        dt.isref = false; //
+        c->l = try_err(cast_value, (env, s, c->l, dt), 0);
+      }),
+      (ir_cast, _, {
+        let c = &tu_catch(ir_cast, *i);
+        Type lt = ss_type(env, scope_find(env, s, c->l)->t);
+        Type dt = ss_type(env, scope_find(env, s, c->d)->t);
+        dt.isref = false;
+        let e = ss_typeenv(env);
+        if (Type_similar(lt, dt, e)) *i = (ir)tu_of(ir_set, {.l = c->l, .d = c->d});
+        else if (!(Type_is_integer_like(lt, e) && Type_is_integer_like(dt, e))) return_err("CANNOT_CAST", nullptr);
+      }),
+      (ir_ret, _, {
+        if (env->current_ret) {
+          let c = &tu_catch(ir_ret, *i);
+          if (tu_is(c_any, env->current_ret->t)) {
+            Type vt = ss_type(env, scope_find(env, s, *c)->t);
+            vt.isref = false;
+            *env->current_ret = vt;
+          } else *c = try_err(cast_value, (env, s, *c, *env->current_ret), 0);
+        }
+      }),
+      (ir_call, _, {
+        let c = &tu_catch(ir_call, *i);
+        if (c->l.fn && c->l.fn <= msList_len(env->functions)) {
+          let inst = &env->functions[c->l.fn - 1].instances[c->l.spec];
+          usize key_len = inst->key_len;
+          typed_value *key = inst->key;
+          foreach (let a, span(c->args.ptr, c->args.len)) {
+            let index = (usize)(a - c->args.ptr);
+            if (index >= key_len) continue;
+            Type target = ss_type(env, key[index].t);
+            *a = try_err(cast_value, (env, s, *a, target), 0);
+          }
+        }
+      }),
+
+      (ir_array, _, {
+        let pp = &tu_catch(ir_array, *i);
+        let lt = ss_type(env, scope_find(env, s, pp->l)->t);
+        let dt = ss_type(env, scope_find(env, s, pp->d)->t);
+        let rt = ss_type(env, scope_find(env, s, pp->r)->t);
+        let e = ss_typeenv(env);
+        if (!Type_isint(rt, e)) return_err("ARRAY_INDEX_NON_INT", nullptr);
+        // d = l[r]: the access is the element itself, so dt is the element's own type, a referance
+        // when the element type is one. l is the array itself, a pointer to it or a referance to
+        // it, so drop one level before asking for the element
+        Type arr = lt;
+        Type_deref(lt, &arr);
+        let inner = TypeTree_inner_array(arr.t, e);
+        if (!inner.t) return_err("ARRAY_OF_NON_ARRAY", nullptr);
+        Type elem = type_at(e, inner.t);
+        if (Type_cmp(e, elem, dt))
+          return_err_extras(
+              "TYPE_ERROR",
+              print_ebuff("{Type_full} not the element {Type_full}", ss_typeF(env, dt), ss_typeF(env, elem)),
+              0,
+              0
+          );
+      }),
+      (ir_field, _, {
+        let pp = &tu_catch(ir_field, *i);
+        let lt = ss_type(env, scope_find(env, s, pp->l)->t);
+        let dt = ss_type(env, scope_find(env, s, pp->d)->t);
+        let e = ss_typeenv(env);
+        // d = l.i: the access is the member itself, so dt is the member's own type, a referance
+        // when the member type is one. l is the struct itself, a pointer to it or a referance to
+        // it, so drop one level first
+        Type strct = lt;
+        Type_deref(lt, &strct);
+        let st = TypeTree_inner_struct(strct.t, e);
+        let bf = TypeTree_inner_bitfield(strct.t, e);
+        Type member = {};
+        if (st.start && pp->i < type_struct_len(e, st)) member = type_struct_item(e, st, pp->i)->t;
+        else if (bf.start && pp->i < type_bitf_len(e, bf)) member = type_bitf_item(e, bf, pp->i)->t;
+        else return_err("NO_SUCH_FIELD", nullptr);
+        if (Type_is_comptime(member)) return_err("NO_STORAGE", nullptr);
+        if (Type_cmp(e, member, dt))
+          return_err_extras(
+              "TYPE_ERROR",
+              print_ebuff("{Type_full} not the member {Type_full}", ss_typeF(env, dt), ss_typeF(env, member)),
+              0,
+              0
+          );
+      }),
+      // (default) // fallthrough
+  );
   return i;
 }
 static inline void scope_add_inst errs(superscope *env, scope *s, ir i) {
@@ -204,20 +353,31 @@ static inline void scope_yield errs(superscope *ss, scope *s, u32 result) {
   assertMessage(result <= s->start);
   let v = scope_find(ss, s, result);
   assertMessage(tu_is(c_any, ss_type(ss, v->t).t));
-  v->t = msList_last(s->values).t;
+  // the block yields the value, not the referance the last expression left behind, so that the
+  // set below copies the thing into the result instead of writing through an address
+  Type yielded = ss_type(ss, msList_last(s->values).t);
+  yielded.isref = false;
+  v->t = ss_type_intern(ss, yielded);
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = s->start + msList_len(s->values), .d = result}))); // TODO operator stuff
 }
 
-static inline Type Type_ptr(Type t) {
+static inline Type Type_ptr errs(Type t) {
+  if (t.isref)
+    return_err("POINTER_TO_REFERENCE", T({}));
+  if (Type_is_comptime(P$(t, ($.iscomptime = false, $))))
+    return_err("POINTER_TO_COMPTIME_ONLY", T({}));
   t.ptr_level++;
   return t;
 }
-static inline Type Type_ref(Type t) {
-  assertMessage(!t.isref, "no referance to referance");
+
+static inline Type Type_ref errs(Type t) {
+  if (t.isref)
+    return_err("REFERENCE_TO_REFERENCE", T({}));
+  if (Type_is_comptime(P$(t, ($.iscomptime = false, $))))
+    return_err("REFERENCE_TO_COMPTIME_ONLY", T({}));
   t.isref = true;
   return t;
 }
-
 // superscope helpers
 static inline u32 ss_get_named_failable_noref(superscope *env, scope *s, fptr n) {
   let o = s;
@@ -238,7 +398,7 @@ static inline u32 ss_get_named errs(superscope *env, scope *s, fptr n) {
   let vt = ss_type(env, vo->t);
   if (vt.isref) return val;
   if (Type_is_comptime(vt)) return scope_add_value(env, s, *vo);
-  let res = scope_add_value(env, s, TV_of(env, Type_ref(vt)));
+  let res = scope_add_value(env, s, TV_of(env, try_err(Type_ref, (vt), 0)));
   try_err(scope_add_inst, (env, s, (ir)tu_of(ir_getref, {.d = res, .l = val})), 0);
   return res;
 }
@@ -295,13 +455,17 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
     builtin_id id;
   } builtins[] = {
       {"@fn", builtin_fn},
-      {"@closure", builtin_closure},
       {"@this", builtin__this},
       {"@struct", builtin_struct},
       {"@at", builtin_at},
       {"@where", builtin_where},
       {"@uqot", builtin_uqot},
       {"@qot", builtin_qot},
+      {"@splice", builtin_splice},
+      {"@ast_len", builtin_ast_len},
+      {"@ast_at", builtin_ast_at},
+      {"@ast_op", builtin_ast_op},
+      {"@apply", builtin_apply},
       {"@type", builtin_type},
       {"@ast", builtin_ast},
       {"@id", builtin__id},

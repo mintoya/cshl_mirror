@@ -3,6 +3,7 @@
 #include "wheels/fptr.h"
 #include "wheels/macros.h"
 #include <assert.h>
+#include <stdio.h>
 #include <string.h>
 #include <tree-sitter/lib/include/tree_sitter/api.h>
 
@@ -10,10 +11,17 @@ extern const TSLanguage *tree_sitter_cshl(void);
 
 static ast null_ast() { return (ast)tu_of(astNull, {}); }
 
-static void __attribute__((noreturn)) printerr_point(void *userdata) {
+static char *printerr_point(void *userdata) {
+  static char ebuff[100] = {};
   let epoint = (TSPoint *)&userdata;
-  fprintf(stderr, "Syntax error line %u column %u", epoint->row + 1, epoint->column + 1);
-  assertMessage(false);
+  snprintf(
+      ebuff,
+      countof(ebuff),
+      "Syntax error line %u column %u",
+      epoint->row + 1,
+      epoint->column + 1
+  );
+  return ebuff;
 }
 
 static srcpos register_pos(poslist *plist, u32 fileIndex, TSNode n) {

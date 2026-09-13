@@ -45,12 +45,17 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx righ
          (void)tu_catch(astABlock, right_node, return_err("ARRAY_NEEDS_ABLOCK", 0));
          let items = ast_block_children(ss->asts, right);
          if (items.len != 1) return_err("ARRAY_INDEX_ONE_ARG", 0);
-         let elem = type_at(ss_typeenv(ss), arr.t);
-         elem.isref = true;
-         let d = scope_add_value(ss, s, TV_of(ss, elem));
          let r = try_err(lower, (ss, s, items.start), 0);
          if (!Type_isint(ss_type(ss, scope_find(ss, s, r)->t), ss_typeenv(ss)))
            return_err("ARRAY_INDEX_NON_INT", 0);
+         // the access register is the element itself, aliasing its storage in the array, exactly the
+         // way a member access aliases the member. typed as a referance to the element instead,
+         // x[i] = y would bind a referance into the access register rather than write the element,
+         // and that binding is thrown away with the register, so the assignment would do nothing
+         // it is created after the index is lowered so that the access is the last value in the
+         // scope: a block yields its last value, and x[i] has to yield the element, not the index
+         let elem = type_at(ss_typeenv(ss), arr.t);
+         let d = scope_add_value(ss, s, TV_of(ss, elem));
          try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_array, {.d = d, .r = r, .l = left})), 0);
          d;
        })),
@@ -92,12 +97,18 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx righ
              let ms = ast_text(ss, m);
              astidx res = 0;
              if (self)
-               iflet_tu (let op, astOp, ast_at(ss->asts, self)) {
-                 if (fptr_eq(ms, "opleft")) res = ast_child(ss->asts, op.left_right);
-                 else if (fptr_eq(ms, "opright")) res = ast_child(ss->asts, op.left_right + 1);
-               }
-             if (!res && self)
-               res = tu_match_exp(
+               iflet_tu (let op, astOp, ast_at(ss->asts, self)) {             if (fptr_eq(ms, "opleft")) res = ast_child(ss->asts, op.left_right);
+             else if (fptr_eq(ms, "opright")) res = ast_child(ss->asts, op.left_right + 1);
+           }
+           // a decl's parts, so a macro can take one apart and rebuild it
+           if (!res && self)
+             iflet_tu (let d, astDecl, ast_at(ss->asts, self)) {
+               if (fptr_eq(ms, "name")) res = ast_child(ss->asts, d.name_type_value);
+               else if (fptr_eq(ms, "type")) res = ast_child(ss->asts, d.name_type_value + 1);
+               else if (fptr_eq(ms, "value")) res = ast_child(ss->asts, d.name_type_value + 2);
+             }
+           if (!res && self)
+             res = tu_match_exp(
                    ast_at(ss->asts, self),
                    (astOp, _, /*    */ fptr_eq(ms, "op") /*    */ ? self : (astidx)0),
                    (astId, _, /*    */ fptr_eq(ms, "id") /*    */ ? self : (astidx)0),
@@ -177,9 +188,11 @@ u32 lower_dot errs(superscope *ss, scope *s, u32 left, astidx right, astLit lit)
       if (!fptr_cmp(type_name(e, item->name), name)) {
         if (Type_is_comptime(item->t))
           return_err("NO_STORAGE", 0);
-        Type rt = item->t;
-        rt.isref = true;
-        let d = scope_add_value(ss, s, TV_of(ss, rt));
+        // the access register is the member itself, aliasing its storage in the struct, and its type
+        // is the member's: a ref member stays a ref and dereferences on use, a plain member is just
+        // its type. giving a plain member a referance type here would make a.b = c bind instead of
+        // copy, so a by-value capture would alias the frame it was written in
+        let d = scope_add_value(ss, s, TV_of(ss, item->t));
         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_field, {.l = left, .d = d, .i = (u32)i})), 0);
         return d;
       }
@@ -296,7 +309,15 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
   switch_tuple(
       op_as_enum(opNumber),
       (enop_set, {
-        try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = left, .l = try_err(lower, (ss, s, right), 0)})), 0);
+        let src = try_err(lower, (ss, s, right), 0);
+        // a ref assigned into a ref slot binds the address rather than copying the pointee; getptr is
+        // exactly "store the address of l into d"
+        let dt = ss_type(ss, scope_find(ss, s, left)->t);
+        let st = ss_type(ss, scope_find(ss, s, src)->t);
+        if (dt.isref && st.isref)
+          try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_getptr, {.d = left, .l = src})), 0);
+        else
+          try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = left, .l = src})), 0);
         return left;
       }),
       (default, ),

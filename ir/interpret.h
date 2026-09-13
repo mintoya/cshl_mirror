@@ -66,7 +66,9 @@ void irsig_continue errs(irsig *_sig) {
 void irsig_return errs(irsig *_sig, typeenv env, typed_value v) {
   println("[LOG:ret]  {typed_value_full}", ((typed_value_full){v, env}));
   if (!_sig->ret) return_err("RETURN_NOT_RETURNABLE");
-  if (Type_cmp(env, type_at(env, v.t), type_at(env, _sig->ret->t)))
+  let ta = type_at(env, v.t);
+  let tb = type_at(env, _sig->ret->t);
+  if (Type_cmp(env, ta, tb) && Type_cmp(env, T(tu_of(c_any, {})), tb))
     return_err("RETURN_WRONG_TYPE");
   if (!v.v.value) return_err("RETURN_UNKNOWN");
   _sig->ret->v = v.v;
@@ -131,15 +133,16 @@ void interpret_while errs(irstate st, ir_while c) {
     if (st.sig.ret && st.sig.ret->v.value) return;
   }
 }
-void interpret_getptr(irstate st, ir_getptr c) {
-  let d = irstate_find(st, c.d);
-  let l = irstate_find(st, c.l);
-  *(void **)irstate_mem(st, c.d) = irstate_mem(st, c.l);
-}
+void interpret_getptr(irstate st, ir_getptr c) { *(void **)irstate_mem(st, c.d) = irstate_data(st, c.l); }
 void interpret_getref(irstate st, ir_getref c) { interpret_getptr(st, (ir_getptr){.l = c.l, .d = c.d}); }
+// d = *l, l is a pointer, so the address is read straight out of its storage. unfolding a
+// referance here would dereference twice
 void interpret_putptr(irstate st, ir_putptr c) {
-  let d = irstate_find(st, c.d);
-  d->v.value = *(void **)ir_readthrough(st, c.l).v.value;
+  void *target = *(void **)irstate_mem(st, c.l);
+  // a referance keeps its address in storage, the way getref writes it, so that reading it
+  // unfolds to the thing. a plain value is the thing itself, and points straight at it
+  if (ss_type(st.ss, irstate_find(st, c.d)->t).isref) *(void **)irstate_mem(st, c.d) = target;
+  else irstate_find(st, c.d)->v.value = target;
 }
 void interpret_call errs(irstate st, ir_call c) {
   let it = st.ss->functions[c.l.fn - 1].instances[c.l.spec];
@@ -151,7 +154,6 @@ void interpret_call errs(irstate st, ir_call c) {
     *it = irstate_find(st, c.args.ptr[it - ftype.ptr])->t;
   st.fnctx.ftype = ftype;
   usize nargs = st.fnctx.ftype.len - 1;
-  // a zero-length allocation is not a valid allocator call, so a no-arg call keeps null args
   st.fnctx.args = nargs ? acreate(st.ss->alloc, value_store[nargs]) : nullptr;
   defer {
     if (nargs) adestroy(st.ss->alloc, (value_store(*)[nargs])st.fnctx.args);
@@ -170,13 +172,6 @@ void interpret_call errs(irstate st, ir_call c) {
     return_err("NO_RETURN_NONVOID");
 
   let destination = irstate_find(st, c.d);
-  // a type's index can be shared, so clearing const means interning a non-const variant
-  let dest_t = ss_type(st.ss, destination->t);
-  dest_t.isconst = false;
-  destination->t = ss_type_intern(st.ss, dest_t);
-
-  if (Type_cmp(ss_typeenv(st.ss), ss_type(st.ss, destination->t), ss_type(st.ss, result.t)))
-    return_err("RETURN_WRONG_TYPE");
   tu_match_void(
       ss_type(st.ss, destination->t).t,
       (c_ast, _, destination->v.c_ast = result.v.c_ast),
@@ -187,9 +182,7 @@ void interpret_call errs(irstate st, ir_call c) {
       (c_fun, _, destination->v.c_fun = result.v.c_fun),
       (c_type, _, destination->v.c_type = result.v.c_type),
       (builtin, _, return_err("SET_BUILTIN")),
-      (default, {
-        memcpy(irstate_mem(st, c.d), result.v.value, Type_sizeof(ss_type(st.ss, destination->t), ss_typeenv(st.ss)));
-      })
+      (default, memcpy(irstate_mem(st, c.d), result.v.value, Type_sizeof(ss_type(st.ss, destination->t), ss_typeenv(st.ss))))
   );
 }
 void interpret_rawop errs(irstate st, ir_rawop c) {
@@ -260,8 +253,10 @@ void interpret_array(irstate st, ir_array c) {
   let arr = tu_catchr(r_arr, ss_type(st.ss, l.t).t);
   let idx = int_as_bigint(st.ss->alloc, ir_readthrough(st, c.r), ss_typeenv(st.ss));
   bigint_expand(st.ss->alloc, &idx, sizeof(usize) / sizeof(bigint_unit) + 1);
-  // no bounds checking, matching the lowerer; a zero-length array has nothing to check against
-  *(void **)irstate_mem(st, c.d) =
+  // no bounds checking, matching the lowerer; a zero-length array has nothing to check against.
+  // the access register aliases the element the way a field access aliases a member, so it is the
+  // element's storage rather than a cell holding its address
+  irstate_find(st, c.d)->v.value =
       (u8 *)l.v.value +
       *(usize *)idx * Type_sizeof(type_at(ss_typeenv(st.ss), arr.t), ss_typeenv(st.ss));
 }
@@ -271,7 +266,10 @@ void interpret_field errs(irstate st, ir_field c) {
   let strct = TypeTree_inner_struct(ss_type(st.ss, l.t).t, e);
   if (!strct.start) return_err("FIELD_ACESS");
   let item = *type_struct_item(e, strct, c.i);
-  *(void **)irstate_mem(st, c.d) = (u8 *)l.v.value + item.offset;
+  // the access register aliases the member, so it is the member's storage rather than a cell
+  // holding its address: a member whose type is a referance keeps that referance in storage and
+  // unfolds on use, a plain member is the thing itself
+  irstate_find(st, c.d)->v.value = (u8 *)l.v.value + item.offset;
 }
 void interpret_op errs(irstate st, ir inst) {
   tu_match_void(

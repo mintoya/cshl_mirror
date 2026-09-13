@@ -360,6 +360,24 @@ test_fn(ast_dot_kind_check) {
   test_assert(tu_is(c_ast, tv_type(e).t));
   test_assert(tu_is(astEmpty, ast_at(ectx.alist, e.v.c_ast)));
 }
+
+// @ast_op builds any operator out of its spelling, so a macro does not need a builtin per operator
+// and an operand can be another ast it computed
+test_fn(ast_op_builds_operator_from_spelling) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  astidx_full ctx = {};
+  let r = ast_probe(arena, fp("@ast_op(\"+\", a, @qot(7))"), fp("3"), &ctx);
+  test_assert(tu_is(c_ast, tv_type(r).t));
+  let node = ast_at(ctx.alist, r.v.c_ast);
+  test_assert(tu_is(astOp, node));
+  let op = tu_catch(astOp, node);
+  test_inteq(op.number_rep, opNumbers.plus);
+  test_assert(tu_is(astNumber, ast_at(ctx.alist, op.left_right)));
+  test_assert(tu_is(astNumber, ast_at(ctx.alist, op.left_right + 1)));
+}
+
 test_fn(struct_operator_overload_vector_equality_true) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -531,11 +549,300 @@ test_fn(struct_as_overload) {
           "b;\n"
       ),
       nullptr
+  );  test_assert(tu_is(r_sint, tv_type(r).t));
+  test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 32);
+  test_inteq(*(i32 *)r.v.value, 7);
+}
+
+// a function cannot capture the frame it was written in, so a closure carries its captures in a
+// struct and calls itself through a "()" overload
+test_fn(struct_closure_capture) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s32 ~~ @sint(32);\n"
+          "adder ~type~ @struct{\n"
+          "  Self ~type~ @this();\n"
+          "  captured ~ s32;\n"
+          "  @id(\"()\") ~~ @fn (self ~Self, extra ~s32), s32, {\n"
+          "    base ~s32 = self.captured;\n"
+          "    return base + extra;\n"
+          "  };\n"
+          "};\n"
+          "make ~~ @fn (start ~s32), adder, {\n"
+          "  c ~adder;\n"
+          "  c.captured = start;\n"
+          "  return c;\n"
+          "};\n"
+          "add5 ~adder = make(5);\n"
+          "add5(2);\n"
+      ),
+      nullptr
   );
 
   test_assert(tu_is(r_sint, tv_type(r).t));
   test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 32);
   test_inteq(*(i32 *)r.v.value, 7);
+}
+
+// an explicit @ref capture stores the address, so the call aliases the source
+test_fn(struct_ref_capture) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s32 ~~ @sint(32);\n"
+          "ref ~~ @refT;\n"
+          "counter ~s32 = 5;\n"
+          "cell ~type~ @struct{\n"
+          "  Self ~type~ @this();\n"
+          "  r ~ (ref s32);\n"
+          "  @id(\"()\") ~~ @fn (self ~Self, j ~s32), s32, {\n"
+          "    v ~(ref s32) = self.r;\n"
+          "    v = v + j;\n"
+          "    return v;\n"
+          "  };\n"
+          "};\n"
+          "make ~~ @fn (), cell, {\n"
+          "  c ~cell;\n"
+          "  c.r = @ref counter;\n"
+          "  return c;\n"
+          "};\n"
+          "result ~~ @fn (), s32, {\n"
+          "  k ~cell = make();\n"
+          "  k(2);\n"
+          "  return counter;\n"
+          "};\n"
+          "result();\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_sint, tv_type(r).t));
+  test_inteq(*(i32 *)r.v.value, 7);
+}
+
+// a lowered lvalue is a ref, so @where must not address the ref register itself, and @at must give
+// back an alias of the pointee
+test_fn(where_at_alias) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s32 ~~ @sint(32);\n"
+          "ref ~~ @refT;\n"
+          "counter ~s32 = 5;\n"
+          "run ~~ @fn (), s32, {\n"
+          "  p ~(@ptr s32) = @where counter;\n"
+          "  v ~(ref s32)~ @at p;\n"
+          "  counter = 9;\n"
+          "  return v - 9;\n"
+          "};\n"
+          "run();\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_sint, tv_type(r).t));
+  test_inteq(*(i32 *)r.v.value, 0);
+}
+
+// a closure macro built from the ast list builtins: @ast_len/@ast_at walk the capture
+// list, @apply passes each one by value, @ast_op(".",...) builds `self.name`, and @splice glues
+// the generated members and bindings back into the struct and its "()" body
+test_fn(closure_macro_variadic) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s32 ~~ @sint(32);\n"
+          "ref ~~ @refT;\n"
+          "ast ~~ @ast();\n"
+          "any ~~ @any();\n"
+          "piece ~~ @fn (mode ~@int(), inst ~ast, v ~ast), ast, {\n"
+          "  @cif((mode == 0), (return @qot (@uqot(v.name) ~ @uqot(v.type))));\n"
+          "  @cif((mode == 1), (return @qot (@uqot(@ast_op(\".\", inst, v.name)) = @uqot(v.value))));\n"
+          "  return @qot (@uqot(v.name) ~@uqot(v.type) = @uqot(@ast_op(\".\", @qot(self), v.name)));\n"
+          "};\n"
+          "pieces ~~ @fn (values ~ast, inst ~ast, mode ~@int(), i ~@int()), ast, {\n"
+          "  @cif(\n"
+          "    (i < @ast_len(values)),\n"
+          "    (return @qot {\n"
+          "      @uqot(@apply(piece, mode, inst, @ast_at(values, i)));\n"
+          "      @splice(@apply(pieces, values, inst, mode, i + 1));\n"
+          "    }),\n"
+          "    (return @qot [])\n"
+          "  );\n"
+          "};\n"
+          "closure ~~ @fn (values ~ast, args ~ast, ret ~ast, body ~ast), any, {\n"
+          "  return @uqot(@qot {\n"
+          "    ClosureType ~type~ @struct {\n"
+          "      Self ~type~ @this();\n"
+          "      @splice(@apply(pieces, values, @qot(inst), 0, 0));\n"
+          "      @id(\"()\") ~~ @fn((self ~Self, @splice(args)), @uqot(ret), {\n"
+          "        @splice(@apply(pieces, values, @qot(inst), 2, 0));\n"
+          "        @splice(body);\n"
+          "      });\n"
+          "    };\n"
+          "    inst ~ClosureType;\n"
+          "    @splice(@apply(pieces, values, @qot(inst), 1, 0));\n"
+          "    @at(@where(inst));\n"
+          "  });\n"
+          "};\n"
+          "counter ~s32 = 0;\n"
+          "add ~~ closure([a ~ (ref s32) = @ref(counter), b ~ s32 = 10], [j ~ s32], s32, {\n"
+          "  a = a + b;\n"
+          "  b = b + j;\n"
+          "  return a + b;\n"
+          "});\n"
+          "result ~~ @fn (), s32, { return add(1); };\n"
+          "result();\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_sint, tv_type(r).t));
+  test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 32);
+  test_inteq(*(i32 *)r.v.value, 21);
+}
+
+test_fn(any_return_adopts_concrete_type) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  // a function declared to return `any` resolves to the concrete type of what it returns,
+  // so callers can use the result as that type instead of an erased `any`
+  let r = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s32 ~~ @sint(32);\n"
+          "any ~~ @any();\n"
+          "S ~type~ @struct { a ~s32; };\n"
+          "mk ~~ @fn (), any, { s ~S; s.a = 5; return s; };\n"
+          "use ~~ @fn (), s32, { return mk().a + 2; };\n"
+          "use();\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_sint, tv_type(r).t));
+  test_inteq(*(i32 *)r.v.value, 7);
+}
+
+test_fn(field_assignment_writes_into_the_struct) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  // a.b = c has to write into the struct, and reading it back has to see that same member, so the
+  // access register is the member rather than a copy of it. a variable on the right is copied into
+  // the member, so s.a is 5 after y changes, not an alias of y
+  let r = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s32 ~~ @sint(32);\n"
+          "S ~type~ @struct { a ~s32; b ~s32; };\n"
+          "s ~S;\n"
+          "s.b = 7;\n"
+          "y ~s32 = 5;\n"
+          "s.a = y;\n"
+          "y = 9;\n"
+          "s.a + s.b;\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_sint, tv_type(r).t));
+  test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 32);
+  test_inteq(*(i32 *)r.v.value, 12);
+}
+
+test_fn(field_access_is_addressable) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  // the access is an lvalue inside the struct, so @where on it addresses the member and @at writes
+  // back through that address, the same way it does for a named local
+  let r = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s32 ~~ @sint(32);\n"
+          "S ~type~ @struct { a ~s32; b ~s32; };\n"
+          "s ~S;\n"
+          "s.a = 5;\n"
+          "p ~(@ptr s32)~ @where s.a;\n"
+          "@at p = 9;\n"
+          "s.a - 9;\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_sint, tv_type(r).t));
+  test_inteq(*(i32 *)r.v.value, 0);
+}
+
+// x[i] is an lvalue inside the array, so writing it writes the element, and a variable on the
+// right is copied in rather than bound to the access register and thrown away with it
+test_fn(array_assignment_writes_into_the_array) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s32 ~~ @sint(32);\n"
+          "A ~type~ @arr(3, s32);\n"
+          "x ~A;\n"
+          "y ~s32 = 5;\n"
+          "x[0] = y;\n"
+          "y = 9;\n"
+          "x[2] = x[0] + 2;\n"
+          "x[0] + x[2];\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_sint, tv_type(r).t));
+  test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 32);
+  test_inteq(*(i32 *)r.v.value, 12);
+}
+
+test_fn(array_access_is_addressable) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s32 ~~ @sint(32);\n"
+          "A ~type~ @arr(3, s32);\n"
+          "x ~A;\n"
+          "p ~(@ptr s32)~ @where x[1];\n"
+          "@at p = 9;\n"
+          "x[1] - 9;\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_sint, tv_type(r).t));
+  test_inteq(*(i32 *)r.v.value, 0);
 }
 
 //
@@ -581,6 +888,40 @@ test_fn(lower_error_type_not_value) {
   let e = lower_source_err(arena, fp("@arr(2, 5);"));
   test_assert(e.err_code);
   test_streq(e.err_code, "TYPE_IS_NOT_VALUE");
+}
+
+test_fn(lower_error_splice_outside_quote) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("@splice(@qot(1));"));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "SPLICE_OUTSIDE_QUOTE");
+}
+
+test_fn(lower_error_ast_at_range) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("ast ~~ @ast();\n@ast_at(@qot([1, 2]), 5);\n"));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "AST_AT_RANGE");
+}
+
+// @at is *l, so it takes a pointer. a referance to an int is not a pointer: reading the value
+// out of it first leaves an int, which has nothing to dereference
+test_fn(lower_error_at_on_int_reference) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s32 ~~ @sint(32);\n"
+          "x ~s32 = 1;\n"
+          "@at x;\n"
+      )
+  );
+  test_assert(e.err_code);
+  test_streq(e.err_code, "AT_NOT_REF");
 }
 
 test_fn(lower_error_function_cannot_capture_frame) {

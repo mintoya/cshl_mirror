@@ -129,6 +129,7 @@ typeidx ss_type_intern(superscope *ss, Type t);
 static inline Type *ss_getType(superscope *ss, Type t) {
   return &sglist_get(ss->tlist, ss_type_intern(ss, t) - 1);
 }
+static inline Type_full ss_typeF(superscope *ss, Type t) { return (Type_full){t, ss_typeenv(ss)}; }
 static inline Type ss_type(superscope *ss, typeidx idx) { return type_at(ss_typeenv(ss), idx); }
 static inline typed_value TV_of(superscope *ss, Type t) { return (typed_value){.t = ss_type_intern(ss, t)}; }
 static inline typed_value TV_with(superscope *ss, typed_value v, Type t) {

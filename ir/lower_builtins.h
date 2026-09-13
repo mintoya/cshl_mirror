@@ -11,7 +11,6 @@ static u32 lower_builtin_fn errs(superscope *ss, scope *s, astidx args) {
   tu_catch(astPBlock, pnode, return_err("EXPECTED_PBLOCK", 0));
   return try_err(lower_function, (ss, s, list.start, list.start + 1, list.start + 2), 0);
 }
-static u32 lower_builtin_closure(superscope *ss, scope *s, astidx args) { TODO(); }
 // a condition is just a cast to bool
 u32 lower_condition errs(superscope *ss, scope *s, astidx a) {
   let l = try_err(lower, (ss, s, a), 0);
@@ -60,10 +59,22 @@ static u32 lower_builtin_at errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
   if (list.len != 1) return_err("WRONG_ARG_COUNT", 0);
   let l = try_err(lower, (ss, s, list.start + 0), 0);
-  let t = ss_type(ss, scope_find(ss, s, l)->t);
-  if (!t.ptr_level) return_err("AT_NOT_REF", 0);
-  Type inner = t;
-  inner.ptr_level--;
+  // a lowered name is a referance to the pointer, not the pointer, so read the value out of it
+  // first. that read is a value of its own, and the type check recurses onto it until it
+  // reaches the plain value against a referance to it, which is handled
+  if (ss_type(ss, scope_find(ss, s, l)->t).isref) {
+    Type value = ss_type(ss, scope_find(ss, s, l)->t);
+    value.isref = false;
+    let read = scope_add_value(ss, s, TV_of(ss, value));
+    try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = l, .d = read})), 0);
+    l = read;
+  }
+  Type t = ss_type(ss, scope_find(ss, s, l)->t);
+  Type inner;
+  if (t.isref || !Type_deref(t, &inner)) return_err("AT_NOT_REF", 0);
+  // the thing is mutable, so @at is an lvalue and therefore a referance to it, like every
+  // other lowered lvalue
+  inner.isref = true;
   let d = scope_add_value(ss, s, TV_of(ss, inner));
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_putptr, {.l = l, .d = d})), 0);
   return d;
@@ -72,8 +83,11 @@ static u32 lower_builtin_where errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
   if (list.len != 1) return_err("WRONG_ARG_COUNT", 0);
   let l = try_err(lower, (ss, s, list.start + 0), 0);
-  let t = ss_type(ss, scope_find(ss, s, l)->t);
-  let d = scope_add_value(ss, s, TV_of(ss, Type_ptr(t)));
+  // &(*l): a lowered lvalue is a referance, so what l denotes is one deref down, and a plain
+  // value is addressed as itself
+  Type t = ss_type(ss, scope_find(ss, s, l)->t);
+  Type_deref(t, &t);
+  let d = scope_add_value(ss, s, TV_of(ss, try_err(Type_ptr, (t), 0)));
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_getptr, {.l = l, .d = d})), 0);
   return d;
 }
@@ -82,7 +96,8 @@ static u32 lower_builtin_ref errs(superscope *ss, scope *s, astidx args) {
   if (list.len != 1) return_err("WRONG_ARG_COUNT", 0);
   let l = try_err(lower, (ss, s, list.start + 0), 0);
   let t = ss_type(ss, scope_find(ss, s, l)->t);
-  let d = scope_add_value(ss, s, TV_of(ss, Type_ref(t)));
+  if (t.isref) return l;
+  let d = scope_add_value(ss, s, TV_of(ss, try_err(Type_ref, (t), 0)));
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_getref, {.l = l, .d = d})), 0);
   return d;
 }
@@ -104,6 +119,64 @@ static u32 lower_builtin_id errs(superscope *ss, scope *s, astidx args) {
   return scope_add_value(ss, s, TV_ast(ss, ast_make_id(ss, copy)));
 }
 
+// the children of a list ast: a block, or a lone node treated as a one element list
+static astidx_span ast_list_span(astlist al, astidx a) {
+  if (!a) return (astidx_span){0, 0};
+  return tu_match_exp(
+      ast_at(al, a),
+      (astABlock, _, ast_block_children(al, a)),
+      (astBBlock, _, ast_block_children(al, a)),
+      (astPBlock, _, ast_block_children(al, a)),
+      (default, ((astidx_span){a, 1})),
+  );
+}
+static astidx qot_walk errs(superscope *ss, scope *s, astidx node);
+// walk a block's children, expanding any @splice(list) marker into the list's children
+static astidx qot_walk_block errs(superscope *ss, scope *s, astidx node, u8 tag, srcpos pos) {
+  let children = ast_block_children(ss->asts, node);
+  let out = msList_init(ss->alloc, astidx);
+  defer { msList_deInit(ss->alloc, out); };
+  bool changed = false;
+  foreach (let i, range(0, children.len)) {
+    astidx child = children.start + i;
+    bool spliced = false;
+    let child_node = ast_at(ss->asts, child);
+    iflet_tu (let op, astOp, child_node) {
+      astidx cleft = ast_child(ss->asts, op.left_right);
+      let cleft_node = ast_at(ss->asts, cleft);
+      if (op.number_rep == opNumbers.call && cleft && tu_is(astId, cleft_node) &&
+          fptr_eq(ast_text(ss, tu_catch(astId, cleft_node)), "@splice")) {
+        let list = builtin_arg_list(ss->asts, ast_child(ss->asts, op.left_right + 1));
+        if (list.len != 1) return_err("WRONG_ARG_COUNT", 0);
+        let tv = try_err(temporary_interpret, (ss, s, list.start + 0), 0);
+        if (!tu_is(c_ast, ss_type(ss, tv.t).t)) return_err("SPLICE_TYPE_ERROR", 0);
+        if (!tv.v.c_ast) return_err("SPLICE_UNKNOWN", 0);
+        let ext = ast_list_span(ss->asts, tv.v.c_ast);
+        foreach (let j, range(0, ext.len))
+          msList_push(ss->alloc, out, ext.start + j);
+        spliced = true;
+        changed = true;
+      }
+    }
+    if (!spliced) {
+      let walked = try_err(qot_walk, (ss, s, child), 0);
+      changed = changed || (walked != child);
+      msList_push(ss->alloc, out, walked);
+    }
+  }
+  if (!changed) return node;
+  astidx start = (astidx)ss->asts.len + 1;
+  foreach (let i, span(out, msList_len(out)))
+    sglist_push(ss->asts, ast_at(ss->asts, *i));
+  sglist_push(ss->asts, (ast)tu_of(astNull, {}));
+  ast rebuilt = tag == TU_TAG(astPBlock) ? (ast)tu_of(astPBlock, {.pos = pos, .start = start})
+                : tag == TU_TAG(astBBlock)
+                    ? (ast)tu_of(astBBlock, {.pos = pos, .start = start})
+                    : (ast)tu_of(astABlock, {.pos = pos, .start = start});
+  astidx nidx = (astidx)ss->asts.len + 1;
+  sglist_push(ss->asts, rebuilt);
+  return nidx;
+}
 static astidx qot_walk errs(superscope *ss, scope *s, astidx node) {
   // as long as asts are immutable
   if (!node) return 0;
@@ -168,66 +241,9 @@ static astidx qot_walk errs(superscope *ss, scope *s, astidx node) {
          }
          res;
        })),
-      (astPBlock, block, ({
-         let len = ast_block_children(ss->asts, node);
-         let new_stmts = *acreate(ss->alloc, astidx[len.len ?: 1]);
-         bool changed = false;
-         foreach (let i, range(0, len.len)) {
-           new_stmts[i] = try_err(qot_walk, (ss, s, len.start + i), 0);
-           changed = changed || (new_stmts[i] != len.start + i);
-         }
-         let res = node;
-         if (changed) {
-           astidx start = (astidx)ss->asts.len + 1;
-           foreach (let i, range(0, len.len))
-             sglist_push(ss->asts, ast_at(ss->asts, new_stmts[i]));
-           sglist_push(ss->asts, (ast)tu_of(astNull, {}));
-           astidx nidx = (astidx)ss->asts.len + 1;
-           sglist_push(ss->asts, (ast)tu_of(astPBlock, {.pos = block.pos, .start = start}));
-           res = nidx;
-         }
-         res;
-       })),
-      (astBBlock, block, ({
-         let len = ast_block_children(ss->asts, node);
-         let new_stmts = *acreate(ss->alloc, astidx[len.len ?: 1]);
-         bool changed = false;
-         foreach (let i, range(0, len.len)) {
-           new_stmts[i] = try_err(qot_walk, (ss, s, len.start + i), 0);
-           changed = changed || (new_stmts[i] != len.start + i);
-         }
-         let res = node;
-         if (changed) {
-           astidx start = (astidx)ss->asts.len + 1;
-           foreach (let i, range(0, len.len))
-             sglist_push(ss->asts, ast_at(ss->asts, new_stmts[i]));
-           sglist_push(ss->asts, (ast)tu_of(astNull, {}));
-           astidx nidx = (astidx)ss->asts.len + 1;
-           sglist_push(ss->asts, (ast)tu_of(astBBlock, {.pos = block.pos, .start = start}));
-           res = nidx;
-         }
-         res;
-       })),
-      (astABlock, block, ({
-         let len = ast_block_children(ss->asts, node);
-         let new_stmts = *acreate(ss->alloc, astidx[len.len ?: 1]);
-         bool changed = false;
-         foreach (let i, range(0, len.len)) {
-           new_stmts[i] = try_err(qot_walk, (ss, s, len.start + i), 0);
-           changed = changed || (new_stmts[i] != len.start + i);
-         }
-         let res = node;
-         if (changed) {
-           astidx start = (astidx)ss->asts.len + 1;
-           foreach (let i, range(0, len.len))
-             sglist_push(ss->asts, ast_at(ss->asts, new_stmts[i]));
-           sglist_push(ss->asts, (ast)tu_of(astNull, {}));
-           astidx nidx = (astidx)ss->asts.len + 1;
-           sglist_push(ss->asts, (ast)tu_of(astABlock, {.pos = block.pos, .start = start}));
-           res = nidx;
-         }
-         res;
-       }))
+      (astPBlock, block, try_err(qot_walk_block, (ss, s, node, TU_TAG(astPBlock), block.pos), 0)),
+      (astBBlock, block, try_err(qot_walk_block, (ss, s, node, TU_TAG(astBBlock), block.pos), 0)),
+      (astABlock, block, try_err(qot_walk_block, (ss, s, node, TU_TAG(astABlock), block.pos), 0))
   );
 }
 static u32 lower_builtin_qot errs(superscope *ss, scope *s, astidx args) {
@@ -247,12 +263,80 @@ static u32 lower_builtin_uqot errs(superscope *ss, scope *s, astidx args) {
   if (!tv.v.c_ast) return_err("UNQUOTE_UNKNOWN", 0);
   return try_err(lower, (ss, s, tv.v.c_ast), 0);
 }
+// @splice only means anything inside a quote, where qot_walk expands it
+static u32 lower_builtin_splice errs(superscope *ss, scope *s, astidx args) {
+  return_err("SPLICE_OUTSIDE_QUOTE", 0);
+}
+static u32 lower_builtin_ast_len errs(superscope *ss, scope *s, astidx args) {
+  let list = builtin_arg_list(ss->asts, args);
+  if (list.len != 1) return_err("WRONG_ARG_COUNT", 0);
+  let tv = try_err(temporary_interpret, (ss, s, list.start + 0), 0);
+  if (!tu_is(c_ast, ss_type(ss, tv.t).t)) return_err("AST_LEN_TYPE_ERROR", 0);
+  let sp = ast_list_span(ss->asts, tv.v.c_ast);
+  return scope_add_value(ss, s, TV_bigint(ss, BInt.from.i64(ss->alloc, (i64)sp.len)));
+}
+static u32 lower_builtin_ast_at errs(superscope *ss, scope *s, astidx args) {
+  let list = builtin_arg_list(ss->asts, args);
+  if (list.len != 2) return_err("WRONG_ARG_COUNT", 0);
+  let tv = try_err(temporary_interpret, (ss, s, list.start + 0), 0);
+  if (!tu_is(c_ast, ss_type(ss, tv.t).t)) return_err("AST_AT_TYPE_ERROR", 0);
+  let bi = int_as_bigint(ss->alloc, try_err(temporary_interpret, (ss, s, list.start + 1), 0), ss_typeenv(ss));
+  defer { msList_deInit(ss->alloc, bi); };
+  bigint_expand(ss->alloc, &bi, sizeof(usize) / sizeof(bigint_unit) + 1);
+  usize i = *(usize *)bi;
+  let sp = ast_list_span(ss->asts, tv.v.c_ast);
+  if (i >= sp.len) return_err("AST_AT_RANGE", 0);
+  return scope_add_value(ss, s, TV_ast(ss, sp.start + i));
+}
+// build the ast of "a <sym> b", where sym is a comptime string naming the operator, so a macro
+// can synthesize any operation ("+", ".") and not just the ones with a builtin of their own
+static u32 lower_builtin_ast_op errs(superscope *ss, scope *s, astidx args) {
+  let list = builtin_arg_list(ss->asts, args);
+  if (list.len != 3) return_err("WRONG_ARG_COUNT", 0);
+  let sym = try_err(temporary_interpret, (ss, s, list.start + 0), 0);
+  let a = try_err(temporary_interpret, (ss, s, list.start + 1), 0);
+  let b = try_err(temporary_interpret, (ss, s, list.start + 2), 0);
+  if (!tu_is(c_ast, ss_type(ss, a.t).t) || !tu_is(c_ast, ss_type(ss, b.t).t)) return_err("AST_OP_TYPE_ERROR", 0);
+  if (!a.v.c_ast || !b.v.c_ast) return_err("AST_OP_UNKNOWN", 0);
+  // a spelling is up to 4 bytes packed into a u32, so pack it the same way the parser does
+  Type st = ss_type(ss, sym.t);
+  if (!tu_is(r_arr, st.t) || st.ptr_level || st.isref || !st.iscomptime) return_err("AST_OP_SYM_NOT_STRING", 0);
+  let arr = tu_catch(r_arr, st.t);
+  if (tu_catchr(r_sint, type_tree(ss_typeenv(ss), arr.t), return_err("AST_OP_SYM_NOT_STRING", 0)).bits != 8)
+    return_err("AST_OP_SYM_NOT_STRING", 0);
+  if (!sym.v.value) return_err("AST_OP_SYM_UNKNOWN", 0);
+  if (arr.count > sizeof(u32)) return_err("AST_OP_SYM_TOO_LONG", 0);
+  union {
+    u32 n;
+    char s[sizeof(u32)];
+  } spelling = {};
+  memcpy(spelling.s, sym.v.value, arr.count);
+  op_as_enum(spelling.n); // not an operator, so this is a mistake in the macro
+  astidx off = (astidx)ss->asts.len + 1;
+  sglist_push(ss->asts, ast_at(ss->asts, a.v.c_ast));
+  sglist_push(ss->asts, ast_at(ss->asts, b.v.c_ast));
+  sglist_push(ss->asts, (ast)tu_of(astOp, {.left_right = off, .number_rep = spelling.n}));
+  return scope_add_value(ss, s, TV_ast(ss, (astidx)ss->asts.len));
+}
+// call with evaluated arguments, so an ast parameter receives an ast value rather than
+// the syntax it was written as
+static u32 lower_builtin_apply errs(superscope *ss, scope *s, astidx args) {
+  let list = builtin_arg_list(ss->asts, args);
+  if (list.len < 1) return_err("WRONG_ARG_COUNT", 0);
+  let fn = try_err(lower, (ss, s, list.start + 0), 0);
+  if (!tu_is(c_fun, ss_type(ss, scope_find(ss, s, fn)->t).t)) return_err("APPLY_NOT_FUNCTION", 0);
+  usize n = list.len - 1;
+  let vals = n ? slice_alloc(ss->alloc, u32, n) : (slice(u32)){};
+  foreach (let i, range(0, n))
+    vals.ptr[i] = try_err(lower, (ss, s, list.start + 1 + i), 0);
+  return try_err(lower_function_call_values, (ss, s, fn, vals), 0);
+}
 
 static u32 lower_builtin_reft errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
   if (list.len != 1) return_err("WRONG_ARG_COUNT", 0);
   Type inner = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 0), 0)), 0);
-  return scope_add_value(ss, s, Type_asValue(ss, Type_ref(inner)));
+  return scope_add_value(ss, s, Type_asValue(ss, try_err(Type_ref, (inner), 0)));
 }
 static u32 lower_builtin_bare_type errs(superscope *ss, scope *s, astidx args, Type t) {
   let list = builtin_arg_list(ss->asts, args);
@@ -294,7 +378,7 @@ static u32 lower_builtin_arrof errs(superscope *ss, scope *s, astidx args) {
   bigint_expand(ss->alloc, &count_tv, sizeof(usize) / sizeof(bigint_unit) + 1);
   // an array is inlined where it sits, so a count that does not fit the field is unrepresentable
   usize count = *(usize *)count_tv;
-  if (count > (usize)~(u32)0) return_err("ARRAY_TOO_LARGE", 0);
+  if (count > (usize) ~(u32)0) return_err("ARRAY_TOO_LARGE", 0);
 
   Type elem = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 1), 0)), 0);
   r_arr arrrec = {.t = ss_type_intern(ss, elem)};
@@ -305,7 +389,7 @@ static u32 lower_builtin_ptrof errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
   if (list.len != 1) return_err("WRONG_ARG_COUNT", 0);
   Type inner = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 0), 0)), 0);
-  return scope_add_value(ss, s, Type_asValue(ss, Type_ptr(inner)));
+  return scope_add_value(ss, s, Type_asValue(ss, try_err(Type_ptr, (inner), 0)));
 }
 static u32 lower_builtin_sizeof errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
@@ -345,9 +429,9 @@ static srcpos unique_type_name(superscope *ss) {
 
 static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
-  if (list.len != 1) return_err("WRONG_ARG_COUNT",0);
+  if (list.len != 1) return_err("WRONG_ARG_COUNT", 0);
   let struct_node = ast_at(ss->asts, list.start + 0);
-  tu_catch(astBBlock, struct_node, return_err("STRUCT_EXPECTS_BLOCK",0));
+  tu_catch(astBBlock, struct_node, return_err("STRUCT_EXPECTS_BLOCK", 0));
   let stmts = ast_block_children(ss->asts, list.start);
 
   // reserve the whole run up front, so a nested struct cannot interleave with it
@@ -370,30 +454,30 @@ static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
     // temporary_interpret can intern types, which invalidates the snapshot above
     e = ss_typeenv(ss);
     let stmt_node = ast_at(ss->asts, stmts.start + i);
-    let dcl = tu_catch(astDecl, stmt_node, return_err("STRUCT_MEMBER_NOT_DECL",0));
+    let dcl = tu_catch(astDecl, stmt_node, return_err("STRUCT_MEMBER_NOT_DECL", 0));
     astidx name_idx = ast_child(ss->asts, dcl.name_type_value);
     astidx type_idx = ast_child(ss->asts, dcl.name_type_value + 1);
     astidx value_idx = ast_child(ss->asts, dcl.name_type_value + 2);
-    if (!name_idx) return_err("STRUCT_MEMBER_NO_NAME",0);
-    let name = try_err(id_from_ast, (ss, working_scope, name_idx),0);
+    if (!name_idx) return_err("STRUCT_MEMBER_NO_NAME", 0);
+    let name = try_err(id_from_ast, (ss, working_scope, name_idx), 0);
 
     typed_value bound = {};
     if (type_idx) {
-      let bt = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, working_scope, type_idx),0)),0);
+      let bt = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, working_scope, type_idx), 0)), 0);
       if (tu_is(c_type, bt.t) && value_idx) {
-        bound = try_err(temporary_interpret, (ss, working_scope, value_idx),0);
+        bound = try_err(temporary_interpret, (ss, working_scope, value_idx), 0);
         if (!tu_is(c_type, ss_type(ss, bound.t).t))
-          return_err("STRUCT_MEMBER_NOT_TYPE",0);
+          return_err("STRUCT_MEMBER_NOT_TYPE", 0);
       } else bound = TV_of(ss, *ss_getType(ss, bt));
     } else {
-      if (!value_idx) return_err("STRUCT_MEMBER_NO_TYPE_OR_VALUE",0);
-      bound = try_err(temporary_interpret, (ss, working_scope, value_idx),0);
+      if (!value_idx) return_err("STRUCT_MEMBER_NO_TYPE_OR_VALUE", 0);
+      bound = try_err(temporary_interpret, (ss, working_scope, value_idx), 0);
       if (!Type_is_comptime(ss_type(ss, bound.t)))
-        return_err("STRUCT_MEMBER_RUNTIME",0);
+        return_err("STRUCT_MEMBER_RUNTIME", 0);
     }
 
     if (dcl.isconst)
-      try_err(scope_bind,(ss, working_scope, scope_add_value(ss, working_scope, bound), name),0);
+      try_err(scope_bind, (ss, working_scope, scope_add_value(ss, working_scope, bound), name), 0);
 
     r_struct_item *ri = type_struct_item(e, members, i);
     ri->name = id_srcpos(ss, name_idx, name);
@@ -411,57 +495,61 @@ static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
   return scope_add_value(ss, s, Type_asValue(ss, _this));
 }
 static u32 lower_builtin_this errs(superscope *ss, scope *s, astidx args) {
-  if (builtin_arg_list(ss->asts, args).len) return_err("WRONG_ARG_COUNT",0);
-  if (!msList_len(ss->thisstack)) return_err("THIS_OUTSIDE_STRUCT",0);
+  if (builtin_arg_list(ss->asts, args).len) return_err("WRONG_ARG_COUNT", 0);
+  if (!msList_len(ss->thisstack)) return_err("THIS_OUTSIDE_STRUCT", 0);
   return scope_add_value(ss, s, TV_type(ss, msList_last(ss->thisstack)));
 }
 static u32 lower_builtin_break errs(superscope *ss, scope *s, astidx args) {
-  if (builtin_arg_list(ss->asts, args).len) return_err("WRONG_ARG_COUNT",0);
-  try_err (scope_add_inst,(ss, s, (ir)tu_of(ir_break, {})),0);
+  if (builtin_arg_list(ss->asts, args).len) return_err("WRONG_ARG_COUNT", 0);
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_break, {})), 0);
   return scope_add_value(ss, s, TV_void(ss));
 }
 static u32 lower_builtin_continue errs(superscope *ss, scope *s, astidx args) {
-  if (builtin_arg_list(ss->asts, args).len) return_err("WRONG_ARG_COUNT",0);
-  try_err (scope_add_inst,(ss, s, (ir)tu_of(ir_cont, {})),0);
+  if (builtin_arg_list(ss->asts, args).len) return_err("WRONG_ARG_COUNT", 0);
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_cont, {})), 0);
   return scope_add_value(ss, s, TV_void(ss));
 }
 
 static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, astidx args) {
   return switch_exp(
       builtin,
-      (builtin_fn, /*      */ try_err(lower_builtin_fn, (ss, s, args),0)),
-      (builtin_closure, /* */ lower_builtin_closure(ss, s, args)),
-      (builtin_if, /*      */ try_err(lower_builtin_if, (ss, s, args),0)),
-      (builtin_cif, /*     */ try_err(lower_builtin_cif, (ss, s, args),0)),
-      (builtin_while, /*   */ try_err(lower_builtin_while, (ss, s, args),0)),
-      (builtin_return, /*  */ try_err(lower_builtin_return, (ss, s, args),0)),
-      (builtin_break, /*   */ try_err(lower_builtin_break, (ss, s, args),0)),
-      (builtin_continue, /**/ try_err(lower_builtin_continue, (ss, s, args),0)),
-      (builtin__id, /*     */ try_err(lower_builtin_id, (ss, s, args),0)),
-      (builtin_ast, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_ast, {}))),0)),
-      (builtin_any, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_any, {}))),0)),
-      (builtin_bool, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(r_bool, {}))),0)),
-      (builtin_void, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(r_void, {}))),0)),
-      (builtin_int, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_int, {}))),0)),
-      (builtin_type, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_type, {}))),0)),
-      (builtin_const, /*   */ try_err(lower_builtin_decor, (ss, s, args, true, false),0)),
-      (builtin_volatile, /**/ try_err(lower_builtin_decor, (ss, s, args, false, true),0)),
-      (builtin_sint, /*    */ try_err(lower_builtin_intty, (ss, s, args, true),0)),
-      (builtin_uint, /*    */ try_err(lower_builtin_intty, (ss, s, args, false),0)),
-      (builtin_typeof, /*  */ try_err(lower_builtin_typeof, (ss, s, args),0)),
-      (builtin_arrof, /*   */ try_err(lower_builtin_arrof, (ss, s, args),0)),
-      (builtin_ptrof, /*   */ try_err(lower_builtin_ptrof, (ss, s, args),0)),
-      (builtin_sizeof, /*  */ try_err(lower_builtin_sizeof, (ss, s, args),0)),
-      (builtin_alignof, /* */ try_err(lower_builtin_alignof, (ss, s, args),0)),
-      (builtin_offsetof, /**/ try_err(lower_builtin_offsetof, (ss, s, args),0)),
-      (builtin_struct, /*  */ try_err(lower_builtin_struct, (ss, s, args),0)),
-      (builtin__this, /*   */ try_err(lower_builtin_this, (ss, s, args),0)),
-      (builtin_qot, /*     */ try_err(lower_builtin_qot, (ss, s, args),0)),
-      (builtin_uqot, /*    */ try_err(lower_builtin_uqot, (ss, s, args),0)),
-      (builtin_at, /*      */ try_err(lower_builtin_at, (ss, s, args),0)),
-      (builtin_where, /*   */ try_err(lower_builtin_where, (ss, s, args),0)),
-      (builtin_ref, /*     */ try_err(lower_builtin_ref, (ss, s, args),0)),
-      (builtin_reft, /*    */ try_err(lower_builtin_reft, (ss, s, args),0)),
+      (builtin_fn, /*      */ try_err(lower_builtin_fn, (ss, s, args), 0)),
+      (builtin_if, /*      */ try_err(lower_builtin_if, (ss, s, args), 0)),
+      (builtin_cif, /*     */ try_err(lower_builtin_cif, (ss, s, args), 0)),
+      (builtin_while, /*   */ try_err(lower_builtin_while, (ss, s, args), 0)),
+      (builtin_return, /*  */ try_err(lower_builtin_return, (ss, s, args), 0)),
+      (builtin_break, /*   */ try_err(lower_builtin_break, (ss, s, args), 0)),
+      (builtin_continue, /**/ try_err(lower_builtin_continue, (ss, s, args), 0)),
+      (builtin__id, /*     */ try_err(lower_builtin_id, (ss, s, args), 0)),
+      (builtin_ast, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_ast, {}))), 0)),
+      (builtin_any, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_any, {}))), 0)),
+      (builtin_bool, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(r_bool, {}))), 0)),
+      (builtin_void, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(r_void, {}))), 0)),
+      (builtin_int, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_int, {}))), 0)),
+      (builtin_type, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_type, {}))), 0)),
+      (builtin_const, /*   */ try_err(lower_builtin_decor, (ss, s, args, true, false), 0)),
+      (builtin_volatile, /**/ try_err(lower_builtin_decor, (ss, s, args, false, true), 0)),
+      (builtin_sint, /*    */ try_err(lower_builtin_intty, (ss, s, args, true), 0)),
+      (builtin_uint, /*    */ try_err(lower_builtin_intty, (ss, s, args, false), 0)),
+      (builtin_typeof, /*  */ try_err(lower_builtin_typeof, (ss, s, args), 0)),
+      (builtin_arrof, /*   */ try_err(lower_builtin_arrof, (ss, s, args), 0)),
+      (builtin_ptrof, /*   */ try_err(lower_builtin_ptrof, (ss, s, args), 0)),
+      (builtin_sizeof, /*  */ try_err(lower_builtin_sizeof, (ss, s, args), 0)),
+      (builtin_alignof, /* */ try_err(lower_builtin_alignof, (ss, s, args), 0)),
+      (builtin_offsetof, /**/ try_err(lower_builtin_offsetof, (ss, s, args), 0)),
+      (builtin_struct, /*  */ try_err(lower_builtin_struct, (ss, s, args), 0)),
+      (builtin__this, /*   */ try_err(lower_builtin_this, (ss, s, args), 0)),
+      (builtin_qot, /*     */ try_err(lower_builtin_qot, (ss, s, args), 0)),
+      (builtin_uqot, /*    */ try_err(lower_builtin_uqot, (ss, s, args), 0)),
+      (builtin_splice, /*  */ try_err(lower_builtin_splice, (ss, s, args), 0)),
+      (builtin_ast_len, /* */ try_err(lower_builtin_ast_len, (ss, s, args), 0)),
+      (builtin_ast_at, /*  */ try_err(lower_builtin_ast_at, (ss, s, args), 0)),
+      (builtin_ast_op, /*  */ try_err(lower_builtin_ast_op, (ss, s, args), 0)),
+      (builtin_apply, /*   */ try_err(lower_builtin_apply, (ss, s, args), 0)),
+      (builtin_at, /*      */ try_err(lower_builtin_at, (ss, s, args), 0)),
+      (builtin_where, /*   */ try_err(lower_builtin_where, (ss, s, args), 0)),
+      (builtin_ref, /*     */ try_err(lower_builtin_ref, (ss, s, args), 0)),
+      (builtin_reft, /*    */ try_err(lower_builtin_reft, (ss, s, args), 0)),
   );
   assertMessage(false, "unhandled builtin %u", builtin);
 }
