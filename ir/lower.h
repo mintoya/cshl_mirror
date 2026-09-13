@@ -5,6 +5,7 @@
 #include "wheels/macros.h"
 #include "wheels/mytypes.h"
 #include "wheels/print/print_pre.h"
+#include <string.h>
 u32 lower_op_wrap errs(superscope *ss, scope *s, astidx left, astidx right, u32 number) {
   if (number == opNumbers.call && tu_or(astOp, ast_at(ss->asts, left), {}).number_rep == opNumbers.colon) {
     let left_node = ast_at(ss->asts, left);
@@ -21,7 +22,7 @@ u32 lower_op_wrap errs(superscope *ss, scope *s, astidx left, astidx right, u32 
   }
   return try_err(lower_op, (ss, s, try_err(lower, (ss, s, left), 0), right, number), 0);
 }
-u32 lower errs(superscope *ss, scope *s, astidx a) {
+u32 lower_low errs(superscope *ss, scope *s, astidx a) {
   if (!a) return (println("[WARNING] null ast in lower"), scope_add_value(ss, s, TV_void(ss)));
   let res = tu_match_exp(
       ast_at(ss->asts, a),
@@ -90,4 +91,22 @@ u32 lower errs(superscope *ss, scope *s, astidx a) {
       ? (void)({ return res; })
       : return_err("STATEMENT_NULL", 0);
   return res;
+}
+u32 lower errs(superscope *ss, scope *s, astidx a) {
+  // little cursed
+  return catch_errcall(
+      (lower_low, (ss, s, a)), e, ({
+        let pos = srcpos_ast(ast_at(ss->asts, a), ss->asts);
+        let full = (srcpos_full){pos, ss->plist, ss->flist};
+        static thread_local char ns[sizeof(errors_buffer.buf)] = {};
+        strcpy(ns, errors_buffer.buf);
+        return_err_extras(
+            e.err_code,
+            print_ebuff("{cstr}:{srcpos_full}", (char *)ns, full),
+            nullptr,
+            0
+        );
+        0;
+      })
+  );
 }
