@@ -4,7 +4,6 @@
 #include "wheels/macros.h"
 #include <assert.h>
 #include <string.h>
-#include <threads.h>
 #include <tree-sitter/lib/include/tree_sitter/api.h>
 
 extern const TSLanguage *tree_sitter_cshl(void);

@@ -518,7 +518,7 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, typeen
       (c_ast, /* */ _, PUTS("ast")),
       (c_any, /* */ _, PUTS("any")),
       (r_void, /**/ _, PUTS("void")),
-      (r_tag, t, PUTS("(id "), USETYPEPRINTER(fptr, type_name(e, t.name)), PUTS(")")),
+      (r_tag, t, PUTS("(id "), USENAMEDPRINTER("slice(c8)", type_name(e, t.name)), PUTS(")")),
       (r_uint, bits, PUTS("u"), USETYPEPRINTER(usize, (usize)bits.bits)),
       (r_sint, bits, PUTS("s"), USETYPEPRINTER(usize, (usize)bits.bits)),
 
@@ -535,7 +535,7 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, typeen
         foreach (let i, range(0, type_struct_len(e, st))) {
           let item = type_struct_item(e, st, i);
           if (i) PUTS(",");
-          USETYPEPRINTER(fptr, type_name(e, item->name));
+          USENAMEDPRINTER("slice(c8)", type_name(e, item->name));
           Type_is_comptime(item->t)
               ? PUTS("~")
               : (PUTS("@"), USETYPEPRINTER(usize, item->offset), PUTS("="));
@@ -549,7 +549,7 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, typeen
         foreach (let i, range(0, type_bitf_len(e, st))) {
           let item = type_bitf_item(e, st, i);
           if (i) PUTS(",");
-          USETYPEPRINTER(fptr, type_name(e, item->name)), PUTS(":");
+          USENAMEDPRINTER("slice(c8)", type_name(e, item->name)), PUTS(":");
           USETYPEPRINTER(usize, item->width), PUTS("~");
           typePrinterWorker(item->t, visitedmap, e, _ctx);
         }
