@@ -81,7 +81,7 @@ u32 lower errs(superscope *ss, scope *s, astidx a) {
          if (name_idx) {
            let nn = try_err(id_from_ast, (ss, s, name_idx), 0);
            try_err(scope_bind, (ss, s, value, nn), 0);
-           println("[LOG:decl] bound {*:typed_value} to {slice(c8)}", scope_find(ss, s, value), nn);
+           println("[LOG:decl] bound {typed_value_full} to {slice(c8)}", ((typed_value_full){*scope_find(ss, s, value), ss_typeenv(ss)}), nn);
          }
          value;
        })),

@@ -48,7 +48,6 @@ static typed_value ir_readthrough(irstate st, u32 idx) {
   t.isref = false;
   return TV_with(st.ss, (typed_value){.t = tv->t, .v = {.value = *(void **)irstate_mem(st, idx)}}, t);
 }
-// address of a value's bytes
 static inline void *irstate_data(irstate st, u32 idx) {
   typed_value tv = ir_readthrough(st, idx);
   return tv.v.value ? tv.v.value : irstate_mem(st, idx);
@@ -64,17 +63,17 @@ void irsig_continue errs(irsig *_sig) {
   *_sig->brk = ir_brk_continue;
   return;
 }
-void irsig_return errs(irsig *_sig, typed_value v) {
-  println("[LOG:ret]  {typed_value}", v);
+void irsig_return errs(irsig *_sig, typeenv env, typed_value v) {
+  println("[LOG:ret]  {typed_value_full}", ((typed_value_full){v, env}));
   if (!_sig->ret) return_err("RETURN_NOT_RETURNABLE");
-  if (Type_cmp(type_at(typeenv_current, v.t), type_at(typeenv_current, _sig->ret->t), typeenv_current))
+  if (Type_cmp(env, type_at(env, v.t), type_at(env, _sig->ret->t)))
     return_err("RETURN_WRONG_TYPE");
   if (!v.v.value) return_err("RETURN_UNKNOWN");
   _sig->ret->v = v.v;
   return;
 }
 void interpret_op errs(irstate st, ir inst);
-void interpret_ret errs(irstate st, ir_ret c) { try_err(irsig_return, (&st.sig, ir_readthrough(st, c))); }
+void interpret_ret errs(irstate st, ir_ret c) { try_err(irsig_return, (&st.sig, ss_typeenv(st.ss), ir_readthrough(st, c))); }
 void interpret_break errs(irstate st, ir_break c) { try_err(irsig_break, (&st.sig)); }
 void interpret_cont errs(irstate st, ir_cont c) { try_err(irsig_continue, (&st.sig)); }
 void interpret_set errs(irstate st, ir_set c) {
@@ -111,7 +110,7 @@ void interpret_cast(irstate st, ir_cast c) {
   d->v = t.v;
 }
 bool istrue errs(typed_value t, typeenv e) {
-  if (Type_cmp(T(tu_of(r_bool, {})), type_at(e, t.t), e))
+  if (Type_cmp(e, T(tu_of(r_bool, {})), type_at(e, t.t)))
     return_err("CONDITION_NOT_BOOL", false);
   return *(bool *)t.v.value;
 }
@@ -145,7 +144,6 @@ void interpret_putptr(irstate st, ir_putptr c) {
 void interpret_call errs(irstate st, ir_call c) {
   let it = st.ss->functions[c.l.fn - 1].instances[c.l.spec];
 
-  // fnctx
   let ftype = slice_alloc(st.ss->alloc, typeidx, c.args.len + 1);
   defer { slice_free(st.ss->alloc, ftype); };
   slice_last(ftype) = ss_type_intern(st.ss, it.ret);
@@ -168,7 +166,7 @@ void interpret_call errs(irstate st, ir_call c) {
   defer { scope_destroy(st.ss, ns); };
   try_err(interpret_block, (st, ns));
 
-  if (!result.v.value && Type_cmp(T(tu_of(r_void, {})), ss_type(st.ss, result.t), ss_typeenv(st.ss)))
+  if (!result.v.value && Type_cmp(ss_typeenv(st.ss), T(tu_of(r_void, {})), ss_type(st.ss, result.t)))
     return_err("NO_RETURN_NONVOID");
 
   let destination = irstate_find(st, c.d);
@@ -177,7 +175,7 @@ void interpret_call errs(irstate st, ir_call c) {
   dest_t.isconst = false;
   destination->t = ss_type_intern(st.ss, dest_t);
 
-  if (Type_cmp(ss_type(st.ss, destination->t), ss_type(st.ss, result.t), ss_typeenv(st.ss)))
+  if (Type_cmp(ss_typeenv(st.ss), ss_type(st.ss, destination->t), ss_type(st.ss, result.t)))
     return_err("RETURN_WRONG_TYPE");
   tu_match_void(
       ss_type(st.ss, destination->t).t,
@@ -245,7 +243,7 @@ void interpret_farg errs(irstate st, ir_farg c) {
   if (!(c.l + 1 < st.fnctx.ftype.len)) return_err("FUNCTION_ARG_OOB");
   typed_value v = {st.fnctx.ftype.ptr[c.l], (*st.fnctx.args)[c.l]};
   let d = irstate_find(st, c.d);
-  if (Type_cmp(ss_type(st.ss, v.t), ss_type(st.ss, d->t), ss_typeenv(st.ss)))
+  if (Type_cmp(ss_typeenv(st.ss), ss_type(st.ss, v.t), ss_type(st.ss, d->t)))
     return_err("FUNCTION_WRONG_RETURN");
   tu_match_void(
       ss_type(st.ss, d->t).t,
@@ -300,7 +298,7 @@ void interpret_op errs(irstate st, ir inst) {
 static inline bool try_reg_known errs(superscope *ss, scope *s, u32 idx) {
   let it = scope_find(ss, s, idx);
   let it_t = ss_type(ss, it->t);
-  if (Type_is_comptime(it_t) && !it->v.value && Type_cmp(it_t, ss_type(ss, ss->t_ast), ss_typeenv(ss)))
+  if (Type_is_comptime(it_t) && !it->v.value && Type_cmp(ss_typeenv(ss), it_t, ss_type(ss, ss->t_ast)))
     return_err("COMPTIME_UNKNOWN", false);
   return Type_is_comptime(it_t) && it->v.value;
 }

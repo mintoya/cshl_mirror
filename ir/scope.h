@@ -24,7 +24,7 @@ scope *scope_inferior(superscope *b, scope *s) {
           .parent = s,
           .instructions = msList_init(b->alloc, ir),
           .values = msList_init(b->alloc, typed_value),
-          .named = moxmap_init(b->alloc, fptr, u32, cmpfptr),
+          .named = moxmap_init(b->alloc, fptr, u32, (oxmap_cmp){cmpfptr}),
           .start = s ? s->start + msList_len(s->values) : 0,
           .rootable = s ? s->rootable : true,
       })
@@ -41,10 +41,6 @@ scope *scope_find_rootable(superscope *b, scope *s) {
 }
 static scope *scope_copy_deep(superscope *ss, scope *s, scope *parent) {
   if (!s) return nullptr;
-  // TODO: fix oxmap
-  moxmap(fptr, u32) named = ((oxmap *)s->named)->keys->length
-                                ? (moxmap(fptr, u32))oxmap_copy(ss->alloc, (oxmap *)s->named)
-                                : moxmap_init(ss->alloc, fptr, u32, cmpfptr);
   scope *res = avalue(
       ss->alloc,
       ((scope){
@@ -52,7 +48,7 @@ static scope *scope_copy_deep(superscope *ss, scope *s, scope *parent) {
           .parent = parent,
           .instructions = msList_initArr(ss->alloc, *msList_vla(s->instructions)),
           .values = msList_initArr(ss->alloc, *msList_vla(s->values)),
-          .named = named,
+          .named = (moxmap(fptr, u32))oxmap_copy(ss->alloc, (oxmap *)s->named),
           .start = s->start,
           .rootable = s->rootable,
       })
@@ -90,13 +86,11 @@ void scope_destroy(superscope *b, scope *s) {
   adestroy(b->alloc, s);
 }
 u32 scope_add_value(superscope *env, scope *s, typed_value v) {
-  // the type was interned where the value was made, this only stores it
   if (tu_is(c_int, ss_type(env, v.t).t) && v.v.c_int) // explicitly destroyed in scope_destroy
     v.v.c_int = BInt.copy(env->alloc, v.v.c_int);
   msList_push(env->alloc, s->values, v);
   return msList_len(s->values) + s->start;
 }
-// find named type's info
 struct type_named {
   scope *owner;
   u32 idx;
@@ -112,7 +106,7 @@ static inline void scope_emit_inst errs(superscope *env, scope *s, ir i) {
   if (!try_err(try_interpret, (env, s, i))) msList_push(env->alloc, s->instructions, i);
 }
 static bool Type_similar(Type a, Type b, typeenv e) {
-  return a.ptr_level == b.ptr_level && !TypeTree_cmp(a.t, b.t, e);
+  return a.ptr_level == b.ptr_level && !TypeTree_cmp(e, a.t, b.t);
 }
 static bool Type_is_integer_like(Type t, typeenv e) {
   return !t.ptr_level && (tu_is(r_bool, t.t) || Type_isint(t, e));
@@ -123,8 +117,8 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
 static u32 cast_value errs(superscope *ss, scope *s, u32 left, Type to) {
   let e = ss_typeenv(ss);
   let ot = ss_type(ss, scope_find(ss, s, left)->t);
-  if (!Type_cmp(ot, to, e)) return left;
-  if (!Type_cmp(to, T(tu_of(c_any, {})), e)) return left;
+  if (!Type_cmp(e, ot, to)) return left;
+  if (!Type_cmp(e, to, T(tu_of(c_any, {})))) return left;
   let d = scope_add_value(ss, s, TV_of(ss, to));
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_cast, {.l = left, .d = d})), 0);
   return d;
@@ -258,8 +252,6 @@ static inline u32 ss_get_named_mut errs(superscope *env, scope *s, fptr n) {
 typeidx ss_type_intern(superscope *ss, Type t) {
   // the null type is index 0 by definition, never a real entry
   if (tu_is(r_null, t.t)) return 0;
-  // the map comparator resolves names, so it needs the bound source lists
-  typeenv_set(ss_typeenv(ss));
   if_decl (let found, moxmap_get(ss->typeindex, t)) return *found;
   sglist_push(ss->tlist, t);
   let idx = (typeidx)ss->tlist.len; // 1 based
@@ -285,14 +277,12 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
     .sitems = {.allocator = allocator},
     .bitems = {.allocator = allocator},
     .pointers = moxmap_init(allocator, void*, usize),
-    .typeindex = moxmap_init(allocator, Type, typeidx, Type_cmp_hash),
-    .type_info = moxmap_init(allocator, fptr, scope *, fptr_cmp_hash),
     .thisstack = msList_init(allocator , typeidx),
     .functions = msList_init(allocator,function),
   }));
   // clang-format on
-  typeenv_set(ss_typeenv(res));
-  // the core compile time types, interned once so that constants need no lookup
+  res->typeindex = moxmap_init(allocator, Type, typeidx, (oxmap_cmp){Type_cmp_hash_ss, res});
+  res->type_info = moxmap_init(allocator, fptr, scope *, (oxmap_cmp){fptr_cmp_hash, res});
   res->t_void = ss_type_intern(res, T(tu_of(r_void, {})));
   res->t_any = ss_type_intern(res, T(tu_of(c_any, {})));
   res->t_int = ss_type_intern(res, T(tu_of(c_int, {})));

@@ -16,9 +16,8 @@
 sliceDef(typed_value);
 sliceDef(Type);
 
-// takes the types apart, not the values: a known referance recurses on a pointee with no index
 static cmpres typed_value_cmp_typed(Type ta, value_store av, Type tb, value_store bv, typeenv e) {
-  if_decl (let cmp, Type_cmp(ta, tb, e)) return cmp;
+  if_decl (let cmp, Type_cmp(e, ta, tb)) return cmp;
   assertMessage(Type_is_comptime(ta) ?: (!av.value && !bv.value), "should have nulled that out");
   if (!Type_is_comptime(ta)) return 0;
   if (av.value == bv.value) return 0;
@@ -43,23 +42,21 @@ static cmpres typed_value_cmp_typed(Type ta, value_store av, Type tb, value_stor
         return icmp(av.c_fun.fn, bv.c_fun.fn)
                    ?: icmp(av.c_fun.spec, bv.c_fun.spec);
       }),
-      // types are deduped on push, so equal types share an index
       (c_type, _, return icmp(av.c_type, bv.c_type)),
       (default),
   );
   return cmp_memcmp(av.value, bv.value, Type_sizeof(ta, e));
 }
-cmpres typed_value_cmp(typed_value a, typed_value b) {
+cmpres typed_value_cmp(typeenv e, typed_value a, typed_value b) {
   if (!memcmp(&a, &b, sizeof(a))) return 0;
-  let e = typeenv_current;
   return typed_value_cmp_typed(type_at(e, a.t), a.v, type_at(e, b.t), b.v, e);
 }
-cmpres slice_typed_value_cmp_hash(const void *a, const void *b) {
+cmpres slice_typed_value_cmp_hash(void *env, const void *a, const void *b) {
   let av = *(slice(typed_value) *)a;
   let bv = *(slice(typed_value) *)b;
   if_decl (let r, icmp(av.len, bv.len)) return r;
   foreach (let i, range(0, av.len))
-    if_decl (let cmp, typed_value_cmp(av.ptr[i], bv.ptr[i])) return cmp;
+    if_decl (let cmp, typed_value_cmp(ss_typeenv((superscope *)env), av.ptr[i], bv.ptr[i])) return cmp;
   return 0;
 }
 
@@ -94,7 +91,7 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
       .body = body,
       .defscope = roots,
       .instances = msList_init(ss->alloc, function_instance),
-      .mp = moxmap_init(ss->alloc, slice(typed_value), u32, slice_typed_value_cmp_hash),
+      .mp = moxmap_init(ss->alloc, slice(typed_value), u32, (oxmap_cmp){ slice_typed_value_cmp_hash , ss}),
   });
   // clang-format on
   let arg_scope = scope_inferior(ss, roots);
@@ -102,9 +99,9 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
   let signature = (c_fun){.start = ss_type_reserve(ss, params.len + 1)};
   let env = ss_typeenv(ss);
   foreach (let p, span(params.start, params.len))
-    sglist_get(*env.tlist, signature.start - 1 + (p - params.start)) =
+    sglist_get(env.tlist, signature.start - 1 + (p - params.start)) =
         try_err(function_item_type, (ss, arg_scope, p), 0);
-  sglist_get(*env.tlist, signature.start - 1 + params.len) =
+  sglist_get(env.tlist, signature.start - 1 + params.len) =
       try_err(value_asType, (ss, try_err(temporary_interpret, (ss, arg_scope, retT), 0)), 0);
 
   let res = scope_add_value(
@@ -116,11 +113,11 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
       "[LOG]generating function from \n"
       "args : {astidx_full} \n"
       "return:{astidx_full}\n"
-      "to {Type}",
+      "to {Type_full}",
 
       ss_ast_full(ss, args),
       ss_ast_full(ss, retT),
-      T(tu_of(c_fun, signature))
+      ss_tf(ss, T(tu_of(c_fun, signature)))
   );
   return res;
 }
@@ -182,7 +179,6 @@ static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_
   // clang-format on
   return result;
 }
-// lower call with already defined values
 static u32 lower_function_call_values errs(superscope *ss, scope *s, u32 fn, slice(u32) vals) {
   let function_value = *scope_find(ss, s, fn);
   let generic_signature = tu_catchr(c_fun, ss_type(ss, function_value.t).t);

@@ -72,5 +72,6 @@ int main(int argc, char **argv) {
   for (int i = 1; i < argc; i++)
     strcats_space(cmd, argv[i]);
   printf("done cloning dependencies , rerunning");
+  fflush(stdout);
   return system(cmd);
 }

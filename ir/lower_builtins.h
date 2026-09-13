@@ -352,7 +352,6 @@ static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
 
   // reserve the whole run up front, so a nested struct cannot interleave with it
   let members = (r_struct){.start = ss_member_reserve(ss, stmts.len)};
-  let e = ss_typeenv(ss);
   r_tag thisrec = {.t = ss_type_intern(ss, T(tu_of(r_struct, members)))};
   TypeTree_tag_set_name(&thisrec, unique_type_name(ss));
   let _this = T(tu_of(r_tag, thisrec));
@@ -363,10 +362,13 @@ static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
   msList_push(ss->alloc, ss->thisstack, this_idx);
   defer { msList_pop(ss->thisstack); };
   // the tag is keyed by what its name spells, not by which position it sits at
-  moxmap_set(ss->type_info, type_name(e, _this.t.r_tag.name), working_scope);
+  moxmap_set(ss->type_info, type_name(ss_typeenv(ss), _this.t.r_tag.name), working_scope);
 
   let offset = (usize){};
+  let e = ss_typeenv(ss);
   foreach (let i, range(0, stmts.len)) {
+    // temporary_interpret can intern types, which invalidates the snapshot above
+    e = ss_typeenv(ss);
     let stmt_node = ast_at(ss->asts, stmts.start + i);
     let dcl = tu_catch(astDecl, stmt_node, return_err("STRUCT_MEMBER_NOT_DECL",0));
     astidx name_idx = ast_child(ss->asts, dcl.name_type_value);
@@ -402,9 +404,10 @@ static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
     }
   }
 
+  e = ss_typeenv(ss);
   void sexplike(const char *data, void *userdata, usize len, bool flush);
-  print_wf(sexplike, "[LOG] created struct : {Type}\n", type_at(e, _this.t.r_tag.t));
-  print_wf(sexplike, "[LOG] it's scope {scope}\n", *working_scope);
+  print_wf(sexplike, "[LOG] created struct : {Type_full}\n", ((Type_full){type_at(e, _this.t.r_tag.t), e}));
+  print_wf(sexplike, "[LOG] it's scope {scope_full}\n", ((scope_full){working_scope, ss}));
   return scope_add_value(ss, s, Type_asValue(ss, _this));
 }
 static u32 lower_builtin_this errs(superscope *ss, scope *s, astidx args) {

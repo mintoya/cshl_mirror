@@ -12,7 +12,7 @@ u32 lower_call_extra errs(superscope *ss, scope *s, u32 left, u32 first, astidx 
   let l = scope_find(ss, s, left);
   iflet_tu (let fn, c_fun, ss_type(ss, l->t).t)
     return try_err(lower_function_call_with, (ss, s, left, args, first), 0);
-  println("calling {Type}", ss_type(ss, l->t));
+  println("calling {Type_full}", ss_tf(ss, ss_type(ss, l->t)));
   return_err("UNSUPPORTED_CALL", 0);
 }
 u32 lower_call errs(superscope *ss, scope *s, u32 left, astidx args) {
@@ -282,10 +282,10 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
          // ->
          // @uqot a @qot b
          let argument = scope_find(ss, s, try_err(lower_builtin_qot, (ss, s, right), 0));
-         if (Type_cmp(ss_type(ss, ss->t_ast), ss_type(ss, argument->t), ss_typeenv(ss)))
+         if (Type_cmp(ss_typeenv(ss), ss_type(ss, ss->t_ast), ss_type(ss, argument->t)))
            return_err("EXPECTED_AST", 0);
          let result = scope_find(ss, s, try_err(lower_call, (ss, s, left, argument->v.c_ast), 0));
-         if (Type_cmp(ss_type(ss, ss->t_ast), ss_type(ss, result->t), ss_typeenv(ss)))
+         if (Type_cmp(ss_typeenv(ss), ss_type(ss, ss->t_ast), ss_type(ss, result->t)))
            return_err("EXPECTED_AST", 0);
          if (!result->v.c_ast) return_err("EXPECTED_AST", 0);
          return try_err(lower, (ss, s, result->v.c_ast), 0);

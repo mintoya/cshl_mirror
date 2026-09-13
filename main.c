@@ -1,4 +1,3 @@
-#include <stdlib.h>
 #include <wheels/cmdline_parser.h>
 #include <wheels/macros.h>
 #include <wheels/smap.h>
@@ -6,10 +5,8 @@
 #include "ast.h"
 #include "indentprinter.h"
 #include "wheels/fptr.h"
-#include "wheels/print/print_pre.h"
 #include <wheels/allocators/arenaAllocator.h>
 #include <wheels/allocators/debugallocator.h>
-#include <wheels/mytypes.h>
 //
 #include "ir/interpret.h"
 #include "ir/lower.h"
@@ -67,10 +64,10 @@ cmd_main(
   if (lowerast || execute) {
     let env = ss_init(allocator, ctx);
     catch_errcall((lower, (env, env->outermost, ctx.idx)), e, (err_panic(e), (u32)0));
-    print_wf(sexplike, "{scope}\n", *env->outermost);
+    print_wf(sexplike, "{scope_full}\n", ((scope_full){env->outermost, env}));
     if (execute) {
       catch_errcall((interpret, (env, env->outermost)), e, (err_panic(e), (typed_value){}));
-      print_wf(sexplike, "{scope}\n", *env->outermost);
+      print_wf(sexplike, "{scope_full}\n", ((scope_full){env->outermost, env}));
     }
   }
 

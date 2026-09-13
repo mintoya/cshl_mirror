@@ -5,7 +5,14 @@
 
 astidx_full parse_source errs(allocfn out_allocator, fptr input, const char *filename);
 
-static typed_value interpret_source(allocfn arena, fptr src, astidx_full *ctx_out) {
+// a lowered+interpreted value together with the types it indexes into
+typedef struct {
+  typeidx t;
+  value_store v;
+  typeenv env;
+} interp;
+
+static interp interpret_source(allocfn arena, fptr src, astidx_full *ctx_out) {
   let ctx = catch_errcall((parse_source, (arena, src, nullptr)), e, (err_panic(e), (astidx_full){}));
   let env = ss_init(arena, ctx);
   catch_errcall((lower, (env, env->outermost, ctx.idx)), e, (err_panic(e), (u32)0));
@@ -14,8 +21,10 @@ static typed_value interpret_source(allocfn arena, fptr src, astidx_full *ctx_ou
     *ctx_out = ctx;
     ctx_out->alist = env->asts;
   }
-  return res;
+  return (interp){.t = res.t, .v = res.v, .env = ss_typeenv(env)};
 }
+static Type tv_type(interp x) { return type_at(x.env, x.t); }
+static typed_value_full tvf(interp x) { return (typed_value_full){(typed_value){x.t, x.v}, x.env}; }
 
 test_fn(interpret_literal_int) {
   let arena = arena_new_ext(allocator, 1 << 16);
@@ -59,7 +68,7 @@ test_fn(interpret_string_value) {
 
   test_assert(tu_catchr(r_arr, tv_type(r).t, test_assert(false)).t);
   let arr = tu_catchr(r_arr, tv_type(r).t);
-  let elem = type_at(typeenv_current, arr.t);
+  let elem = type_at(r.env, arr.t);
   test_inteq(tu_catch(r_sint, elem.t).bits, 8);
   test_fpeq(((fptr){arr.count, (u8 *)r.v.value}), "yo");
 }
@@ -80,13 +89,13 @@ test_fn(interpret_type_fn) {
       nullptr
   );
 
-  println("{typed_value}", r);
+  println("{typed_value_full}", tvf(r));
   test_assert(tu_is(c_type, tv_type(r).t));
-  let ty = type_at(typeenv_current, r.v.c_type);
+  let ty = type_at(r.env, r.v.c_type);
   test_assert(tu_is(r_arr, ty.t));
   let arr = tu_catch(r_arr, ty.t);
   test_inteq(arr.count, 2);
-  let elem = type_at(typeenv_current, arr.t);
+  let elem = type_at(r.env, arr.t);
   test_inteq(tu_catch(r_sint, elem.t).bits, 8);
 }
 
@@ -129,11 +138,11 @@ test_fn(interpret_global_comptime_mutation) {
   test_assert(tu_is(r_arr, tv_type(r).t));
   let arr = tu_catchr(r_arr, tv_type(r).t);
   test_inteq(arr.count, 3);
-  let elem = type_at(typeenv_current, arr.t);
+  let elem = type_at(r.env, arr.t);
   test_inteq(tu_catch(r_uint, elem.t).bits, 16);
 }
 
-static typed_value ast_probe(allocfn arena, fptr dotwork, fptr arg, astidx_full *ctx) {
+static interp ast_probe(allocfn arena, fptr dotwork, fptr arg, astidx_full *ctx) {
   let src = snprint(
       arena,
       "ast ~~ @ast();\n"
@@ -255,7 +264,7 @@ test_fn(if_cshl) {
       nullptr
   );
 
-  println("[if_cshl] r {typed_value} {bigint}", r, r.v.c_int);
+  println("[if_cshl] r {typed_value_full} {bigint}", tvf(r), r.v.c_int);
   test_assert(tu_is(c_int, tv_type(r).t));
   test_assert(!BInt.cmp(r.v.c_int, BInt.from.i64(arena, 3)));
 }
