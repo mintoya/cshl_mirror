@@ -17,7 +17,7 @@ sliceDef(typed_value);
 sliceDef(Type);
 
 // takes the types apart, not the values: a known referance recurses on a pointee with no index
-static i8 typed_value_cmp_typed(Type ta, value_store av, Type tb, value_store bv, typeenv e) {
+static cmpres typed_value_cmp_typed(Type ta, value_store av, Type tb, value_store bv, typeenv e) {
   if_decl (let cmp, Type_cmp(ta, tb, e)) return cmp;
   assertMessage(Type_is_comptime(ta) ?: (!av.value && !bv.value), "should have nulled that out");
   if (!Type_is_comptime(ta)) return 0;
@@ -47,14 +47,14 @@ static i8 typed_value_cmp_typed(Type ta, value_store av, Type tb, value_store bv
       (c_type, _, return icmp(av.c_type, bv.c_type)),
       (default),
   );
-  return memcmp(av.value, bv.value, Type_sizeof(ta, e));
+  return cmp_memcmp(av.value, bv.value, Type_sizeof(ta, e));
 }
-i8 typed_value_cmp(typed_value a, typed_value b) {
+cmpres typed_value_cmp(typed_value a, typed_value b) {
   if (!memcmp(&a, &b, sizeof(a))) return 0;
   let e = typeenv_current;
   return typed_value_cmp_typed(type_at(e, a.t), a.v, type_at(e, b.t), b.v, e);
 }
-i8 slice_typed_value_cmp_hash(const void *a, const void *b) {
+cmpres slice_typed_value_cmp_hash(const void *a, const void *b) {
   let av = *(slice(typed_value) *)a;
   let bv = *(slice(typed_value) *)b;
   if_decl (let r, icmp(av.len, bv.len)) return r;

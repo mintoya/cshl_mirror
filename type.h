@@ -12,7 +12,7 @@
 #include <wheels/oxmap.h>
 #include <wheels/print/print_pre.h>
 #include <wheels/sList.h>
-i8 fptr_cmp_hash(const void *a, const void *b) { return fptr_cmp(*(fptr *)a, *(fptr *)b); }
+cmpres fptr_cmp_hash(const void *a, const void *b) { return fptr_cmp(*(fptr *)a, *(fptr *)b); }
 typedef enum : u8 {
   builtin_fn,       // @fn((decl|type...) ,decl|type,body) c_func of this type,
   builtin_closure,  // @closure((captures...),(decl|type...) ,decl|type,body) c_func of this type,
@@ -338,18 +338,17 @@ static inline r_bitfield TypeTree_inner_bitfield(TypeTree t, typeenv e) {
 
 // comparison
 
-i8 icmp(isize a, isize b) { return a - b; }
-i8 TypeTree_cmp(TypeTree a, TypeTree b, typeenv e);
+cmpres icmp(isize a, isize b) { return a < b ? cmp_lt : a > b ? cmp_gt : cmp_eq; }
+cmpres TypeTree_cmp(TypeTree a, TypeTree b, typeenv e);
 
-// one word of decorations, so one comparison. not icmp: it returns i8, and a single flag bit is
-// 2^28, which truncates to 0 and would read as equal
-i8 Type_cmp(Type a, Type b, typeenv e) {
-  if (a.decorations != b.decorations) return a.decorations < b.decorations ? -1 : 1;
+// one word of decorations, so one comparison
+cmpres Type_cmp(Type a, Type b, typeenv e) {
+  if (a.decorations != b.decorations) return a.decorations < b.decorations ? cmp_lt : cmp_gt;
   return TypeTree_cmp(a.t, b.t, e);
 }
 
-i8 TypeTree_cmp(TypeTree a, TypeTree b, typeenv e) {
-  if (!mcmp(a, b)) return 0;
+cmpres TypeTree_cmp(TypeTree a, TypeTree b, typeenv e) {
+  if (!mcmp(a, b)) return cmp_eq;
   if_decl (let cmp, icmp(a.tag, b.tag)) return cmp;
 
   tu_match_void(
@@ -433,11 +432,11 @@ i8 TypeTree_cmp(TypeTree a, TypeTree b, typeenv e) {
 }
 
 // map comparators cannot take a typeenv, so they use the bound one
-i8 TypeTree_cmp_hash(const void *a, const void *b) {
+cmpres TypeTree_cmp_hash(const void *a, const void *b) {
   return TypeTree_cmp(*(TypeTree *)a, *(TypeTree *)b, typeenv_current);
 }
 
-i8 Type_cmp_hash(const void *a, const void *b) {
+cmpres Type_cmp_hash(const void *a, const void *b) {
   return Type_cmp(*(Type *)a, *(Type *)b, typeenv_current);
 }
 
