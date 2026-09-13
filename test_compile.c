@@ -555,6 +555,28 @@ test_fn(struct_as_overload) {
   test_inteq(*(i32 *)r.v.value, 7);
 }
 
+// `as` with no overload member is just a cast to the type the right hand side names
+test_fn(as_without_overload_is_a_cast) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s8 ~~ @sint(8);\n"
+          "s32 ~~ @sint(32);\n"
+          "x ~s8 = 5;\n"
+          "x as s32;\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_sint, tv_type(r).t));
+  test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 32);
+  test_inteq(*(i32 *)r.v.value, 5);
+}
+
 // a function cannot capture the frame it was written in, so a closure carries its captures in a
 // struct and calls itself through a "()" overload
 test_fn(struct_closure_capture) {
@@ -588,6 +610,39 @@ test_fn(struct_closure_capture) {
   test_assert(tu_is(r_sint, tv_type(r).t));
   test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 32);
   test_inteq(*(i32 *)r.v.value, 7);
+}
+
+// a "()" overload called as the last expression has to yield the call result, not a cast that
+// coerced one of its arguments; the call allocates those casts above the result register
+test_fn(overload_call_yields_the_result_after_arg_coercion) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s8 ~~ @sint(8);\n"
+          "s32 ~~ @sint(32);\n"
+          "box ~type~ @struct{\n"
+          "  Self ~type~ @this();\n"
+          "  v ~s32;\n"
+          "  @id(\"()\") ~~ @fn (self ~Self, x ~s32, y ~s32), s32, {\n"
+          "    return self.v + x + y;\n"
+          "  };\n"
+          "};\n"
+          "make ~~ @fn (), box, { b ~box; b.v = 30; return b; };\n"
+          "b ~box = make();\n"
+          "small ~s8 = 1;\n"
+          "tiny ~s8 = 2;\n"
+          "b(small, tiny);\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_sint, tv_type(r).t));
+  test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 32);
+  test_inteq(*(i32 *)r.v.value, 33);
 }
 
 // an explicit @ref capture stores the address, so the call aliases the source
@@ -742,6 +797,84 @@ test_fn(any_return_adopts_concrete_type) {
 
   test_assert(tu_is(r_sint, tv_type(r).t));
   test_inteq(*(i32 *)r.v.value, 7);
+}
+
+// integer math lands on the weaker of the two operand types, so a runtime int beats a comptime
+// literal and the wider int wins. coercing the operands allocates temporaries above the result, so
+// this also pins down that the block still yields the result and not one of those casts
+test_fn(math_coerces_to_the_weaker_int) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s8 ~~ @sint(8);\n"
+          "s32 ~~ @sint(32);\n"
+          "x ~s32 = 4;\n"
+          "y ~s8 = 3;\n"
+          "y + x;\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_sint, tv_type(r).t));
+  test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 32);
+  test_inteq(*(i32 *)r.v.value, 7);
+}
+
+// a comptime literal next to a runtime int must not drag the result back to the comptime int
+// (the `3 + x` case)
+test_fn(comptime_literal_math_adopts_runtime_type) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s32 ~~ @sint(32);\n"
+          "x ~s32 = 4;\n"
+          "3 + x;\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_sint, tv_type(r).t));
+  test_inteq(*(i32 *)r.v.value, 7);
+}
+
+test_fn(math_unsigned_is_weaker_at_the_same_width) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s32 ~~ @sint(32);\n"
+          "u32 ~~ @uint(32);\n"
+          "a ~s32 = 5;\n"
+          "b ~u32 = 2;\n"
+          "a + b;\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_uint, tv_type(r).t));
+  test_inteq(*(u32 *)r.v.value, 7);
+}
+
+// two comptime operands have nothing to coerce and still fold to a comptime int
+test_fn(comptime_math_stays_comptime) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(arena, fp("3 + 4;"), nullptr);
+
+  test_assert(tu_is(c_int, tv_type(r).t));
+  test_assert(!BInt.cmp(r.v.c_int, BInt.from.i64(arena, 7)));
 }
 
 test_fn(field_assignment_writes_into_the_struct) {

@@ -546,6 +546,23 @@ typePrinter(scope_full) {
           USETYPEPRINTER(u32, call.d);
           PUTS(")");
         }),
+        (ir_opcall, call, {
+          PUTS("(opcall ");
+          USETYPEPRINTER(u32, call.l);
+          PUTS(" ");
+          PUTS("'");
+          {
+            char op_str[sizeof(u32) + 1] = {};
+            memcpy(op_str, &call.o, 4);
+            PUTS(op_str);
+          }
+          PUTS("' (");
+          foreach (let c, span(call.args.ptr, call.args.len))
+            USETYPEPRINTER(u32, *c), c == call.args.ptr ? PUTS(" ") : 0;
+          PUTS("),");
+          USETYPEPRINTER(u32, call.d);
+          PUTS(")");
+        }),
         (ir_array, f, {
           PUTS("(arr ");
           USETYPEPRINTER(u32, f.l), PUTS(" ");

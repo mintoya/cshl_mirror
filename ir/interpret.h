@@ -266,6 +266,7 @@ void interpret_op errs(irstate st, ir inst) {
       (ir_while, /* */ op, try_err(interpret_while, /* */ (st, op))),
       (ir_set, /*   */ op, try_err(interpret_set, /*   */ (st, op))),
       (ir_call, /*  */ op, try_err(interpret_call, /*  */ (st, op))),
+      (ir_opcall, /* */ _, assertMessage(false, "operator call was not resolved by the type checker")),
       (ir_block, /* */ op, try_err(interpret_block, /* */ (st, op))),
       (ir_field, /* */ op, try_err(interpret_field, /* */ (st, op))),
       (ir_farg, /*  */ op, try_err(interpret_farg, /*  */ (st, op))),
@@ -301,6 +302,7 @@ bool try_interpret errs(superscope *ss, scope *s, ir inst) {
            if (!try_err(try_reg_known, (ss, s, *a), 0)) return false;
          true;
        })),
+      (ir_opcall, _, (assertMessage(false, "operator call was not resolved by the type checker"), false)),
       (ir_cast, _, false),
       (ir_farg, _, false),
       (ir_getref, _, false),
