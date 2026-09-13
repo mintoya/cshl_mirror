@@ -21,7 +21,6 @@ typedef struct {
   scope *root;
   irsig sig;
   struct {
-    // indices, so that an argument value can carry its type by index like any other
     slice(typeidx) ftype;
     typeof(value_store[/*ftype.len-1*/]) *args;
   } fnctx;
@@ -40,13 +39,14 @@ static inline void *irstate_mem(irstate st, u32 idx) {
   return tv->v.value = tv->v.value ?: acreate(st.ss->alloc, u8[size ?: 1]);
 }
 
-// returns a typed value with isref grunteed to be false
+// returns a typed value without isref 
 static typed_value ir_readthrough(irstate st, u32 idx) {
   typed_value *tv = irstate_find(st, idx);
   Type t = ss_type(st.ss, tv->t);
   if (!t.isref) return *tv;
   t.isref = false;
-  return TV_with(st.ss, (typed_value){.t = tv->t, .v = {.value = *(void **)irstate_mem(st, idx)}}, t);
+
+  return TV_with(st.ss, t, VS(*(void **)irstate_mem(st, idx)));
 }
 static inline void *irstate_data(irstate st, u32 idx) {
   typed_value tv = ir_readthrough(st, idx);
@@ -135,12 +135,8 @@ void interpret_while errs(irstate st, ir_while c) {
 }
 void interpret_getptr(irstate st, ir_getptr c) { *(void **)irstate_mem(st, c.d) = irstate_data(st, c.l); }
 void interpret_getref(irstate st, ir_getref c) { interpret_getptr(st, (ir_getptr){.l = c.l, .d = c.d}); }
-// d = *l, l is a pointer, so the address is read straight out of its storage. unfolding a
-// referance here would dereference twice
 void interpret_putptr(irstate st, ir_putptr c) {
   void *target = *(void **)irstate_mem(st, c.l);
-  // a referance keeps its address in storage, the way getref writes it, so that reading it
-  // unfolds to the thing. a plain value is the thing itself, and points straight at it
   if (ss_type(st.ss, irstate_find(st, c.d)->t).isref) *(void **)irstate_mem(st, c.d) = target;
   else irstate_find(st, c.d)->v.value = target;
 }
@@ -219,7 +215,6 @@ void interpret_rawop errs(irstate st, ir_rawop c) {
 }
 void interpret_block errs(irstate st, ir_block c) {
   if (!c) return;
-
   st.s = c;
   foreach (let i, span(c->values, msList_len(c->values)))
     if (!Type_is_comptime(ss_type(st.ss, i->t)) && !i->v.value)
@@ -253,12 +248,8 @@ void interpret_array(irstate st, ir_array c) {
   let arr = tu_catchr(r_arr, ss_type(st.ss, l.t).t);
   let idx = int_as_bigint(st.ss->alloc, ir_readthrough(st, c.r), ss_typeenv(st.ss));
   bigint_expand(st.ss->alloc, &idx, sizeof(usize) / sizeof(bigint_unit) + 1);
-  // no bounds checking, matching the lowerer; a zero-length array has nothing to check against.
-  // the access register aliases the element the way a field access aliases a member, so it is the
-  // element's storage rather than a cell holding its address
   irstate_find(st, c.d)->v.value =
-      (u8 *)l.v.value +
-      *(usize *)idx * Type_sizeof(type_at(ss_typeenv(st.ss), arr.t), ss_typeenv(st.ss));
+      (u8 *)l.v.value + *(usize *)idx * Type_sizeof(type_at(ss_typeenv(st.ss), arr.t), ss_typeenv(st.ss));
 }
 void interpret_field errs(irstate st, ir_field c) {
   let l = ir_readthrough(st, c.l);
@@ -266,9 +257,6 @@ void interpret_field errs(irstate st, ir_field c) {
   let strct = TypeTree_inner_struct(ss_type(st.ss, l.t).t, e);
   if (!strct.start) return_err("FIELD_ACESS");
   let item = *type_struct_item(e, strct, c.i);
-  // the access register aliases the member, so it is the member's storage rather than a cell
-  // holding its address: a member whose type is a referance keeps that referance in storage and
-  // unfolds on use, a plain member is the thing itself
   irstate_find(st, c.d)->v.value = (u8 *)l.v.value + item.offset;
 }
 void interpret_op errs(irstate st, ir inst) {

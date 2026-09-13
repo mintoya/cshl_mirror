@@ -100,9 +100,9 @@ tu_def( // type
     (c_fun /*        */, struct { typeidx start; }),
 );
 #define T(...) ((Type){.t = __VA_ARGS__})
+#define TV(...) ((typed_value){__VA_ARGS__})
+#define VS(...) ((value_store){__VA_ARGS__})
 
-static inline void TypeTree_tag_set_name(r_tag *t, srcpos p) { t->name = p; }
-static inline void TypeTree_arr_set_count(r_arr *a, u32 n) { a->count = n; }
 static inline TypeTree TypeTree_uint(u16 width) {
   TypeTree t = {.tag = r_uint_enum};
   t.r_uint.bits = width;

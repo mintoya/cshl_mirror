@@ -2,6 +2,7 @@
 #include "../type.h"
 #include "ir.h"
 #include "wheels/errable.h"
+#include "wheels/sList.h"
 #include <string.h>
 #include <wheels/bigint.h>
 #include <wheels/macros.h>
@@ -73,15 +74,12 @@ static inline typeenv ss_typeenv(superscope *ss) {
 static inline TypeTree_full ss_ttf(superscope *ss, TypeTree t) { return (TypeTree_full){t, ss_typeenv(ss)}; }
 static inline Type_full ss_tf(superscope *ss, Type t) { return (Type_full){t, ss_typeenv(ss)}; }
 
-// comparators for maps keyed on types, bound to a superscope instead of a typeenv snapshot,
-// so that growth of the type lists cannot invalidate the map's context
 static inline cmpres Type_cmp_hash_ss(void *env, const void *a, const void *b) {
   return Type_cmp(ss_typeenv((superscope *)env), *(Type *)a, *(Type *)b);
 }
 static inline cmpres TypeTree_cmp_hash_ss(void *env, const void *a, const void *b) {
   return TypeTree_cmp(ss_typeenv((superscope *)env), *(TypeTree *)a, *(TypeTree *)b);
 }
-// reserves a run of Type slots and the null that ends it, up front so nothing can interleave
 static inline typeidx ss_type_reserve(superscope *ss, usize count) {
   typeidx start = (typeidx)ss->tlist.len + 1;
   foreach (let i, range(0, count + 1))
@@ -105,7 +103,6 @@ static inline usize ast_loc(superscope *ss, astidx idx) {
   let p = srcpos_ast(ast_at(ss->asts, idx), ss->asts);
   return (!p || p > ss->plist.len) ? (usize)-1 : sglist_get(ss->plist, p - 1).offset;
 }
-// a source position that spells text, for generated ids and names
 static inline srcpos ss_srcpos_of_text(superscope *ss, fptr text) {
   sglist_push(ss->flist, (fileItem){.filename = nullptr, .filecontent = text, .fileptr = nullptr});
   u32 fidx = (u32)ss->flist.len; // 1-based
@@ -132,9 +129,8 @@ static inline Type *ss_getType(superscope *ss, Type t) {
 static inline Type_full ss_typeF(superscope *ss, Type t) { return (Type_full){t, ss_typeenv(ss)}; }
 static inline Type ss_type(superscope *ss, typeidx idx) { return type_at(ss_typeenv(ss), idx); }
 static inline typed_value TV_of(superscope *ss, Type t) { return (typed_value){.t = ss_type_intern(ss, t)}; }
-static inline typed_value TV_with(superscope *ss, typed_value v, Type t) {
-  v.t = ss_type_intern(ss, t);
-  return v;
+static inline typed_value TV_with(superscope *ss, Type t, value_store vs) {
+  return TV(ss_type_intern(ss, t), vs);
 }
 static inline typed_value TV_void /*  */ (superscope *ss) { return (typed_value){.t = ss->t_void}; }
 static inline typed_value TV_any /*   */ (superscope *ss) { return (typed_value){.t = ss->t_any}; }
@@ -347,6 +343,7 @@ static inline fptr string_escape(allocfn allocator, fptr in) {
 static inline u32 ss_compileInt(superscope *b, scope *s, fptr in) {
   let front = slice_split(in, (0, 2))[0];
   bigint result = nullptr;
+  defer { msList_deInit(b->alloc, result); };
   if (fptr_eq(front, "0x"))
     result = BInt.from.fptr(b->alloc, 16, slice_split(in, (2, -1))[0]);
   else if (fptr_eq(front, "0b"))
@@ -357,11 +354,9 @@ static inline u32 ss_compileInt(superscope *b, scope *s, fptr in) {
 static inline u32 ss_compileString(superscope *b, scope *s, fptr in) {
   assertMessage(in.len > 1 && in.ptr[0] == '"' && in.ptr[in.len - 1] == '"');
   in = string_escape(b->alloc, in);
-  r_arr strrec = {.t = ss_type_intern(b, T(TypeTree_sint(8)))};
-  TypeTree_arr_set_count(&strrec, (u32)in.len);
-  let t = T(tu_of(r_arr, strrec));
+  let t = T(tu_of(r_arr, {ss_type_intern(b, T(TypeTree_sint(8))), in.len}));
   t.iscomptime = true;
-  return scope_add_value(b, s, TV_with(b, (typed_value){.v = {.value = in.ptr}}, t));
+  return scope_add_value(b, s, TV_with(b, t, VS(in.ptr)));
 }
 static inline bigint int_as_bigint(allocfn allocator, typed_value t, typeenv e) {
   let tt = type_at(e, t.t);

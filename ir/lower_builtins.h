@@ -71,7 +71,7 @@ static u32 lower_builtin_at errs(superscope *ss, scope *s, astidx args) {
   }
   Type t = ss_type(ss, scope_find(ss, s, l)->t);
   Type inner;
-  if (t.isref || !Type_deref(t, &inner)) return_err("AT_NOT_REF", 0);
+  if (t.isref || !Type_if_deref(t, &inner)) return_err("AT_NOT_REF", 0);
   // the thing is mutable, so @at is an lvalue and therefore a referance to it, like every
   // other lowered lvalue
   inner.isref = true;
@@ -86,7 +86,7 @@ static u32 lower_builtin_where errs(superscope *ss, scope *s, astidx args) {
   // &(*l): a lowered lvalue is a referance, so what l denotes is one deref down, and a plain
   // value is addressed as itself
   Type t = ss_type(ss, scope_find(ss, s, l)->t);
-  Type_deref(t, &t);
+  Type_if_deref(t, &t);
   let d = scope_add_value(ss, s, TV_of(ss, try_err(Type_ptr, (t), 0)));
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_getptr, {.l = l, .d = d})), 0);
   return d;
@@ -379,11 +379,8 @@ static u32 lower_builtin_arrof errs(superscope *ss, scope *s, astidx args) {
   // an array is inlined where it sits, so a count that does not fit the field is unrepresentable
   usize count = *(usize *)count_tv;
   if (count > (usize) ~(u32)0) return_err("ARRAY_TOO_LARGE", 0);
-
   Type elem = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 1), 0)), 0);
-  r_arr arrrec = {.t = ss_type_intern(ss, elem)};
-  TypeTree_arr_set_count(&arrrec, (u32)count);
-  return scope_add_value(ss, s, Type_asValue(ss, T(tu_of(r_arr, arrrec))));
+  return scope_add_value(ss, s, Type_asValue(ss, try_err(Type_arr, (ss, elem, count), 0)));
 }
 static u32 lower_builtin_ptrof errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
@@ -434,24 +431,18 @@ static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
   tu_catch(astBBlock, struct_node, return_err("STRUCT_EXPECTS_BLOCK", 0));
   let stmts = ast_block_children(ss->asts, list.start);
 
-  // reserve the whole run up front, so a nested struct cannot interleave with it
   let members = (r_struct){.start = ss_member_reserve(ss, stmts.len)};
-  r_tag thisrec = {.t = ss_type_intern(ss, T(tu_of(r_struct, members)))};
-  TypeTree_tag_set_name(&thisrec, unique_type_name(ss));
-  let _this = T(tu_of(r_tag, thisrec));
-  // @this() hands this index out while the members below are still being filled in
+  let _this = T(tu_of(r_tag, {ss_type_intern(ss, T(tu_of(r_struct, members))), unique_type_name(ss)}));
   let this_idx = ss_type_intern(ss, _this);
 
   let working_scope = scope_inferior(ss, scope_find_rootable(ss, s));
   msList_push(ss->alloc, ss->thisstack, this_idx);
   defer { msList_pop(ss->thisstack); };
-  // the tag is keyed by what its name spells, not by which position it sits at
   moxmap_set(ss->type_info, type_name(ss_typeenv(ss), _this.t.r_tag.name), working_scope);
 
   let offset = (usize){};
   let e = ss_typeenv(ss);
   foreach (let i, range(0, stmts.len)) {
-    // temporary_interpret can intern types, which invalidates the snapshot above
     e = ss_typeenv(ss);
     let stmt_node = ast_at(ss->asts, stmts.start + i);
     let dcl = tu_catch(astDecl, stmt_node, return_err("STRUCT_MEMBER_NOT_DECL", 0));

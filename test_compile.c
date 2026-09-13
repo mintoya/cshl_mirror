@@ -275,7 +275,7 @@ test_fn(bool_bigint_roundtrip) {
   let env = ss_init(arena, (astidx_full){});
 
   u8 *mem = *acreate(arena, u8[1]);
-  let tv = TV_with(env, (typed_value){.v = {.value = mem}}, T(tu_of(r_bool, {})));
+  let tv = TV_with(env, T(tu_of(r_bool, {})), VS(mem));
 
   *mem = 1;
   test_assert(!BInt.cmp(int_as_bigint(env->alloc, tv, ss_typeenv(env)), BInt.from.i64(arena, 1)));
@@ -549,7 +549,8 @@ test_fn(struct_as_overload) {
           "b;\n"
       ),
       nullptr
-  );  test_assert(tu_is(r_sint, tv_type(r).t));
+  );
+  test_assert(tu_is(r_sint, tv_type(r).t));
   test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 32);
   test_inteq(*(i32 *)r.v.value, 7);
 }

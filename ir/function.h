@@ -109,7 +109,7 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
   let res = scope_add_value(
       ss,
       s,
-      TV_with(ss, (typed_value){.v = {.c_fun.fn = msList_len(ss->functions)}}, T(tu_of(c_fun, signature)))
+      TV_with(ss, T(tu_of(c_fun, signature)), VS(.c_fun.fn = msList_len(ss->functions)))
   );
   println(
       "[LOG]generating function from \n"

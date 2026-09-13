@@ -107,6 +107,29 @@ u32 scope_add_value(superscope *env, scope *s, typed_value v) {
   msList_push(env->alloc, s->values, v);
   return msList_len(s->values) + s->start;
 }
+static inline Type Type_ptr errs(Type t) {
+  if (t.isref)
+    return_err("POINTER_TO_REFERENCE", T({}));
+  if (Type_is_comptime(P$(t, ($.iscomptime = false, $))))
+    return_err("POINTER_TO_COMPTIME_ONLY", T({}));
+  t.ptr_level++;
+  return t;
+}
+static inline Type Type_arr errs(superscope *ss, Type t, u32 len) {
+  if (t.isref)
+    return_err("ARRAY_OF_REFERENCE", T({}));
+  if (Type_is_comptime(P$(t, ($.iscomptime = false, $))))
+    return_err("ARRAY_OF_COMPTIME_ONLY", T({}));
+  return T(tu_of(r_arr, {ss_type_intern(ss, t), len}));
+}
+static inline Type Type_ref errs(Type t) {
+  if (t.isref)
+    return_err("REFERENCE_TO_REFERENCE", T({}));
+  if (Type_is_comptime(P$(t, ($.iscomptime = false, $))))
+    return_err("REFERENCE_TO_COMPTIME_ONLY", T({}));
+  t.isref = true;
+  return t;
+}
 struct type_named {
   scope *owner;
   u32 idx;
@@ -124,19 +147,11 @@ static inline void scope_emit_inst errs(superscope *env, scope *s, ir i) {
 static bool Type_similar(Type a, Type b, typeenv e) {
   return a.ptr_level == b.ptr_level && !TypeTree_cmp(e, a.t, b.t);
 }
-// a referance is one level of indirection kept in its own bit, so the level of a type is
-// ptr_level + isref. dropping one level is what &(*x) and *x are built out of
-static inline bool Type_deref(Type t, Type *out) {
-  if (t.isref) {
-    t.isref = false;
-    *out = t;
-    return true;
-  }
-  if (t.ptr_level) {
-    t.ptr_level--;
-    *out = t;
-    return true;
-  }
+static inline bool Type_if_deref(Type t, Type *out) {
+  if (t.isref)
+    return *out = P$(t, ($.isref = false, $)), true;
+  if (t.ptr_level)
+    return *out = P$(t, ($.ptr_level--, $)), true;
   return false;
 }
 static bool Type_is_integer_like(Type t, typeenv e) {
@@ -158,17 +173,17 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
   let tenv = ss_typeenv(env);
   tu_match_void(
       *i,
-      (ir_putptr, _, {
-        let pp = &tu_catch(ir_putptr, *i);
-        let lt = ss_type(env, scope_find(env, s, pp->l)->t);
-        let dt = ss_type(env, scope_find(env, s, pp->d)->t);
-        // d = *l, so l has to be a pointer with something to point at. a referance is not a
-        // pointer here: *ref unfolds into the referent, so this would be *(*x), not a deref.
-        // d is the thing itself, and since it is mutable it may be spelled as a referance to
-        // it or as a plain value holding it
-        Type pointee = {};
-        Type asref;
-        bool matches = !lt.isref && Type_deref(lt, &pointee);
+      (ir_farg, _), // handled somewhere else,
+      (ir_if, _),
+      (ir_while, _),
+      (ir_break, _),
+      (ir_cont, _),
+      (ir_block, _),
+      (ir_putptr, pp, {
+        let lt = ss_type(env, scope_find(env, s, pp.l)->t);
+        let dt = ss_type(env, scope_find(env, s, pp.d)->t);
+        Type pointee = {}, asref = {};
+        let matches = !lt.isref && Type_if_deref(lt, &pointee);
         if (matches) {
           asref = pointee;
           asref.isref = true;
@@ -183,18 +198,13 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
           );
         return i;
       }),
-      (ir_getptr, _, {
-        let pp = &tu_catch(ir_getptr, *i);
-        let lt = ss_type(env, scope_find(env, s, pp->l)->t);
-        let dt = ss_type(env, scope_find(env, s, pp->d)->t);
-        // d = &(*l): the address of whatever l denotes. a plain value is addressed as itself,
-        // a referance or pointer is addressed at what it denotes, and the address may be
-        // spelled either as a pointer or as a referance, because they are the same address
-        Type obj = lt;
-        Type_deref(lt, &obj);
-        Type asp = obj;
+      (ir_getptr, gp, {
+        let lt = ss_type(env, scope_find(env, s, gp.l)->t);
+        let dt = ss_type(env, scope_find(env, s, gp.d)->t);
+        Type_if_deref(lt, &lt);
+        Type asp = lt;
         asp.ptr_level++;
-        Type asr = obj;
+        Type asr = lt;
         asr.isref = true;
         if (Type_cmp(tenv, asp, dt) && Type_cmp(tenv, asr, dt))
           return_err_extras(
@@ -227,8 +237,7 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
           let m = ss_tag_named(env, lt.t, fp((char *)op_str));
           if (m.owner) {
             let method = scope_add_value(env, s, *scope_find(env, m.owner, m.idx));
-            u32 vals[2] = {c->r, c->l};
-            u32 res = try_err(lower_function_call_values, (env, s, method, ((slice(u32)){2, vals})), 0);
+            u32 res = try_err(lower_function_call_values, (env, s, method, ((slice(u32)){2, (u32[2]){c->r, c->l}})), 0);
             try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_set, {.l = res, .d = c->d})), 0);
             return nullptr;
           }
@@ -285,14 +294,11 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
         let rt = ss_type(env, scope_find(env, s, pp->r)->t);
         let e = ss_typeenv(env);
         if (!Type_isint(rt, e)) return_err("ARRAY_INDEX_NON_INT", nullptr);
-        // d = l[r]: the access is the element itself, so dt is the element's own type, a referance
-        // when the element type is one. l is the array itself, a pointer to it or a referance to
-        // it, so drop one level before asking for the element
         Type arr = lt;
-        Type_deref(lt, &arr);
+        Type_if_deref(lt, &arr);
         let inner = TypeTree_inner_array(arr.t, e);
         if (!inner.t) return_err("ARRAY_OF_NON_ARRAY", nullptr);
-        Type elem = type_at(e, inner.t);
+        Type elem = try_err(Type_ref, (type_at(e, inner.t)), 0);
         if (Type_cmp(e, elem, dt))
           return_err_extras(
               "TYPE_ERROR",
@@ -306,11 +312,8 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
         let lt = ss_type(env, scope_find(env, s, pp->l)->t);
         let dt = ss_type(env, scope_find(env, s, pp->d)->t);
         let e = ss_typeenv(env);
-        // d = l.i: the access is the member itself, so dt is the member's own type, a referance
-        // when the member type is one. l is the struct itself, a pointer to it or a referance to
-        // it, so drop one level first
         Type strct = lt;
-        Type_deref(lt, &strct);
+        Type_if_deref(lt, &strct);
         let st = TypeTree_inner_struct(strct.t, e);
         let bf = TypeTree_inner_bitfield(strct.t, e);
         Type member = {};
@@ -353,31 +356,12 @@ static inline void scope_yield errs(superscope *ss, scope *s, u32 result) {
   assertMessage(result <= s->start);
   let v = scope_find(ss, s, result);
   assertMessage(tu_is(c_any, ss_type(ss, v->t).t));
-  // the block yields the value, not the referance the last expression left behind, so that the
-  // set below copies the thing into the result instead of writing through an address
   Type yielded = ss_type(ss, msList_last(s->values).t);
   yielded.isref = false;
   v->t = ss_type_intern(ss, yielded);
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = s->start + msList_len(s->values), .d = result}))); // TODO operator stuff
 }
 
-static inline Type Type_ptr errs(Type t) {
-  if (t.isref)
-    return_err("POINTER_TO_REFERENCE", T({}));
-  if (Type_is_comptime(P$(t, ($.iscomptime = false, $))))
-    return_err("POINTER_TO_COMPTIME_ONLY", T({}));
-  t.ptr_level++;
-  return t;
-}
-
-static inline Type Type_ref errs(Type t) {
-  if (t.isref)
-    return_err("REFERENCE_TO_REFERENCE", T({}));
-  if (Type_is_comptime(P$(t, ($.iscomptime = false, $))))
-    return_err("REFERENCE_TO_COMPTIME_ONLY", T({}));
-  t.isref = true;
-  return t;
-}
 // superscope helpers
 static inline u32 ss_get_named_failable_noref(superscope *env, scope *s, fptr n) {
   let o = s;

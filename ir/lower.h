@@ -100,12 +100,7 @@ u32 lower errs(superscope *ss, scope *s, astidx a) {
         let full = (srcpos_full){pos, ss->plist, ss->flist};
         static thread_local char ns[sizeof(errors_buffer.buf)] = {};
         strcpy(ns, errors_buffer.buf);
-        return_err_extras(
-            e.err_code,
-            print_ebuff("{cstr}:{srcpos_full}", (char *)ns, full),
-            nullptr,
-            0
-        );
+        pass_err(P$(e, ($.fn = print_ebuff("{cstr}:{srcpos_full}", (char *)ns, full), $)), 0);
         0;
       })
   );

@@ -46,21 +46,13 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx righ
          let items = ast_block_children(ss->asts, right);
          if (items.len != 1) return_err("ARRAY_INDEX_ONE_ARG", 0);
          let r = try_err(lower, (ss, s, items.start), 0);
-         if (!Type_isint(ss_type(ss, scope_find(ss, s, r)->t), ss_typeenv(ss)))
-           return_err("ARRAY_INDEX_NON_INT", 0);
-         // the access register is the element itself, aliasing its storage in the array, exactly the
-         // way a member access aliases the member. typed as a referance to the element instead,
-         // x[i] = y would bind a referance into the access register rather than write the element,
-         // and that binding is thrown away with the register, so the assignment would do nothing
-         // it is created after the index is lowered so that the access is the last value in the
-         // scope: a block yields its last value, and x[i] has to yield the element, not the index
-         let elem = type_at(ss_typeenv(ss), arr.t);
-         let d = scope_add_value(ss, s, TV_of(ss, elem));
+         // TODO: scope should write the type if it sees an any
+         let d = scope_add_value(ss, s, TV_any(ss));
          try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_array, {.d = d, .r = r, .l = left})), 0);
          d;
        })),
       (r_tag, t, ({
-         // only call/as resolve here (they are not instructions); other ops go via the hook
+         // TODO: find way to move this to type checking
          let result = (u32)0;
          if (opNumber == opNumbers.call || opNumber == opNumbers.as) {
            char op_str[sizeof(u32) + 1] = {};
@@ -97,18 +89,18 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx righ
              let ms = ast_text(ss, m);
              astidx res = 0;
              if (self)
-               iflet_tu (let op, astOp, ast_at(ss->asts, self)) {             if (fptr_eq(ms, "opleft")) res = ast_child(ss->asts, op.left_right);
-             else if (fptr_eq(ms, "opright")) res = ast_child(ss->asts, op.left_right + 1);
-           }
-           // a decl's parts, so a macro can take one apart and rebuild it
-           if (!res && self)
-             iflet_tu (let d, astDecl, ast_at(ss->asts, self)) {
-               if (fptr_eq(ms, "name")) res = ast_child(ss->asts, d.name_type_value);
-               else if (fptr_eq(ms, "type")) res = ast_child(ss->asts, d.name_type_value + 1);
-               else if (fptr_eq(ms, "value")) res = ast_child(ss->asts, d.name_type_value + 2);
-             }
-           if (!res && self)
-             res = tu_match_exp(
+               iflet_tu (let op, astOp, ast_at(ss->asts, self)) {
+                 if (fptr_eq(ms, "opleft")) res = ast_child(ss->asts, op.left_right);
+                 else if (fptr_eq(ms, "opright")) res = ast_child(ss->asts, op.left_right + 1);
+               }
+             if (!res && self)
+               iflet_tu (let d, astDecl, ast_at(ss->asts, self)) {
+                 if (fptr_eq(ms, "name")) res = ast_child(ss->asts, d.name_type_value);
+                 else if (fptr_eq(ms, "type")) res = ast_child(ss->asts, d.name_type_value + 1);
+                 else if (fptr_eq(ms, "value")) res = ast_child(ss->asts, d.name_type_value + 2);
+               }
+             if (!res && self)
+               res = tu_match_exp(
                    ast_at(ss->asts, self),
                    (astOp, _, /*    */ fptr_eq(ms, "op") /*    */ ? self : (astidx)0),
                    (astId, _, /*    */ fptr_eq(ms, "id") /*    */ ? self : (astidx)0),
@@ -124,9 +116,6 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx righ
              ovl = scope_add_value(ss, s, TV_ast(ss, res ?: ast_make_empty(ss)));
            }
          } else if (opNumber == opNumbers.eq) {
-           // "checking against string for id. for asts, do it like java":
-           // ast == ast is identity; id/number/string nodes compare their
-           // spelling when the other side is a string
            let self = scope_find(ss, s, left)->v.c_ast;
            let other = scope_find(ss, s, try_err(lower, (ss, s, right), 0));
            bool res = false;
@@ -139,17 +128,16 @@ u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx righ
                    (astString, str, /*  */ ast_text(ss, str)),
                    (default, (fptr){})
                );
-               if (word.len && word.ptr[0] == '"') // string nodes still carry their quotes
+               if (tu_is(astString, ast_at(ss->asts, self)))
                  word = string_escape(ss->alloc, word);
                res = fptr_eq(word, ((fptr){arr.count, (u8 *)other->v.value}));
              }
-           } else if (tu_is(c_ast, ss_type(ss, other->t).t)) {
-             res = self == other->v.c_ast; // java-style identity
-           }
+           } else if (tu_is(c_ast, ss_type(ss, other->t).t))
+             res = self == other->v.c_ast;
            ovl = scope_add_value(
                ss,
                s,
-               TV_with(ss, (typed_value){.v = {.value = avalue(ss->alloc, (bool)res)}}, T(tu_of(r_bool, {})))
+               TV_with(ss, T(tu_of(r_bool, {})), VS(avalue(ss->alloc, (bool)res)))
            );
          }
          ovl;
@@ -233,21 +221,17 @@ typedef enum {
 } math_operation;
 u32 lower_math errs(superscope *ss, scope *s, u32 left, u32 right, math_operation op) {
   let opNumber = enum_as_op((enum_op)op);
-  let lhs = scope_find(ss, s, left);
-  let rhs = scope_find(ss, s, right);
-  let lt = ss_type(ss, lhs->t);
-  let rt_operand = ss_type(ss, rhs->t);
-  // two types compare by index, and pushing dedupes, so equal types share one. this answers with
-  // a value rather than an instruction. anything else involving a type has no operation at all,
-  // and the rawop below is what reports it as a type error
-  if ((tu_is(c_type, lt.t) && tu_is(c_type, rt_operand.t)) &&
+  let l = scope_find(ss, s, left);
+  let r = scope_find(ss, s, right);
+  let lt = ss_type(ss, l->t);
+  if ((tu_is(c_type, lt.t) && tu_is(c_type, ss_type(ss, r->t).t)) &&
       (op == math_eq || op == math_neq)) {
-    bool res = lhs->v.c_type == rhs->v.c_type;
+    bool res = l->v.c_type == r->v.c_type;
     if (op == math_neq) res = !res;
     return scope_add_value(
         ss,
         s,
-        TV_with(ss, (typed_value){.v = {.value = avalue(ss->alloc, res)}}, T(tu_of(r_bool, {})))
+        TV_with(ss, T(tu_of(r_bool, {})), VS(avalue(ss->alloc, res)))
     );
   }
   Type rt;
@@ -269,7 +253,9 @@ u32 lower_math errs(superscope *ss, scope *s, u32 left, u32 right, math_operatio
       rt.isvolatile = false;
       break;
   }
-  let d = scope_add_value(ss, s, TV_of(ss, rt));
+  // TODO: make helper that retrieves the weaker type
+  let resT = Type_is_comptime(rt) ? lt : rt;
+  let d = scope_add_value(ss, s, TV_of(ss, resT));
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_rawop, {.r = left, .l = right, .d = d, .o = opNumber})), 0);
   return d;
 }
@@ -310,17 +296,12 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
       op_as_enum(opNumber),
       (enop_set, {
         let src = try_err(lower, (ss, s, right), 0);
-        // a ref assigned into a ref slot binds the address rather than copying the pointee; getptr is
-        // exactly "store the address of l into d"
         let dt = ss_type(ss, scope_find(ss, s, left)->t);
         let st = ss_type(ss, scope_find(ss, s, src)->t);
-        if (dt.isref && st.isref)
-          try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_getptr, {.d = left, .l = src})), 0);
-        else
-          try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = left, .l = src})), 0);
+        try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = left, .l = src})), 0);
         return left;
       }),
-      (default, ),
+      (default),
   );
   if_decl (let ovl, try_err(lower_overload_possible, (ss, s, left, right, opNumber), 0)) return ovl;
   let res = switch_exp(
