@@ -978,6 +978,37 @@ test_fn(array_access_is_addressable) {
   test_assert(tu_is(r_sint, tv_type(r).t));
   test_inteq(*(i32 *)r.v.value, 0);
 }
+test_fn(sib_fn_call) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+
+          "i ~~ @sint;\n"
+          "outer ~~ @fn (run ~(i 32),in ~(i 32)),(i 32),{\n"
+          " run = run + 1;\n"
+          " odd ~~ @fn (a ~(i 32),o ~(i 32)),(i 32),\n"
+          "   (return outer(a,o * 3 + 1));\n"
+          " even ~~ @fn (a ~(i 32),e ~(i 32)),(i 32),\n"
+          "   (return outer(a,e / 2));\n"
+          " resolve ~~ @fn (r ~(i 32),n ~(i 32)),(i 32),{\n"
+          "   @if((n == 1), (return r - 1));\n"
+          "   @if((n band 1), (return odd(r,n)));\n"
+          "   return even(r,n);\n"
+          " };\n"
+          " return resolve(run,in);\n"
+          "};\n"
+          "\n"
+          "outer(0,1000);\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_sint, tv_type(r).t));
+  test_inteq(*(i32 *)r.v.value, 111);
+}
 
 //
 // error tests
