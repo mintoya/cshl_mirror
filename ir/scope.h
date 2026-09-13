@@ -144,6 +144,10 @@ static inline struct type_named ss_tag_named(superscope *ss, TypeTree t, fptr na
 static inline void scope_emit_inst errs(superscope *env, scope *s, ir i) {
   if (!try_err(try_interpret, (env, s, i))) msList_push(env->alloc, s->instructions, i);
 }
+static inline void scope_wrap_child errs(superscope *env, scope *s, scope *b) {
+  assertMessage(b != s && b->parent == s, "b not inside s?");
+  try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_block, b)));
+}
 static bool Type_similar(Type a, Type b, typeenv e) {
   return a.ptr_level == b.ptr_level && !TypeTree_cmp(e, a.t, b.t);
 }
@@ -154,17 +158,53 @@ static inline bool Type_if_deref(Type t, Type *out) {
     return *out = P$(t, ($.ptr_level--, $)), true;
   return false;
 }
+static inline Type Type_stripTag(Type t, typeenv e) {
+  while (tu_is(r_tag, t.t))
+    t.t = type_tree(e, tu_catch(r_tag, t.t).t);
+  return t;
+}
+static inline u32 Type_intLike_bitcount(Type t, typeenv e) {
+  t = Type_stripTag(t, e);
+  return tu_is(r_bool, t.t)   ? 1
+         : tu_is(r_sint, t.t) ? tu_catch(r_sint, t.t).bits
+         : tu_is(r_uint, t.t) ? tu_catch(r_uint, t.t).bits
+                              : 0;
+}
+// returns more general of 2 types
+static inline Type Type_weaker(Type a, Type b, typeenv e) {
+  Type as = Type_stripTag(a, e), bs = Type_stripTag(b, e);
+  bool ac = Type_is_comptime(as), bc = Type_is_comptime(bs);
+  Type pick;
+  if (ac != bc) pick = ac ? bs : as;
+  else if (ac) pick = as;
+  else if (Type_intLike_bitcount(as, e) != Type_intLike_bitcount(bs, e))
+    pick = Type_intLike_bitcount(as, e) > Type_intLike_bitcount(bs, e) ? as : bs;
+  else pick = tu_is(r_uint, as.t) ? as : bs;
+  pick.isref = false;
+  pick.iscomptime = false;
+  pick.isconst = a.isconst && b.isconst;
+  pick.isvolatile = a.isvolatile && b.isvolatile;
+  return pick;
+}
 static bool Type_is_integer_like(Type t, typeenv e) {
+  t = Type_stripTag(t, e);
   return !t.ptr_level && (tu_is(r_bool, t.t) || Type_isint(t, e));
 }
 static inline void scope_add_inst errs(superscope *env, scope *s, ir i);
 static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i);
 
+// whether cast_value will have to make more values for casting
+static bool cast_would_change(Type from, Type to, typeenv e) {
+  return !(
+      !Type_cmp(e, from, to) ||
+      !Type_cmp(e, Type_stripTag(from, e), Type_stripTag(to, e)) ||
+      !Type_cmp(e, to, T(tu_of(c_any, {})))
+  );
+}
 static u32 cast_value errs(superscope *ss, scope *s, u32 left, Type to) {
   let e = ss_typeenv(ss);
   let ot = ss_type(ss, scope_find(ss, s, left)->t);
-  if (!Type_cmp(e, ot, to)) return left;
-  if (!Type_cmp(e, to, T(tu_of(c_any, {})))) return left;
+  if (!cast_would_change(ot, to, e)) return left;
   let d = scope_add_value(ss, s, TV_of(ss, to));
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_cast, {.l = left, .d = d})), 0);
   return d;
@@ -179,23 +219,34 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
       (ir_break, _),
       (ir_cont, _),
       (ir_block, _),
-      (ir_putptr, pp, {
-        let lt = ss_type(env, scope_find(env, s, pp.l)->t);
-        let dt = ss_type(env, scope_find(env, s, pp.d)->t);
-        Type pointee = {}, asref = {};
-        let matches = !lt.isref && Type_if_deref(lt, &pointee);
-        if (matches) {
-          asref = pointee;
-          asref.isref = true;
-          matches = !Type_cmp(tenv, pointee, dt) || !Type_cmp(tenv, asref, dt);
+      (ir_putptr, _, {
+        let pp = &tu_catch(ir_putptr, *i);
+        Type lt = ss_type(env, scope_find(env, s, pp->l)->t);
+        scope *b = s;
+        if (lt.isref) {
+          b = scope_inferior(env, s);
+          lt.isref = false;
+          u32 read = scope_add_value(env, b, TV_of(env, lt));
+          try_err(scope_add_inst, (env, b, (ir)tu_of(ir_set, {.l = pp->l, .d = read})), 0);
+          pp->l = read;
         }
-        if (!matches)
+        Type pointee = {};
+        if (!Type_if_deref(lt, &pointee)) return_err("AT_NOT_REF", nullptr);
+        Type asref = pointee;
+        asref.isref = true;
+        let dt = ss_type(env, scope_find(env, s, pp->d)->t);
+        if (tu_is(c_any, dt.t)) scope_find(env, s, pp->d)->t = ss_type_intern(env, asref);
+        else if (Type_cmp(tenv, pointee, dt) && Type_cmp(tenv, asref, dt))
           return_err_extras(
               "TYPE_ERROR",
               print_ebuff("{Type_full} not ptr to {Type_full}", ss_typeF(env, lt), ss_typeF(env, dt)),
               0,
               0
           );
+        if (b != s) {
+          try_err(scope_emit_inst, (env, b, *i), nullptr);
+          return try_err(scope_wrap_child, (env, s, b), nullptr), nullptr;
+        }
         return i;
       }),
       (ir_getptr, gp, {
@@ -206,6 +257,10 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
         asp.ptr_level++;
         Type asr = lt;
         asr.isref = true;
+        if (tu_is(c_any, dt.t)) {
+          scope_find(env, s, gp.d)->t = ss_type_intern(env, try_err(Type_ptr, (lt), 0));
+          return i;
+        }
         if (Type_cmp(tenv, asp, dt) && Type_cmp(tenv, asr, dt))
           return_err_extras(
               "TYPE_ERROR",
@@ -215,11 +270,17 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
           );
         return i;
       }),
-      (ir_getref, _, {
-        let pp = &tu_catch(ir_getref, *i);
-        let lt = ss_type(env, scope_find(env, s, pp->l)->t);
-        let dt = ss_type(env, scope_find(env, s, pp->d)->t);
-        if (Type_cmp(tenv, P$(lt, ($.isref = true, $)), dt))
+      (ir_getref, pp, {
+        let lt = ss_type(env, scope_find(env, s, pp.l)->t);
+        let dt = ss_type(env, scope_find(env, s, pp.d)->t);
+        Type referred = lt;
+        if (!lt.isref) referred = try_err(Type_ref, (lt), 0);
+        if (tu_is(c_any, dt.t)) {
+          scope_find(env, s, pp.d)->t = ss_type_intern(env, referred);
+          if (lt.isref) *i = (ir)tu_of(ir_putptr, {.l = pp.l, .d = pp.d});
+          return i;
+        }
+        if (Type_cmp(tenv, referred, dt))
           return_err_extras(
               "TYPE_ERROR",
               print_ebuff("{Type_full} not ref to {Type_full}", ss_typeF(env, dt), ss_typeF(env, lt)),
@@ -236,21 +297,44 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
           memcpy(op_str, &c->o, 4);
           let m = ss_tag_named(env, lt.t, fp((char *)op_str));
           if (m.owner) {
-            let method = scope_add_value(env, s, *scope_find(env, m.owner, m.idx));
-            u32 res = try_err(lower_function_call_values, (env, s, method, ((slice(u32)){2, (u32[2]){c->r, c->l}})), 0);
-            try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_set, {.l = res, .d = c->d})), 0);
-            return nullptr;
+            scope *b = scope_inferior(env, s);
+            let method = scope_add_value(env, b, *scope_find(env, m.owner, m.idx));
+            u32 res = try_err(lower_function_call_values, (env, b, method, ((slice(u32)){2, (u32[2]){c->r, c->l}})), 0);
+            scope_find(env, s, c->d)->t = scope_find(env, b, res)->t;
+            try_err(scope_emit_inst, (env, b, (ir)tu_of(ir_set, {.l = res, .d = c->d})), 0);
+            return try_err(scope_wrap_child, (env, s, b), nullptr), nullptr;
           }
         }
         let e = ss_typeenv(env);
-        if (!Type_is_integer_like(lt, e) ||
-            !Type_is_integer_like(ss_type(env, scope_find(env, s, c->l)->t), e))
+        Type rt = ss_type(env, scope_find(env, s, c->l)->t);
+        if (!Type_is_integer_like(lt, e) || !Type_is_integer_like(rt, e))
           return_err("OP_UNSUPPORTED_OPERANDS", nullptr);
+        bool is_bool = c->o == opNumbers.mor || c->o == opNumbers.les || c->o == opNumbers.moq ||
+                       c->o == opNumbers.leq || c->o == opNumbers.eq || c->o == opNumbers.neq ||
+                       c->o == opNumbers.oand || c->o == opNumbers.oor;
+        if (is_bool)
+          scope_find(env, s, c->d)->t = ss_type_intern(env, T(tu_of(r_bool, {})));
+        else {
+          Type res = Type_weaker(lt, rt, e);
+          scope_find(env, s, c->d)->t = ss_type_intern(env, res);
+          scope *b = (cast_would_change(lt, res, e) || cast_would_change(rt, res, e)) ? scope_inferior(env, s) : s;
+          c->l = try_err(cast_value, (env, b, c->l, res), 0);
+          c->r = try_err(cast_value, (env, b, c->r, res), 0);
+          if (b != s) {
+            try_err(scope_emit_inst, (env, b, *i), nullptr);
+            return try_err(scope_wrap_child, (env, s, b), nullptr), nullptr;
+          }
+        }
       }),
       (ir_set, _, {
         let c = &tu_catch(ir_set, *i);
         Type dt = ss_type(env, scope_find(env, s, c->d)->t);
-        dt.isref = false; //
+        Type lt = ss_type(env, scope_find(env, s, c->l)->t);
+        if (lt.isref && dt.isref && !Type_cmp(ss_typeenv(env), lt, dt)) {
+          *i = (ir)tu_of(ir_putptr, {.l = c->l, .d = c->d});
+          return i;
+        }
+        dt.isref = false;
         c->l = try_err(cast_value, (env, s, c->l, dt), 0);
       }),
       (ir_cast, _, {
@@ -287,19 +371,54 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
         }
       }),
 
+      (ir_opcall, _, {
+        let c = &tu_catch(ir_opcall, *i);
+        Type lt = ss_type(env, scope_find(env, s, c->l)->t);
+        char op_str[sizeof(u32) + 1] = {};
+        memcpy(op_str, &c->o, 4);
+        struct type_named m = {};
+        if (lt.ptr_level <= 1) m = ss_tag_named(env, lt.t, fp((char *)op_str));
+        if (m.owner) {
+          scope *b = scope_inferior(env, s);
+          let method = scope_add_value(env, b, *scope_find(env, m.owner, m.idx));
+          slice(u32) vals = slice_alloc(env->alloc, u32, c->args.len + 1);
+          vals.ptr[0] = c->l;
+          memcpy(vals.ptr + 1, c->args.ptr, c->args.len * sizeof(u32));
+          u32 res = try_err(lower_function_call_values, (env, b, method, vals), 0);
+          slice_free(env->alloc, vals);
+          scope_find(env, s, c->d)->t = scope_find(env, b, res)->t;
+          try_err(scope_emit_inst, (env, b, (ir)tu_of(ir_set, {.l = res, .d = c->d})), 0);
+          return try_err(scope_wrap_child, (env, s, b), nullptr), nullptr;
+        }
+        if (c->o == opNumbers.call) return_err("UNSUPPORTED_CALL", nullptr);
+        let to = try_err(value_asType, (env, *scope_find(env, s, c->args.ptr[0])), nullptr);
+        let ot = ss_type(env, scope_find(env, s, c->l)->t);
+        scope *b = cast_would_change(ot, to, tenv) ? scope_inferior(env, s) : s;
+        u32 casted = try_err(cast_value, (env, b, c->l, to), 0);
+        scope_find(env, s, c->d)->t = ss_type_intern(env, to);
+        *i = (ir)tu_of(ir_set, {.l = casted, .d = c->d});
+        if (b != s) {
+          try_err(scope_emit_inst, (env, b, *i), nullptr);
+          return try_err(scope_wrap_child, (env, s, b), nullptr), nullptr;
+        }
+        return i;
+      }),
       (ir_array, _, {
         let pp = &tu_catch(ir_array, *i);
         let lt = ss_type(env, scope_find(env, s, pp->l)->t);
         let dt = ss_type(env, scope_find(env, s, pp->d)->t);
         let rt = ss_type(env, scope_find(env, s, pp->r)->t);
         let e = ss_typeenv(env);
-        if (!Type_isint(rt, e)) return_err("ARRAY_INDEX_NON_INT", nullptr);
+        if (!Type_isint(Type_stripTag(rt, e), e)) return_err("ARRAY_INDEX_NON_INT", nullptr);
         Type arr = lt;
         Type_if_deref(lt, &arr);
+        arr = Type_stripTag(arr, e);
         let inner = TypeTree_inner_array(arr.t, e);
         if (!inner.t) return_err("ARRAY_OF_NON_ARRAY", nullptr);
-        Type elem = try_err(Type_ref, (type_at(e, inner.t)), 0);
-        if (Type_cmp(e, elem, dt))
+        Type elem = type_at(e, inner.t);
+        if (tu_is(c_any, dt.t))
+          scope_find(env, s, pp->d)->t = ss_type_intern(env, elem);
+        else if (Type_cmp(e, elem, dt))
           return_err_extras(
               "TYPE_ERROR",
               print_ebuff("{Type_full} not the element {Type_full}", ss_typeF(env, dt), ss_typeF(env, elem)),
@@ -314,6 +433,7 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
         let e = ss_typeenv(env);
         Type strct = lt;
         Type_if_deref(lt, &strct);
+        strct = Type_stripTag(strct, e);
         let st = TypeTree_inner_struct(strct.t, e);
         let bf = TypeTree_inner_bitfield(strct.t, e);
         Type member = {};
@@ -321,7 +441,10 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
         else if (bf.start && pp->i < type_bitf_len(e, bf)) member = type_bitf_item(e, bf, pp->i)->t;
         else return_err("NO_SUCH_FIELD", nullptr);
         if (Type_is_comptime(member)) return_err("NO_STORAGE", nullptr);
-        if (Type_cmp(e, member, dt))
+        // like an array access, a register the lowerer left as an any adopts the member type
+        if (tu_is(c_any, dt.t))
+          scope_find(env, s, pp->d)->t = ss_type_intern(env, member);
+        else if (Type_cmp(e, member, dt))
           return_err_extras(
               "TYPE_ERROR",
               print_ebuff("{Type_full} not the member {Type_full}", ss_typeF(env, dt), ss_typeF(env, member)),
