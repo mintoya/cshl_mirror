@@ -1010,6 +1010,40 @@ test_fn(sib_fn_call) {
   test_inteq(*(i32 *)r.v.value, 111);
 }
 
+// a forward declaration names the symbol without a body, so two functions can be written calling
+// each other: the declaration hands out the function index and the definition fills it in
+// forward_declared_functions_can_use_each_other
+test_fn(forward_declarations_fill_in) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "i ~~ @sint;\n"
+          "i32 ~~ i(32);\n"
+          "outer ~~ @fn (n ~i32),i32,{\n"
+          "  isodd ~~ @fn (n ~i32),i32;\n"
+          "  iseven ~~ @fn (n ~i32),i32;\n"
+          "  isodd ~~ @fn (n ~i32),i32,{\n"
+          "    @if((n == 0), (return 0));\n"
+          "    return iseven(n - 1);\n"
+          "  };\n"
+          "  iseven ~~ @fn (n ~i32),i32,{\n"
+          "    @if((n == 0), (return 1));\n"
+          "    return isodd(n - 1);\n"
+          "  };\n"
+          "  return isodd(n);\n"
+          "};\n"
+          "outer(7);\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_sint, tv_type(r).t));
+  test_inteq(*(i32 *)r.v.value, 1);
+}
+
 //
 // error tests
 //
@@ -1018,6 +1052,23 @@ static err_t lower_source_err(allocfn arena, fptr src) {
   let ctx = catch_errcall((parse_source, (arena, src, nullptr)), e, (({ return e; }), (astidx_full){}));
   let env = ss_init(arena, ctx);
   return call_err(lower, (env, env->outermost, ctx.idx)).err;
+}
+
+// a declaration without a definition is only a symbol, so there is nothing to instantiate
+test_fn(lower_error_function_not_defined) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(
+      arena,
+      fp(
+          "i ~~ @sint;\n"
+          "i32 ~~ i(32);\n"
+          "f ~~ @fn (),i32;\n"
+          "f();\n"
+      )
+  );
+  test_assert(e.err_code);
+  test_streq(e.err_code, "FUNCTION_NOT_DEFINED");
 }
 
 test_fn(lower_error_too_many_args) {

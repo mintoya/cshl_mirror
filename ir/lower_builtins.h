@@ -6,10 +6,10 @@
 #include "wheels/print/print_pre.h"
 static u32 lower_builtin_fn errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
-  if (list.len != 3) return_err("WRONG_ARG_COUNT", 0);
+  if (!EQUAL_ANY(list.len, 2, 3)) return_err("WRONG_ARG_COUNT", 0);
   let pnode = ast_at(ss->asts, list.start);
-  tu_catch(astPBlock, pnode, return_err("EXPECTED_PBLOCK", 0));
-  return try_err(lower_function, (ss, s, list.start, list.start + 1, list.start + 2), 0);
+  tu_catch(astPBlock, pnode, return_err("EXPECTED_PBLOCK_FNARGS", 0));
+  return try_err(lower_function, (ss, s, list.start, list.start + 1, list.len == 3 ? list.start + 2 : 0), 0);
 }
 // a condition is just a cast to bool
 u32 lower_condition errs(superscope *ss, scope *s, astidx a) {

@@ -2,6 +2,7 @@
 #include "../type.h"
 #include "common.h"
 // #include "interpret.h"
+#include "interpret.h"
 #include "lower.h"
 #include "scope.h"
 #include "wheels/macros.h"
@@ -33,21 +34,20 @@ static cmpres typed_value_cmp_typed(Type ta, value_store av, Type tb, value_stor
         e
     );
   }
-  tu_match_void(
+  return tu_match_exp(
       ta.t,
-      (r_void, _, return 0),
-      (builtin, _, return 0), // store no data, and cought in type_cmp
-      (c_int, _, return BInt.cmp(av.c_int, bv.c_int)),
-      (c_fun, _, {
-        return icmp(av.c_fun.fn, bv.c_fun.fn)
-                   ?: icmp(av.c_fun.spec, bv.c_fun.spec);
-      }),
-      (c_type, _, return icmp(av.c_type, bv.c_type)),
+      (r_void, _, cmp_eq),
+      (builtin, _, cmp_eq), // store no data, and cought in type_cmp
+      (c_int, _, BInt.cmp(av.c_int, bv.c_int)),
+      (c_fun, _, (cmpres)(icmp(av.c_fun.fn, bv.c_fun.fn) ?: icmp(av.c_fun.spec, bv.c_fun.spec))),
+      (c_type, _, icmp(av.c_type, bv.c_type)),
       // asts have no size, so memcmp below would call every ast equal
-      (c_ast, _, return icmp(av.c_ast, bv.c_ast)),
-      (default),
+      (c_ast, _, icmp(av.c_ast, bv.c_ast)),
+      (default, ({
+         assertMessage(!Type_is_comptime(ta));
+         cmp_memcmp(av.value, bv.value, Type_sizeof(ta, e));
+       })),
   );
-  return cmp_memcmp(av.value, bv.value, Type_sizeof(ta, e));
 }
 cmpres typed_value_cmp(typeenv e, typed_value a, typed_value b) {
   if (!memcmp(&a, &b, sizeof(a))) return 0;
@@ -64,22 +64,13 @@ cmpres slice_typed_value_cmp_hash(void *env, const void *a, const void *b) {
 
 static inline Type function_item_type errs(superscope *ss, scope *s, astidx item) {
   let item_node = ast_at(ss->asts, item);
-  let decl = tu_catch(astDecl, item_node, return_err("PARAM_NOT_DECL", T({})));
-  let name_idx = ast_child(ss->asts, decl.name_type_value);
-  let type_idx = ast_child(ss->asts, decl.name_type_value + 1);
-  if (!name_idx) return_err("PARAM_NO_NAME", T({}));
-  if (!type_idx) return_err("PARAM_NO_TYPE", T({}));
-  let name = try_err(id_from_ast, (ss, s, name_idx), T({}));
-  let t = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, type_idx), T({}))), T({}));
-
-  typed_value placeholder;
-  if (Type_is_comptime(t)) {
-    if (tu_is(c_type, t.t))
-      placeholder = Type_asValue(ss, T(tu_of(c_any, {}))); // dependant ones resulve as any correctlu
-    else placeholder = TV_any(ss);
-  } else placeholder = TV_of(ss, t);
-
-  try_err(scope_bind, (ss, s, scope_add_value(ss, s, placeholder), name), T({}));
+  let reg = try_err(lower, (ss, s, item), T());
+  typed_value *placeholder = scope_find(ss, s, reg);
+  let t = ss_type(ss, placeholder->t);
+  if (Type_is_comptime(t))
+    *placeholder = (tu_is(c_type, t.t))
+                       ? Type_asValue(ss, T(tu_of(c_any, {})))
+                       : TV_any(ss);
   return t;
 }
 
@@ -103,14 +94,9 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
   foreach (let p, span(params.start, params.len))
     sglist_get(env.tlist, signature.start - 1 + (p - params.start)) =
         try_err(function_item_type, (ss, arg_scope, p), 0);
-  sglist_get(env.tlist, signature.start - 1 + params.len) =
+  sglist_get(env.tlist, signature.start + params.len - 1) =
       try_err(value_asType, (ss, try_err(temporary_interpret, (ss, arg_scope, retT), 0)), 0);
-
-  let res = scope_add_value(
-      ss,
-      s,
-      TV_with(ss, T(tu_of(c_fun, signature)), VS(.c_fun.fn = msList_len(ss->functions)))
-  );
+  let res = scope_add_value(ss, s, TV_with(ss, T(tu_of(c_fun, signature)), VS(.c_fun = msList_len(ss->functions))));
   println(
       "[LOG]generating function from \n"
       "args : {astidx_full} \n"
@@ -125,6 +111,8 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
 }
 static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_value) key, slice(u32) aargs) {
   let function_item = &ss->functions[fn - 1];
+  if (!function_item->body) return_err("FUNCTION_NOT_DEFINED", 0);
+
   if_decl (let inst, moxmap_get(function_item->mp, key)) {
     let instance = &function_item->instances[*inst];
     let result = scope_add_value(ss, s, TV_of(ss, instance->ret));
@@ -132,17 +120,16 @@ static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_
     return result;
   }
 
-  let spec_number = msList_len(function_item->instances);
   let stable_key = key.len ? slice_alloc(ss->alloc, typed_value, key.len) : (slice(typed_value)){};
-  if (key.len)
-    memcpy(stable_key.ptr, key.ptr, key.len * sizeof(*key.ptr));
+  if (key.len) memcpy(stable_key.ptr, key.ptr, key.len * sizeof(*key.ptr));
   foreach (let item, span(stable_key.ptr, stable_key.len))
     if (tu_is(c_int, ss_type(ss, item->t).t) && item->v.c_int)
       item->v.c_int = BInt.copy(ss->alloc, item->v.c_int);
 
-  // copy values to where function was made
   let spec = P$(scope_inferior(ss, function_item->defscope), ($->rootable = false, $));
   let instance = (function_instance){.spec = spec, .key = stable_key.ptr, .key_len = stable_key.len};
+
+  let spec_number = msList_len(function_item->instances);
   moxmap_set(function_item->mp, stable_key, (u32)spec_number);
   msList_push(ss->alloc, function_item->instances, instance);
 
@@ -151,11 +138,9 @@ static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_
     let item_node = ast_at(ss->asts, function_item->params.start + index);
     let item = tu_catch(astDecl, item_node);
     let name = try_err(id_from_ast, (ss, spec, ast_child(ss->asts, item.name_type_value)), 0);
-    u32 value;
-    if (Type_is_comptime(ss_type(ss, param->t))) {
-      value = scope_add_value(ss, spec, *param);
-    } else {
-      // the type is already interned, the key came from cast_value
+    u32 value = 0;
+    if (Type_is_comptime(ss_type(ss, param->t))) value = scope_add_value(ss, spec, *param);
+    else {
       value = scope_add_value(ss, spec, (typed_value){.t = param->t});
       try_err(scope_add_inst, (ss, spec, (ir)tu_of(ir_farg, {.l = index, .d = value})), 0);
     }
@@ -222,9 +207,7 @@ static u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astid
   foreach (let arg_item, span(alist.start, alist.len)) {
     let index = idx++;
     let thisitem = type_at(env, type_run_at(env, generic_signature.start, index));
-    u32 lead = (tu_is(c_ast, thisitem.t))
-                   ? scope_add_value(ss, s, TV_ast(ss, arg_item))
-                   : try_err(lower, (ss, s, arg_item), 0);
+    u32 lead = (tu_is(c_ast, thisitem.t)) ? scope_add_value(ss, s, TV_ast(ss, arg_item)) : try_err(lower, (ss, s, arg_item), 0);
     lead = try_err(cast_value, (ss, s, lead, thisitem), 0);
     msList_push(ss->alloc, value_list, *scope_find(ss, s, lead));
     argptrs.ptr[index] = lead;

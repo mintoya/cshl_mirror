@@ -543,9 +543,9 @@ typeidx ss_type_intern(superscope *ss, Type t) {
 static inline void irb_cbb(const callbackallocatorhandle *h, void *p) {
   let _map = (itypeof(superscope, pointers))h->cbself->udata;
   if (p == h->inptr)
-    return (void)moxmap_set(_map, p, h->outsize);
-  moxmap_rem(_map, h->inptr);
-  if (p) moxmap_set(_map, p, h->outsize);
+    return (void)mxmap_set(_map, p, h->outsize);
+  mxmap_rem(_map, h->inptr);
+  if (p) mxmap_set(_map, p, h->outsize);
 }
 
 static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
@@ -557,7 +557,7 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
     .tlist = {.allocator = allocator},
     .sitems = {.allocator = allocator},
     .bitems = {.allocator = allocator},
-    .pointers = moxmap_init(allocator, void*, usize),
+    .pointers = mxmap_init(allocator, void*, usize),
     .thisstack = msList_init(allocator , typeidx),
     .functions = msList_init(allocator,function),
   }));
@@ -630,9 +630,9 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
 static inline void ss_deInit(superscope *ss) {
   let allocator = ((struct cballocator *)ss->alloc)->allocator;
   msList_deInit(allocator, ss->thisstack);
-  foreach (let it, moxmap_iter(ss->pointers, void *, usize))
+  foreach (let it, mxmap_iter(ss->pointers, void *, usize))
     adestroy(allocator, (u8(*)[*it.val])it.key);
-  moxmap_deinit(ss->pointers);
+  mxmap_deinit(ss->pointers);
   moxmap_deinit(ss->typeindex);
   moxmap_deinit(ss->type_info);
   sglist_deinit(ss->tlist);

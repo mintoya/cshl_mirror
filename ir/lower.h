@@ -79,9 +79,36 @@ u32 lower_low errs(superscope *ss, scope *s, astidx a) {
            vt.isconst = true;
            v->t = ss_type_intern(ss, vt);
          }
+         // if (name_idx) {
+         //   let nn = try_err(id_from_ast, (ss, s, name_idx), 0);
+         //   try_err(scope_bind, (ss, s, value, nn), 0);
+         //   println("[LOG:decl] bound {typed_value_full} to {slice(c8)}", ((typed_value_full){*scope_find(ss, s, value), ss_typeenv(ss)}), nn);
+         // }
+         // TODO: this is rediculous and shouldnt be handled here
          if (name_idx) {
            let nn = try_err(id_from_ast, (ss, s, name_idx), 0);
-           try_err(scope_bind, (ss, s, value, nn), 0);
+           let roots = scope_find_rootable(ss, s);
+           bool isfn = tu_is(c_fun, ss_type(ss, scope_find(ss, s, value)->t).t);
+           if (isfn)
+             if_decl (let prev, ss_get_named_failable_noref(ss, s, nn)) {
+               let pv = scope_find(ss, s, prev);
+               if (tu_is(c_fun, ss_type(ss, pv->t).t)) {
+                 let dfn = &ss->functions[pv->v.c_fun.fn - 1];
+                 let nfn = &ss->functions[scope_find(ss, s, value)->v.c_fun.fn - 1];
+                 if (!dfn->body && nfn->body) {
+                   dfn->params = nfn->params;
+                   dfn->retT = nfn->retT;
+                   dfn->body = nfn->body;
+                   dfn->defscope = nfn->defscope;
+                   value = prev;
+                 }
+               }
+             }
+           if (!moxmap_get(s->named, nn)) try_err(scope_bind, (ss, s, value, nn), 0);
+           if (isfn && roots != s && !moxmap_get(roots->named, nn)) {
+             let alias = scope_add_value(ss, roots, *scope_find(ss, s, value));
+             try_err(scope_bind, (ss, roots, alias, nn), 0);
+           }
            println("[LOG:decl] bound {typed_value_full} to {slice(c8)}", ((typed_value_full){*scope_find(ss, s, value), ss_typeenv(ss)}), nn);
          }
          value;

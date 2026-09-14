@@ -54,7 +54,7 @@ struct superscope {
 
   moxmap(Type, typeidx) typeindex;
   typeidx t_void, t_any, t_int, t_ast, t_type;
-  moxmap(void *, usize) pointers;
+  mxmap(void *, usize) pointers;
   msList(typeidx) thisstack;
   moxmap(fptr, scope *) type_info;
   msList(function) functions;
@@ -81,10 +81,9 @@ static inline cmpres TypeTree_cmp_hash_ss(void *env, const void *a, const void *
   return TypeTree_cmp(ss_typeenv((superscope *)env), *(TypeTree *)a, *(TypeTree *)b);
 }
 static inline typeidx ss_type_reserve(superscope *ss, usize count) {
-  typeidx start = (typeidx)ss->tlist.len + 1;
   foreach (let i, range(0, count + 1))
-    sglist_push(ss->tlist, (Type){});
-  return start;
+    sglist_push(ss->tlist, {});
+  return ss->tlist.len - count;
 }
 static inline typeidx ss_member_reserve(superscope *ss, usize count) {
   typeidx start = (typeidx)ss->sitems.len + 1;
@@ -297,8 +296,8 @@ static inline bool Type_isint(Type t, typeenv e) {
 static inline Type value_asType errs(superscope *ss, typed_value t) {
   if (!tu_is(c_type, ss_type(ss, t.t).t))
     // println("{typed_value_full}", ((typed_value_full){t, ss_typeenv(ss)})),
-        return_err("TYPE_IS_NOT_VALUE", T({}));
-  if (!t.v.c_type) return_err("UNKNOWN_TYPE", T({}));
+    return_err("TYPE_IS_NOT_VALUE", T());
+  if (!t.v.c_type) return_err("UNKNOWN_TYPE", T());
   return type_at(ss_typeenv(ss), t.v.c_type);
 }
 static inline typed_value Type_asValue(superscope *s, Type t) { return TV_type(s, ss_type_intern(s, t)); }

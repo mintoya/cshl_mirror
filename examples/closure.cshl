@@ -12,7 +12,7 @@ pieces ~~ @fn (values ~ast, inst ~ast, mode ~@int(), i ~@int()), ast, {
       (return @qot (@uqot(@ast_op(".", inst, v.name)) = @uqot(v.value))));
     return @qot (@uqot(v.name) ~@uqot(v.type) = @uqot(@ast_op(".", @qot(self), v.name)));
   };
-  @cif(
+  (@cif
     (i < @ast_len(values)),
     (return @qot {
       @uqot(@apply(piece, mode, inst, @ast_at(values, i)));
