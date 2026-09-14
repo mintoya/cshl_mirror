@@ -296,7 +296,8 @@ static inline bool Type_isint(Type t, typeenv e) {
 
 static inline Type value_asType errs(superscope *ss, typed_value t) {
   if (!tu_is(c_type, ss_type(ss, t.t).t))
-    return_err("TYPE_IS_NOT_VALUE", T({}));
+    // println("{typed_value_full}", ((typed_value_full){t, ss_typeenv(ss)})),
+        return_err("TYPE_IS_NOT_VALUE", T({}));
   if (!t.v.c_type) return_err("UNKNOWN_TYPE", T({}));
   return type_at(ss_typeenv(ss), t.v.c_type);
 }
@@ -540,23 +541,6 @@ typePrinter(scope_full) {
           USETYPEPRINTER(u32, call.l.fn), PUTS(" ");
           USETYPEPRINTER(u32, call.l.spec);
           PUTS(" (");
-          foreach (let c, span(call.args.ptr, call.args.len))
-            USETYPEPRINTER(u32, *c), c == call.args.ptr ? PUTS(" ") : 0;
-          PUTS("),");
-          USETYPEPRINTER(u32, call.d);
-          PUTS(")");
-        }),
-        (ir_opcall, call, {
-          PUTS("(opcall ");
-          USETYPEPRINTER(u32, call.l);
-          PUTS(" ");
-          PUTS("'");
-          {
-            char op_str[sizeof(u32) + 1] = {};
-            memcpy(op_str, &call.o, 4);
-            PUTS(op_str);
-          }
-          PUTS("' (");
           foreach (let c, span(call.args.ptr, call.args.len))
             USETYPEPRINTER(u32, *c), c == call.args.ptr ? PUTS(" ") : 0;
           PUTS("),");

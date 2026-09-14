@@ -21,7 +21,7 @@ static inline fptr read_file(allocfn allocator, const char *filename) {
 typedef u32 astidx;
 sliceDef(astidx);
 typedef struct
-    // __attribute__((packed))
+    //__attribute__((packed))
     ast ast;
 typedef sglist(ast) astlist;
 
@@ -82,9 +82,10 @@ static struct { // opNumbers
   opNumbers.iexpand = /**/ ((opS){"'"}).n;
   opNumbers.as = /*      */ ((opS){"as"}).n;
 }
+
 tu_def(
     (ast, u8),
-    (astNull, nothing_t),
+    (astNull, struct {}), // required for sentinels to work
     (astEmpty, srcpos),
     (astId, srcpos),
     (astString, srcpos),
@@ -108,8 +109,8 @@ tu_def(
     (astBBlock, struct { srcpos pos;astidx start; }), // {}
     (astPBlock, struct { srcpos pos;astidx start; }), // ()
 );
-// static_assert(((ast){}).tag == TU_TAG(astNull)); // sentinel
-static_assert(sizeof(ast), "");                  // 12, 9 if packed
+
+static_assert(sizeof(ast), "");
 static inline srcpos srcpos_ast(ast a, astlist alist) {
   return tu_match_exp(
       a,
@@ -191,4 +192,3 @@ typePrinter(astidx_full) {
       }),
   );
 }
-

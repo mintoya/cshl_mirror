@@ -87,7 +87,7 @@ tu_def( // type
     (r_struct /*     */, struct { typeidx start; }),
     (r_bitfield /*   */, struct { typeidx start; }),
 
-    (r_tag /*        */, struct { typeidx t; srcpos name; }), /*maybe nullable in the future, like extern*/
+    (r_tag /*        */, struct { typeidx t; srcpos name; }),
     (r_arr /*        */, struct { typeidx t; u32 count; }),
 
     // compile time: they carry no payload, the variant names say what they are
@@ -99,7 +99,8 @@ tu_def( // type
     // a run of Type slots, the return type last, terminated by a null
     (c_fun /*        */, struct { typeidx start; }),
 );
-#define T(...) ((Type){.t = __VA_ARGS__})
+static_assert(sizeof(TypeTree));
+#define T(...) ((Type){__VA_ARGS__})
 #define TV(...) ((typed_value){__VA_ARGS__})
 #define VS(...) ((value_store){__VA_ARGS__})
 
@@ -127,6 +128,7 @@ struct Type {
     };
   };
 };
+static_assert(sizeof(Type));
 typedef union {
   void *value;
   struct c_fun_struct {
@@ -153,6 +155,7 @@ typedef struct r_bitf_item {
   srcpos name;
   u32 width;
 } r_bitf_item;
+
 typedef sglist(r_struct_item) typestructlist;
 typedef sglist(r_bitf_item) typebitflist;
 

@@ -23,7 +23,6 @@ tu_def(
     (ir_array, /*  */ struct { u32 l, d, r; }),              // d = ref(l[r]), r is index of variable not index itself
 
     (ir_call, /*   */ struct { itypeof(value_store , c_fun) l; u32 d; slice(u32) args; }),// d = l(...args)
-    (ir_opcall, /* */ struct { u32 l, d, o; slice(u32) args; }),// no runtime form: a resolution node the checker always consumes, see below
     (ir_farg ,/*   */ struct { u32 l, d; }), // load function argument l into d
     (ir_set ,/*    */ struct { u32 l, d; }), // same as set without a d
 

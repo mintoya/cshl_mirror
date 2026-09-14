@@ -1,6 +1,7 @@
 #pragma once
 #include "common.h"
 #include "function.h"
+#include "ir.h"
 #include "lower_builtins.h"
 #include "scope.h"
 #include "wheels/fptr.h"
@@ -26,7 +27,7 @@ u32 lower_call errs(superscope *ss, scope *s, u32 left, astidx args) {
   foreach (let i, range(0, alist.len))
     vals.ptr[i] = try_err(lower, (ss, s, alist.start + i), 0);
   let d = scope_add_value(ss, s, TV_any(ss));
-  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_opcall, {.l = left, .d = d, .o = opNumbers.call, .args = vals})), 0);
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_call, {.l = left, .d = d, .args = vals})), 0);
   return d;
 }
 tu_def(
@@ -208,17 +209,6 @@ u32 lower_math errs(superscope *ss, scope *s, u32 left, u32 right, math_operatio
   let opNumber = enum_as_op((enum_op)op);
   let l = scope_find(ss, s, left);
   let r = scope_find(ss, s, right);
-  // comparing two comptime types is a structural compare, so it folds here instead of becoming an op
-  if ((op == math_eq || op == math_neq) && tu_is(c_type, ss_type(ss, l->t).t) &&
-      tu_is(c_type, ss_type(ss, r->t).t)) {
-    bool res = l->v.c_type == r->v.c_type;
-    if (op == math_neq) res = !res;
-    return scope_add_value(
-        ss,
-        s,
-        TV_with(ss, T(tu_of(r_bool, {})), VS(avalue(ss->alloc, res)))
-    );
-  }
   let d = scope_add_value(ss, s, TV_any(ss));
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_rawop, {.r = left, .l = right, .d = d, .o = opNumber})), 0);
   return d;
@@ -275,7 +265,7 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
       (enop_as, ({
          let arg = try_err(lower, (ss, s, right), 0);
          let d = scope_add_value(ss, s, TV_any(ss));
-         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_opcall, {.l = left, .d = d, .o = opNumbers.as, .args = ((slice(u32)){1, (u32[1]){arg}})})), 0);
+         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_rawop, {.r = left, .l = arg, .d = d, .o = opNumbers.as})), 0);
          d;
        })),
       (enop_call, try_err(lower_call, (ss, s, left, right), 0)),

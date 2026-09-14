@@ -8,5 +8,5 @@ i32 ~type~ @sint(32);// i32 is type of signed integer of width 32
 
 a ~i32~ 3;
 b ~i32~ 1;
-c ~~ a + b;
+c ~~ (a + b) as @sint(48);
 d ~~ c;

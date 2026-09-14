@@ -292,9 +292,11 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
       (ir_rawop, _, {
         let c = &tu_catch(ir_rawop, *i);
         Type lt = ss_type(env, scope_find(env, s, c->r)->t);
+
+        char op_str[sizeof(u32) + 1] = {};
+        memcpy(op_str, &c->o, 4);
+
         if (lt.ptr_level <= 1) {
-          char op_str[sizeof(u32) + 1] = {};
-          memcpy(op_str, &c->o, 4);
           let m = ss_tag_named(env, lt.t, fp((char *)op_str));
           if (m.owner) {
             scope *b = scope_inferior(env, s);
@@ -305,10 +307,38 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
             return try_err(scope_wrap_child, (env, s, b), nullptr), nullptr;
           }
         }
+
         let e = ss_typeenv(env);
         Type rt = ss_type(env, scope_find(env, s, c->l)->t);
+
+        if (c->o == opNumbers.call) return_err("UNSUPPORTED_CALL", nullptr);
+
+        if (strcmp(op_str, "as") == 0) {
+          let to = try_err(value_asType, (env, *scope_find(env, s, c->l)), nullptr);
+          scope *b = cast_would_change(lt, to, tenv) ? scope_inferior(env, s) : s;
+          u32 casted = try_err(cast_value, (env, b, c->r, to), 0);
+          scope_find(env, s, c->d)->t = ss_type_intern(env, to);
+          *i = (ir)tu_of(ir_set, {.l = casted, .d = c->d});
+          if (b != s) {
+            try_err(scope_emit_inst, (env, b, *i), nullptr);
+            return try_err(scope_wrap_child, (env, s, b), nullptr), nullptr;
+          }
+          return i;
+        }
+
+        // two comptime types compare structurally, so it folds instead of becoming an op
+        if ((c->o == opNumbers.eq || c->o == opNumbers.neq) && tu_is(c_type, lt.t) && tu_is(c_type, rt.t)) {
+          bool res = scope_find(env, s, c->r)->v.c_type == scope_find(env, s, c->l)->v.c_type;
+          if (c->o == opNumbers.neq) res = !res;
+          let d = scope_find(env, s, c->d);
+          d->t = ss_type_intern(env, T(tu_of(r_bool, {})));
+          d->v = VS(avalue(env->alloc, res));
+          return nullptr;
+        }
+
         if (!Type_is_integer_like(lt, e) || !Type_is_integer_like(rt, e))
           return_err("OP_UNSUPPORTED_OPERANDS", nullptr);
+
         bool is_bool = c->o == opNumbers.mor || c->o == opNumbers.les || c->o == opNumbers.moq ||
                        c->o == opNumbers.leq || c->o == opNumbers.eq || c->o == opNumbers.neq ||
                        c->o == opNumbers.oand || c->o == opNumbers.oor;
@@ -368,40 +398,26 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
             Type target = ss_type(env, key[index].t);
             *a = try_err(cast_value, (env, s, *a, target), 0);
           }
+          return i;
         }
-      }),
-
-      (ir_opcall, _, {
-        let c = &tu_catch(ir_opcall, *i);
-        Type lt = ss_type(env, scope_find(env, s, c->l)->t);
-        char op_str[sizeof(u32) + 1] = {};
-        memcpy(op_str, &c->o, 4);
+        // the callee is a value, not a function: it is only callable through its "()" member, which
+        // takes the callee itself as its first argument
+        u32 callee = c->l.fn;
+        if (!callee) return_err("UNSUPPORTED_CALL", nullptr);
+        Type lt = ss_type(env, scope_find(env, s, callee)->t);
         struct type_named m = {};
-        if (lt.ptr_level <= 1) m = ss_tag_named(env, lt.t, fp((char *)op_str));
-        if (m.owner) {
-          scope *b = scope_inferior(env, s);
-          let method = scope_add_value(env, b, *scope_find(env, m.owner, m.idx));
-          slice(u32) vals = slice_alloc(env->alloc, u32, c->args.len + 1);
-          vals.ptr[0] = c->l;
-          memcpy(vals.ptr + 1, c->args.ptr, c->args.len * sizeof(u32));
-          u32 res = try_err(lower_function_call_values, (env, b, method, vals), 0);
-          slice_free(env->alloc, vals);
-          scope_find(env, s, c->d)->t = scope_find(env, b, res)->t;
-          try_err(scope_emit_inst, (env, b, (ir)tu_of(ir_set, {.l = res, .d = c->d})), 0);
-          return try_err(scope_wrap_child, (env, s, b), nullptr), nullptr;
-        }
-        if (c->o == opNumbers.call) return_err("UNSUPPORTED_CALL", nullptr);
-        let to = try_err(value_asType, (env, *scope_find(env, s, c->args.ptr[0])), nullptr);
-        let ot = ss_type(env, scope_find(env, s, c->l)->t);
-        scope *b = cast_would_change(ot, to, tenv) ? scope_inferior(env, s) : s;
-        u32 casted = try_err(cast_value, (env, b, c->l, to), 0);
-        scope_find(env, s, c->d)->t = ss_type_intern(env, to);
-        *i = (ir)tu_of(ir_set, {.l = casted, .d = c->d});
-        if (b != s) {
-          try_err(scope_emit_inst, (env, b, *i), nullptr);
-          return try_err(scope_wrap_child, (env, s, b), nullptr), nullptr;
-        }
-        return i;
+        if (lt.ptr_level <= 1) m = ss_tag_named(env, lt.t, fp("()"));
+        if (!m.owner) return_err("UNSUPPORTED_CALL", nullptr);
+        scope *b = scope_inferior(env, s);
+        let method = scope_add_value(env, b, *scope_find(env, m.owner, m.idx));
+        slice(u32) vals = slice_alloc(env->alloc, u32, c->args.len + 1);
+        vals.ptr[0] = callee;
+        memcpy(vals.ptr + 1, c->args.ptr, c->args.len * sizeof(u32));
+        u32 res = try_err(lower_function_call_values, (env, b, method, vals), 0);
+        slice_free(env->alloc, vals);
+        scope_find(env, s, c->d)->t = scope_find(env, b, res)->t;
+        try_err(scope_emit_inst, (env, b, (ir)tu_of(ir_set, {.l = res, .d = c->d})), 0);
+        return try_err(scope_wrap_child, (env, s, b), nullptr), nullptr;
       }),
       (ir_array, _, {
         let pp = &tu_catch(ir_array, *i);
@@ -441,7 +457,6 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
         else if (bf.start && pp->i < type_bitf_len(e, bf)) member = type_bitf_item(e, bf, pp->i)->t;
         else return_err("NO_SUCH_FIELD", nullptr);
         if (Type_is_comptime(member)) return_err("NO_STORAGE", nullptr);
-        // like an array access, a register the lowerer left as an any adopts the member type
         if (tu_is(c_any, dt.t))
           scope_find(env, s, pp->d)->t = ss_type_intern(env, member);
         else if (Type_cmp(e, member, dt))
@@ -452,7 +467,6 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
               0
           );
       }),
-      // (default) // fallthrough
   );
   return i;
 }
