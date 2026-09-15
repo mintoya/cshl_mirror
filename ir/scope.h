@@ -124,24 +124,20 @@ static inline struct type_named ss_tag_named(superscope *ss, TypeTree t, fptr na
         return (struct type_named){*info, *idx};
   return (struct type_named){};
 }
-static inline void scope_emit_inst errs(superscope *env, scope *s, ir i) {
-  if (!try_err(try_interpret, (env, s, i))) msList_push(env->alloc, s->instructions, i);
-}
+static inline void scope_emit_inst errs(superscope *env, scope *s, ir i) { msList_push(env->alloc, s->instructions, i); }
 static inline void scope_wrap_child errs(superscope *env, scope *s, scope *b) {
   assertMessage(b != s && b->parent == s, "b not inside s?");
   try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_block, b)));
 }
-static bool Type_similar(Type a, Type b, typeenv e) {
+static bool Type_ncmp_nptr(Type a, Type b, typeenv e) {
   return a.ptr_level == b.ptr_level && !TypeTree_cmp(e, a.t, b.t);
 }
-// const and volatile say where a value lives, not what it is made of, so they do not make two
-// values of the same shape different values. a register can pick a qualifier up after the value
-// that flows into it was typed, a const declaration retypes the register it binds
-static inline cmpres Type_cmp_value(Type a, Type b, typeenv e) {
+static inline cmpres Type_cmp_ndecor(Type a, Type b, typeenv e) {
+  let x = ~((Type){{}, {.isconst = true, .isvolatile = true, .iscomptime = true}}.decorations);
   return Type_cmp(
       e,
-      P$(a, ($.isconst = false, $.isvolatile = false, $)),
-      P$(b, ($.isconst = false, $.isvolatile = false, $))
+      P$(a, ($.decorations &= x, $)),
+      P$(b, ($.decorations &= x, $))
   );
 }
 static inline bool Type_if_deref(Type t, Type *out) {
@@ -366,7 +362,7 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
         Type dt = ss_type(env, scope_find(env, s, c->d)->t);
         dt.isref = false;
         let e = ss_typeenv(env);
-        if (Type_similar(lt, dt, e)) *i = (ir)tu_of(ir_set, {.l = c->l, .d = c->d});
+        if (Type_ncmp_nptr(lt, dt, e)) *i = (ir)tu_of(ir_set, {.l = c->l, .d = c->d});
         else if (!(Type_is_integer_like(lt, e) && Type_is_integer_like(dt, e))) return_err("CANNOT_CAST", nullptr);
       }),
       (ir_ret, _, {

@@ -10,7 +10,6 @@
 
 #if !defined INPUT_FLAGS
   #define INPUT_FLAGS "-finstrument-functions", "-fdefer-ts", "-fsanitize=address", "-fsanitize=undefined"
-
 #endif
 
 #if __has_include("deps/nob.h/nob.h")
