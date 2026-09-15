@@ -226,6 +226,30 @@ test_fn(interpret_runtime_recursion) {
   test_inteq(*(i32 *)r.v.value, 10);
 }
 
+// a const declaration binds the register it declares in place, so `~~ f()` retypes the call's
+// destination register; the callee returns an unqualified value and const says nothing about the
+// value's shape, so the return still has to be accepted
+test_fn(const_declaration_retypes_call_destination) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s32 ~~ @sint(32);\n"
+          "f ~~ @fn (), s32, { return 7; };\n"
+          "a ~~ f();\n"
+          "a;\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_sint, tv_type(r).t));
+  test_assert(tv_type(r).isconst);
+  test_inteq(*(i32 *)r.v.value, 7);
+}
+
 test_fn(if_cshl) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -282,10 +306,47 @@ test_fn(bool_bigint_roundtrip) {
   *mem = 0;
   test_assert(!BInt.cmp(int_as_bigint(env->alloc, tv, ss_typeenv(env)), BInt.from.i64(arena, 0)));
 
-  bigint_into_int(env, &tv, BInt.from.i64(arena, 5));
+  bigint_into_int(env, arena, &tv, BInt.from.i64(arena, 5));
   test_inteq(*mem, 1);
-  bigint_into_int(env, &tv, BInt.from.i64(arena, 0));
+  bigint_into_int(env, arena, &tv, BInt.from.i64(arena, 0));
   test_inteq(*mem, 0);
+}
+
+// a bigint is only as wide as the value in it, so writing one into a wider integer has to extend it
+// to the slot first: the write reads the slot's bytes straight out of the bigint's limbs
+test_fn(wide_integer_write_extends_the_bigint) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s128 ~~ @sint(128);\n"
+          "big ~s128 = 111;\n"
+          "big;\n"
+      ),
+      nullptr
+  );
+  test_assert(tu_is(r_sint, tv_type(r).t));
+  test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 128);
+  test_inteq(((u64 *)r.v.value)[0], 111);
+  test_inteq(((u64 *)r.v.value)[1], 0);
+
+  // and a negative one is sign extended, not zero extended
+  let n = interpret_source(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s128 ~~ @sint(128);\n"
+          "neg ~s128 = 0 - 1;\n"
+          "neg;\n"
+      ),
+      nullptr
+  );
+  test_assert(tu_is(r_sint, tv_type(n).t));
+  test_inteq(((u64 *)n.v.value)[0], (u64)-1);
+  test_inteq(((u64 *)n.v.value)[1], (u64)-1);
 }
 
 test_fn(ast_dot_operator_match) {
@@ -1010,9 +1071,6 @@ test_fn(sib_fn_call) {
   test_inteq(*(i32 *)r.v.value, 111);
 }
 
-// a forward declaration names the symbol without a body, so two functions can be written calling
-// each other: the declaration hands out the function index and the definition fills it in
-// forward_declared_functions_can_use_each_other
 test_fn(forward_declarations_fill_in) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -1035,7 +1093,8 @@ test_fn(forward_declarations_fill_in) {
           "  };\n"
           "  return isodd(n);\n"
           "};\n"
-          "outer(7);\n"
+          "result ~= outer(7);\n"
+          "result;\n"
       ),
       nullptr
   );

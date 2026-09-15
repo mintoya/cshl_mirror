@@ -25,13 +25,18 @@ char *print_errsbuffer(void *) { return (char *)errors_buffer.buf; }
   print_wfO(errors_buffer_printer, nullptr, fmt, __VA_ARGS__); \
   print_errsbuffer;                                            \
 })
-// scope helpers
-typed_value *scope_find(superscope *env, scope *s, u32 idx) {
+
+scope *scope_owner(scope *s, u32 idx) {
   while (s)
     if (idx > s->start && idx <= s->start + msList_len(s->values))
-      return &s->values[idx - s->start - 1];
+      return s;
     else s = s->parent;
-  assertMessage(false, "value %u not found in scope", idx);
+  return nullptr;
+}
+typed_value *scope_find(superscope *env, scope *s, u32 idx) {
+  let owner = scope_owner(s, idx);
+  assertMessage(owner, "value %u not found in scope", idx);
+  return &owner->values[idx - owner->start - 1];
 }
 scope *scope_inferior(superscope *b, scope *s) {
   let res = avalue(
@@ -55,38 +60,6 @@ scope *scope_find_rootable(superscope *b, scope *s) {
   assertMessage(s);
   return s;
 }
-static scope *scope_copy_deep(superscope *ss, scope *s, scope *parent) {
-  if (!s) return nullptr;
-  scope *res = avalue(
-      ss->alloc,
-      ((scope){
-
-          .parent = parent,
-          .instructions = msList_initArr(ss->alloc, *msList_vla(s->instructions)),
-          .values = msList_initArr(ss->alloc, *msList_vla(s->values)),
-          .named = (moxmap(fptr, u32))oxmap_copy(ss->alloc, (oxmap *)s->named),
-          .start = s->start,
-          .rootable = s->rootable,
-      })
-  );
-  foreach (let v, span(res->values, msList_len(res->values))) {
-    let vt = ss_type(ss, v->t);
-    if (tu_is(c_int, vt.t) && !vt.isref && v->v.c_int)
-      v->v.c_int = BInt.copy(ss->alloc, v->v.c_int);
-  }
-  let rec = scope_copy_deep;
-  foreach (let i, span(res->instructions, msList_len(res->instructions))) {
-    *i = tu_match_exp(
-        *i,
-        (ir_block, b, (ir)tu_of(ir_block, rec(ss, b, res))),
-        (ir_if, f, (ir)tu_of(ir_if, {.cnd = rec(ss, f.cnd, res), .t = rec(ss, f.t, res), .f = rec(ss, f.f, res)})),
-        (ir_while, w, (ir)tu_of(ir_while, {.cnd = rec(ss, w.cnd, res), .body = rec(ss, w.body, res)})),
-        (default, *i)
-    );
-  }
-  return res;
-}
-scope *scope_copy(superscope *ss, scope *s) { return scope_copy_deep(ss, s, s->parent); }
 void scope_destroy(superscope *b, scope *s) {
   foreach (let item, span(s->values, msList_len(s->values))) { // -1?
     let it = ss_type(b, item->t);
@@ -101,9 +74,19 @@ void scope_destroy(superscope *b, scope *s) {
   moxmap_deinit(s->named);
   adestroy(b->alloc, s);
 }
+static inline void scope_resize_value(superscope *env, typed_value *v) {
+  if (v->v.value) return;
+  if_decl (let sz, Type_sizeof(ss_type(env, v->t), ss_typeenv(env)))
+    v->v.value = acreate(env->alloc, u8[sz]);
+}
+static inline void scope_set_type(superscope *env, typed_value *v, typeidx t) {
+  v->t = t;
+  scope_resize_value(env, v);
+}
 u32 scope_add_value(superscope *env, scope *s, typed_value v) {
   if (tu_is(c_int, ss_type(env, v.t).t) && v.v.c_int) // explicitly destroyed in scope_destroy
     v.v.c_int = BInt.copy(env->alloc, v.v.c_int);
+  else scope_resize_value(env, &v);
   msList_push(env->alloc, s->values, v);
   return msList_len(s->values) + s->start;
 }
@@ -150,6 +133,16 @@ static inline void scope_wrap_child errs(superscope *env, scope *s, scope *b) {
 }
 static bool Type_similar(Type a, Type b, typeenv e) {
   return a.ptr_level == b.ptr_level && !TypeTree_cmp(e, a.t, b.t);
+}
+// const and volatile say where a value lives, not what it is made of, so they do not make two
+// values of the same shape different values. a register can pick a qualifier up after the value
+// that flows into it was typed, a const declaration retypes the register it binds
+static inline cmpres Type_cmp_value(Type a, Type b, typeenv e) {
+  return Type_cmp(
+      e,
+      P$(a, ($.isconst = false, $.isvolatile = false, $)),
+      P$(b, ($.isconst = false, $.isvolatile = false, $))
+  );
 }
 static inline bool Type_if_deref(Type t, Type *out) {
   if (t.isref)
@@ -235,7 +228,7 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
         Type asref = pointee;
         asref.isref = true;
         let dt = ss_type(env, scope_find(env, s, pp->d)->t);
-        if (tu_is(c_any, dt.t)) scope_find(env, s, pp->d)->t = ss_type_intern(env, asref);
+        if (tu_is(c_any, dt.t)) scope_set_type(env, scope_find(env, s, pp->d), ss_type_intern(env, asref));
         else if (Type_cmp(tenv, pointee, dt) && Type_cmp(tenv, asref, dt))
           return_err_extras(
               "TYPE_ERROR",
@@ -258,7 +251,7 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
         Type asr = lt;
         asr.isref = true;
         if (tu_is(c_any, dt.t)) {
-          scope_find(env, s, gp.d)->t = ss_type_intern(env, try_err(Type_ptr, (lt), 0));
+          scope_set_type(env, scope_find(env, s, gp.d), ss_type_intern(env, try_err(Type_ptr, (lt), 0)));
           return i;
         }
         if (Type_cmp(tenv, asp, dt) && Type_cmp(tenv, asr, dt))
@@ -276,7 +269,7 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
         Type referred = lt;
         if (!lt.isref) referred = try_err(Type_ref, (lt), 0);
         if (tu_is(c_any, dt.t)) {
-          scope_find(env, s, pp.d)->t = ss_type_intern(env, referred);
+          scope_set_type(env, scope_find(env, s, pp.d), ss_type_intern(env, referred));
           if (lt.isref) *i = (ir)tu_of(ir_putptr, {.l = pp.l, .d = pp.d});
           return i;
         }
@@ -302,7 +295,7 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
             scope *b = scope_inferior(env, s);
             let method = scope_add_value(env, b, *scope_find(env, m.owner, m.idx));
             u32 res = try_err(lower_function_call_values, (env, b, method, ((slice(u32)){2, (u32[2]){c->r, c->l}})), 0);
-            scope_find(env, s, c->d)->t = scope_find(env, b, res)->t;
+            scope_set_type(env, scope_find(env, s, c->d), scope_find(env, b, res)->t);
             try_err(scope_emit_inst, (env, b, (ir)tu_of(ir_set, {.l = res, .d = c->d})), 0);
             return try_err(scope_wrap_child, (env, s, b), nullptr), nullptr;
           }
@@ -317,7 +310,7 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
           let to = try_err(value_asType, (env, *scope_find(env, s, c->l)), nullptr);
           scope *b = cast_would_change(lt, to, tenv) ? scope_inferior(env, s) : s;
           u32 casted = try_err(cast_value, (env, b, c->r, to), 0);
-          scope_find(env, s, c->d)->t = ss_type_intern(env, to);
+          scope_set_type(env, scope_find(env, s, c->d), ss_type_intern(env, to));
           *i = (ir)tu_of(ir_set, {.l = casted, .d = c->d});
           if (b != s) {
             try_err(scope_emit_inst, (env, b, *i), nullptr);
@@ -343,10 +336,10 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
                        c->o == opNumbers.leq || c->o == opNumbers.eq || c->o == opNumbers.neq ||
                        c->o == opNumbers.oand || c->o == opNumbers.oor;
         if (is_bool)
-          scope_find(env, s, c->d)->t = ss_type_intern(env, T(tu_of(r_bool, {})));
+          scope_set_type(env, scope_find(env, s, c->d), ss_type_intern(env, T(tu_of(r_bool, {}))));
         else {
           Type res = Type_weaker(lt, rt, e);
-          scope_find(env, s, c->d)->t = ss_type_intern(env, res);
+          scope_set_type(env, scope_find(env, s, c->d), ss_type_intern(env, res));
           scope *b = (cast_would_change(lt, res, e) || cast_would_change(rt, res, e)) ? scope_inferior(env, s) : s;
           c->l = try_err(cast_value, (env, b, c->l, res), 0);
           c->r = try_err(cast_value, (env, b, c->r, res), 0);
@@ -415,7 +408,7 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
         memcpy(vals.ptr + 1, c->args.ptr, c->args.len * sizeof(u32));
         u32 res = try_err(lower_function_call_values, (env, b, method, vals), 0);
         slice_free(env->alloc, vals);
-        scope_find(env, s, c->d)->t = scope_find(env, b, res)->t;
+        scope_set_type(env, scope_find(env, s, c->d), scope_find(env, b, res)->t);
         try_err(scope_emit_inst, (env, b, (ir)tu_of(ir_set, {.l = res, .d = c->d})), 0);
         return try_err(scope_wrap_child, (env, s, b), nullptr), nullptr;
       }),
@@ -433,7 +426,7 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
         if (!inner.t) return_err("ARRAY_OF_NON_ARRAY", nullptr);
         Type elem = type_at(e, inner.t);
         if (tu_is(c_any, dt.t))
-          scope_find(env, s, pp->d)->t = ss_type_intern(env, elem);
+          scope_set_type(env, scope_find(env, s, pp->d), ss_type_intern(env, elem));
         else if (Type_cmp(e, elem, dt))
           return_err_extras(
               "TYPE_ERROR",
@@ -458,7 +451,7 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
         else return_err("NO_SUCH_FIELD", nullptr);
         if (Type_is_comptime(member)) return_err("NO_STORAGE", nullptr);
         if (tu_is(c_any, dt.t))
-          scope_find(env, s, pp->d)->t = ss_type_intern(env, member);
+          scope_set_type(env, scope_find(env, s, pp->d), ss_type_intern(env, member));
         else if (Type_cmp(e, member, dt))
           return_err_extras(
               "TYPE_ERROR",
@@ -495,7 +488,7 @@ static inline void scope_yield errs(superscope *ss, scope *s, u32 result) {
   assertMessage(tu_is(c_any, ss_type(ss, v->t).t));
   Type yielded = ss_type(ss, msList_last(s->values).t);
   yielded.isref = false;
-  v->t = ss_type_intern(ss, yielded);
+  scope_set_type(ss, v, ss_type_intern(ss, yielded));
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = s->start + msList_len(s->values), .d = result}))); // TODO operator stuff
 }
 

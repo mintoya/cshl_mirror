@@ -1,15 +1,15 @@
 i ~~ @sint;
-i32 ~~ i(32);
-outer ~~ @fn (run ~i32,in ~i32),i32,{
+i128 ~~ i(128);
+outer ~~ @fn (run ~i128,in ~i128),i128,{
   run = run + 1;
 
-  odd ~~ @fn (a ~i32, o ~i32),i32,{
+  odd ~~ @fn (a ~i128, o ~i128),i128,{
     return outer(a,o * 3 + 1);
   };
-  even ~~ @fn (a ~i32, e ~i32),i32,{
+  even ~~ @fn (a ~i128, e ~i128),i128,{
     return outer(a,e / 2);
   };
-  resolve ~~ @fn (r ~i32, n ~i32),i32,{
+  resolve ~~ @fn (r ~i128, n ~i128),i128,{
     @if((n == 1), (return r - 1));
     @if((n band 1), (return odd(r,n)));
     return even(r,n);
@@ -17,4 +17,5 @@ outer ~~ @fn (run ~i32,in ~i32),i32,{
   return resolve(run,in);
 };
 
-outer(0,1000);
+resutl ~= outer(0,63728127);
+//resutl ~= outer(0,27);

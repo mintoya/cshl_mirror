@@ -66,8 +66,9 @@ cmd_main(
     catch_errcall((lower, (env, env->outermost, ctx.idx)), e, (err_panic(e), (u32)0));
     print_wf(sexplike, "{scope_full}\n", ((scope_full){env->outermost, env}));
     if (execute) {
-      catch_errcall((interpret, (env, env->outermost)), e, (err_panic(e), (typed_value){}));
-      print_wf(sexplike, "{scope_full}\n", ((scope_full){env->outermost, env}));
+      let res = catch_errcall((interpret, (env, env->outermost)), e, (err_panic(e), (typed_value){}));
+      print_wf(sexplike, "result: {typed_value_full}\n", ((typed_value_full){res, ss_typeenv(env)}));
+      print_wf(sexplike, "after interpret\n{scope_full}\n", ((scope_full){env->outermost, env}));
     }
   }
 

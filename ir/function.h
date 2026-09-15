@@ -2,6 +2,7 @@
 #include "../type.h"
 #include "common.h"
 // #include "interpret.h"
+#include "function_rewrite.h"
 #include "interpret.h"
 #include "lower.h"
 #include "scope.h"
@@ -17,6 +18,7 @@
 sliceDef(typed_value);
 sliceDef(Type);
 
+// cmp
 static cmpres typed_value_cmp_typed(Type ta, value_store av, Type tb, value_store bv, typeenv e) {
   if_decl (let cmp, Type_cmp(e, ta, tb)) return cmp;
   assertMessage(Type_is_comptime(ta) ?: (!av.value && !bv.value), "should have nulled that out");
@@ -50,7 +52,7 @@ static cmpres typed_value_cmp_typed(Type ta, value_store av, Type tb, value_stor
   );
 }
 cmpres typed_value_cmp(typeenv e, typed_value a, typed_value b) {
-  if (!memcmp(&a, &b, sizeof(a))) return 0;
+  if (a.t == b.t && !memcmp(&a.v, &b.v, sizeof(a.v))) return 0;
   return typed_value_cmp_typed(type_at(e, a.t), a.v, type_at(e, b.t), b.v, e);
 }
 cmpres slice_typed_value_cmp_hash(void *env, const void *a, const void *b) {
@@ -61,6 +63,7 @@ cmpres slice_typed_value_cmp_hash(void *env, const void *a, const void *b) {
     if_decl (let cmp, typed_value_cmp(ss_typeenv((superscope *)env), av.ptr[i], bv.ptr[i])) return cmp;
   return 0;
 }
+//
 
 static inline Type function_item_type errs(superscope *ss, scope *s, astidx item) {
   let item_node = ast_at(ss->asts, item);
@@ -97,16 +100,6 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
   sglist_get(env.tlist, signature.start + params.len - 1) =
       try_err(value_asType, (ss, try_err(temporary_interpret, (ss, arg_scope, retT), 0)), 0);
   let res = scope_add_value(ss, s, TV_with(ss, T(tu_of(c_fun, signature)), VS(.c_fun = msList_len(ss->functions))));
-  println(
-      "[LOG]generating function from \n"
-      "args : {astidx_full} \n"
-      "return:{astidx_full}\n"
-      "to {Type_full}",
-
-      ss_ast_full(ss, args),
-      ss_ast_full(ss, retT),
-      ss_tf(ss, T(tu_of(c_fun, signature)))
-  );
   return res;
 }
 static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_value) key, slice(u32) aargs) {
@@ -155,6 +148,7 @@ static u32 lower_specialized errs(superscope *ss, scope *s, u32 fn, slice(typed_
   ss->current_ret = &instance.ret;
   defer { ss->current_ret = prev_ret; };
   try_err(lower, (ss, spec, function_item->body), 0);
+  // rewrite_function_scope(ss, spec);
 
   let result = scope_add_value(ss, s, TV_of(ss, instance.ret));
   // clang-format off

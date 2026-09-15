@@ -138,7 +138,6 @@ static inline typed_value TV_ast /*   */ (superscope *ss, astidx a) { return (ty
 static inline typed_value TV_type /*  */ (superscope *ss, typeidx t) { return (typed_value){.t = ss->t_type, .v = {.c_type = t}}; }
 static inline Type ss_ast_type(superscope *ss) { return ss_type(ss, ss->t_ast); }
 typed_value *scope_find(superscope *env, scope *s, u32 idx);
-scope *scope_copy(superscope *ss, scope *s);
 static inline void scope_bind errs(superscope *env, scope *s, u32 idx, fptr name);
 
 u32 lower errs /*                      */ (superscope *ss, scope *s, astidx a);
@@ -295,7 +294,6 @@ static inline bool Type_isint(Type t, typeenv e) {
 
 static inline Type value_asType errs(superscope *ss, typed_value t) {
   if (!tu_is(c_type, ss_type(ss, t.t).t))
-    // println("{typed_value_full}", ((typed_value_full){t, ss_typeenv(ss)})),
     return_err("TYPE_IS_NOT_VALUE", T());
   if (!t.v.c_type) return_err("UNKNOWN_TYPE", T());
   return type_at(ss_typeenv(ss), t.v.c_type);
@@ -388,28 +386,28 @@ static inline bigint int_as_bigint(allocfn allocator, typed_value t, typeenv e) 
         (bigint) nullptr)),
   );
 }
-static inline void bigint_into_int(superscope *ss, typed_value *t, bigint b) {
+
+static inline void bigint_into_slot(allocfn alloc, void *slot, usize len, bigint b) {
+  let limbs = (len + sizeof(bigint_unit) - 1) / sizeof(bigint_unit);
+  if (b && msList_len(b) < limbs) bigint_expand(alloc, &b, limbs);
+  memcpy(slot, b, len);
+}
+static inline void bigint_into_int(superscope *ss, allocfn alloc, typed_value *t, bigint b) {
   let e = ss_typeenv(ss);
   let tt = type_at(e, t->t);
   tu_match_void(
       tt.t,
       (c_int, _, {
         let o = &t->v.c_int;
-        msList_deInit(ss->alloc, *o);
-        *o = BInt.copy(ss->alloc, b);
+        msList_deInit(alloc, *o);
+        *o = BInt.copy(alloc, b);
       }),
-      (r_sint, si, {
-        let allocated_len = Type_sizeof(tt, e);
-        memcpy(t->v.value, b, allocated_len);
-      }),
-      (r_uint, si, {
-        let allocated_len = Type_sizeof(tt, e);
-        memcpy(t->v.value, b, allocated_len);
-      }),
+      (r_sint, si, bigint_into_slot(alloc, t->v.value, Type_sizeof(tt, e), b)),
+      (r_uint, si, bigint_into_slot(alloc, t->v.value, Type_sizeof(tt, e), b)),
       (r_bool, _, { *(u8 *)t->v.value = !!BInt.cmp(b, nullptr); }),
       (r_tag, tg, {
         let temp = (typed_value){.t = tg.t, .v = t->v};
-        return bigint_into_int(ss, &temp, b);
+        return bigint_into_int(ss, alloc, &temp, b);
       }),
       (default, {
         if (Type_isint(tt, e))
