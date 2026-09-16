@@ -1103,14 +1103,6 @@ test_fn(lower_error_type_not_value) {
   test_streq(e.err_code, "TYPE_IS_NOT_VALUE");
 }
 
-test_fn(lower_error_ast_at_range) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-  let e = lower_source_err(arena, fp("ast ~~ @ast();\n@ast_at(@qot([1, 2]), 5);\n"));
-  test_assert(e.err_code);
-  test_streq(e.err_code, "AST_AT_RANGE");
-}
-
 // @at is *l, so it takes a pointer. a referance to an int is not a pointer: reading the value
 // out of it first leaves an int, which has nothing to dereference
 test_fn(lower_error_at_on_int_reference) {

@@ -98,5 +98,5 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
   let res = scope_add_value(ss, s, TV_with(ss, T(tu_of(c_fun, signature)), VS(.c_fun = msList_len(ss->functions))));
   return res;
 }
-static u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astidx args, u32 lead) { TODO(); }
+static u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astidx args, u32 lead) { TODO("lower_function_call_with"); }
 u32 lower_function_call errs(superscope *ss, scope *s, u32 fn, astidx args) { return try_err(lower_function_call_with, (ss, s, fn, args, 0), 0); }

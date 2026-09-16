@@ -15,9 +15,10 @@
 cmpres fptr_cmp_hash(void *, const void *a, const void *b) { return fptr_cmp(*(fptr *)a, *(fptr *)b); }
 typedef enum : u8 {
   builtin_fn,       // @fn((decl|type...) ,decl|type,body) c_func of this type,
+  builtin_closure,
   builtin_if,       // @if(cnd , then ,)
   builtin_cif,      // @cif same as if, comptime, produces only one branch
-  builtin_while,    // @while(cnd , then) //
+  builtin_loop,     // @loop(cnd , body) //
   builtin_return,   // return x return
   builtin_break,    // @break()
   builtin_continue, // @continue()
@@ -67,6 +68,7 @@ typedef struct r_bitf_item r_bitf_item;
 
 sliceDef(Type);
 sliceDef(typeidx);
+sliceDef(u32);
 typedef sglist(Type) typelist;
 
 tu_def( // type
@@ -426,6 +428,7 @@ typePrinter(builtin_id) {
   switch_tuple(
       in,
       (builtin_fn, /*      */ PUTS("fn")),
+      (builtin_closure, /* */ PUTS("closure")),
       (builtin_at, /*      */ PUTS("at")),
       (builtin_if, /*      */ PUTS("if")),
       (builtin__id, /*     */ PUTS("id")),
@@ -450,7 +453,7 @@ typePrinter(builtin_id) {
       (builtin_ptrof, /*   */ PUTS("ptrof")),
       (builtin_break, /*   */ PUTS("break")),
       (builtin_const, /*   */ PUTS("const")),
-      (builtin_while, /*   */ PUTS("while")),
+      (builtin_loop, /*    */ PUTS("loop")),
       (builtin_sizeof, /*  */ PUTS("sizeof")),
       (builtin_struct, /*  */ PUTS("struct")),
       (builtin_return, /*  */ PUTS("return")),

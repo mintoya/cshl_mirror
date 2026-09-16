@@ -9,6 +9,7 @@
 #include <wheels/allocators/cballocator.h>
 #include <wheels/sList.h>
 #include <wheels/smap.h>
+sliceDef(u32);
 static struct {
   char buf[1024];
   usize len;
@@ -39,13 +40,15 @@ typed_value *scope_find(superscope *env, scope *s, u32 idx) {
   return &owner->values[idx - owner->start - 1];
 }
 scope *scope_inferior(superscope *b, scope *s) {
+  let named = mList_init(b->alloc, moxmap(fptr, u32));
+  mList_push(named, moxmap_init(b->alloc, fptr, u32, (oxmap_cmp){cmpfptr}));
   let res = avalue(
       b->alloc,
       ((scope){
           .parent = s,
           .instructions = msList_init(b->alloc, ir),
           .values = msList_init(b->alloc, typed_value),
-          .named = moxmap_init(b->alloc, fptr, u32, (oxmap_cmp){cmpfptr}),
+          .named = named,
           .start = s ? s->start + msList_len(s->values) : 0,
           .rootable = s ? s->rootable : true,
       })
@@ -53,6 +56,13 @@ scope *scope_inferior(superscope *b, scope *s) {
   scope_add_value(b, res, TV_void(b));
   return res;
 }
+static inline void scope_push_named(superscope *b, scope *s) {
+  mList_push(s->named, moxmap_init(b->alloc, fptr, u32, (oxmap_cmp){cmpfptr}));
+}
+static inline void scope_pop_named(scope *s) {
+  if (mList_len(s->named) > 1) moxmap_deinit(mList_pop(s->named));
+}
+u32 scope_last_item(superscope *, scope *s) { return s->start + msList_len(s->values); }
 
 scope *scope_find_rootable(superscope *b, scope *s) {
   while (!s->rootable)
@@ -61,17 +71,16 @@ scope *scope_find_rootable(superscope *b, scope *s) {
   return s;
 }
 void scope_destroy(superscope *b, scope *s) {
-  foreach (let item, span(s->values, msList_len(s->values))) { // -1?
+  foreach (let item, span(s->values, msList_len(s->values))) {
     let it = ss_type(b, item->t);
     if (tu_is(c_int, it.t) && !it.isref)
       msList_deInit(b->alloc, item->v.c_int);
   }
   msList_deInit(b->alloc, s->values);
-  foreach (let scope, span(s->instructions, msList_len(s->instructions)))
-    iflet_tu (let s, ir_block, *scope)
-      scope_destroy(b, s);
   msList_deInit(b->alloc, s->instructions);
-  moxmap_deinit(s->named);
+  foreach (let m, mList_iter(s->named))
+    moxmap_deinit(m);
+  mList_deinit(s->named);
   adestroy(b->alloc, s);
 }
 static inline void scope_resize_value(superscope *env, typed_value *v) {
@@ -84,7 +93,7 @@ static inline void scope_set_type(superscope *env, typed_value *v, typeidx t) {
   scope_resize_value(env, v);
 }
 u32 scope_add_value(superscope *env, scope *s, typed_value v) {
-  if (tu_is(c_int, ss_type(env, v.t).t) && v.v.c_int) // explicitly destroyed in scope_destroy
+  if (tu_is(c_int, ss_type(env, v.t).t) && v.v.c_int)
     v.v.c_int = BInt.copy(env->alloc, v.v.c_int);
   else scope_resize_value(env, &v);
   msList_push(env->alloc, s->values, v);
@@ -120,14 +129,26 @@ struct type_named {
 static inline struct type_named ss_tag_named(superscope *ss, TypeTree t, fptr name) {
   iflet_tu (let tag, r_tag, t)
     if_decl (let info, moxmap_get(ss->type_info, type_name(ss_typeenv(ss), tag.name)))
-      if_decl (let idx, moxmap_get((*info)->named, name))
+      if_decl (let idx, moxmap_get(mList_last((*info)->named), name))
         return (struct type_named){*info, *idx};
   return (struct type_named){};
 }
 static inline void scope_emit_inst errs(superscope *env, scope *s, ir i) { msList_push(env->alloc, s->instructions, i); }
 static inline void scope_wrap_child errs(superscope *env, scope *s, scope *b) {
   assertMessage(b != s && b->parent == s, "b not inside s?");
-  try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_block, b)));
+  assertMessage(b->start == s->start + msList_len(s->values));
+  try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_blocks, {})));
+  foreach (let inst, span(b->instructions, msList_len(b->instructions)))
+    try_err(scope_emit_inst, (env, s, *inst));
+  foreach (let v, span(b->values, msList_len(b->values)))
+    msList_push(env->alloc, s->values, *v);
+  try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_blocke, {})));
+  msList_deInit(env->alloc, b->instructions);
+  msList_deInit(env->alloc, b->values);
+  foreach (let m, mList_iter(b->named))
+    moxmap_deinit(m);
+  mList_deinit(b->named);
+  adestroy(env->alloc, b);
 }
 static bool Type_ncmp_nptr(Type a, Type b, typeenv e) {
   return a.ptr_level == b.ptr_level && !TypeTree_cmp(e, a.t, b.t);
@@ -159,7 +180,6 @@ static inline u32 Type_intLike_bitcount(Type t, typeenv e) {
          : tu_is(r_uint, t.t) ? tu_catch(r_uint, t.t).bits
                               : 0;
 }
-// returns more general of 2 types
 static inline Type Type_weaker(Type a, Type b, typeenv e) {
   Type as = Type_stripTag(a, e), bs = Type_stripTag(b, e);
   bool ac = Type_is_comptime(as), bc = Type_is_comptime(bs);
@@ -182,7 +202,6 @@ static bool Type_is_integer_like(Type t, typeenv e) {
 static inline void scope_add_inst errs(superscope *env, scope *s, ir i);
 static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i);
 
-// whether cast_value will have to make more values for casting
 static bool cast_would_change(Type from, Type to, typeenv e) {
   return !(
       !Type_cmp(e, from, to) ||
@@ -202,12 +221,16 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
   let tenv = ss_typeenv(env);
   tu_match_void(
       *i,
-      (ir_farg, _), // handled somewhere else,
-      (ir_if, _),
-      (ir_while, _),
+      (ir_farg, _),
+      (ir_blocks, _),
+      (ir_blocke, _),
+      (ir_ifs, _),
+      (ir_ifd, _),
+      (ir_ife, _),
+      (ir_loops, _),
+      (ir_loope, _),
       (ir_break, _),
       (ir_cont, _),
-      (ir_block, _),
       (ir_putptr, _, {
         let pp = &tu_catch(ir_putptr, *i);
         Type lt = ss_type(env, scope_find(env, s, pp->l)->t);
@@ -315,7 +338,6 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
           return i;
         }
 
-        // two comptime types compare structurally, so it folds instead of becoming an op
         if ((c->o == opNumbers.eq || c->o == opNumbers.neq) && tu_is(c_type, lt.t) && tu_is(c_type, rt.t)) {
           bool res = scope_find(env, s, c->r)->v.c_type == scope_find(env, s, c->l)->v.c_type;
           if (c->o == opNumbers.neq) res = !res;
@@ -377,21 +399,7 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
       }),
       (ir_call, _, {
         let c = &tu_catch(ir_call, *i);
-        if (c->l.fn && c->l.fn <= msList_len(env->functions)) {
-          let inst = &env->functions[c->l.fn - 1].instances[c->l.spec];
-          usize key_len = inst->key_len;
-          typed_value *key = inst->key;
-          foreach (let a, span(c->args.ptr, c->args.len)) {
-            let index = (usize)(a - c->args.ptr);
-            if (index >= key_len) continue;
-            Type target = ss_type(env, key[index].t);
-            *a = try_err(cast_value, (env, s, *a, target), 0);
-          }
-          return i;
-        }
-        // the callee is a value, not a function: it is only callable through its "()" member, which
-        // takes the callee itself as its first argument
-        u32 callee = c->l.fn;
+        u32 callee = c->l;
         if (!callee) return_err("UNSUPPORTED_CALL", nullptr);
         Type lt = ss_type(env, scope_find(env, s, callee)->t);
         struct type_named m = {};
@@ -399,9 +407,11 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
         if (!m.owner) return_err("UNSUPPORTED_CALL", nullptr);
         scope *b = scope_inferior(env, s);
         let method = scope_add_value(env, b, *scope_find(env, m.owner, m.idx));
-        slice(u32) vals = slice_alloc(env->alloc, u32, c->args.len + 1);
+        usize nargs = c->e > c->r ? (usize)(c->e - c->r) : 0;
+        slice(u32) vals = slice_alloc(env->alloc, u32, nargs + 1);
         vals.ptr[0] = callee;
-        memcpy(vals.ptr + 1, c->args.ptr, c->args.len * sizeof(u32));
+        foreach (let j, range(0, nargs))
+          vals.ptr[j + 1] = c->r + (u32)j;
         u32 res = try_err(lower_function_call_values, (env, b, method, vals), 0);
         slice_free(env->alloc, vals);
         scope_set_type(env, scope_find(env, s, c->d), scope_find(env, b, res)->t);
@@ -460,23 +470,16 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
   return i;
 }
 static inline void scope_add_inst errs(superscope *env, scope *s, ir i) {
-  if (tu_is(ir_if, i))
-    P$(&tu_catch(ir_if, i),
-       ($->cnd ? $->cnd->rootable = false : 0, $),
-       ($->f ? $->f->rootable = false : 0, $),
-       ($->t ? $->t->rootable = false : 0, $));
-  else if (tu_is(ir_while, i))
-    P$(&tu_catch(ir_while, i),
-       ($->cnd ? $->cnd->rootable = false : 0, $),
-       ($->body ? $->body->rootable = false : 0, $));
+  if (tu_is(ir_blocks, i)) scope_push_named(env, s);
+  else if (tu_is(ir_blocke, i)) scope_pop_named(s);
   ir *hooked = try_err(scope_add_inst_typecheck, (env, s, &i));
   if (hooked) try_err(scope_emit_inst, (env, s, *hooked));
 }
 static inline void scope_bind errs(superscope *env, scope *s, u32 idx, fptr name) {
-  if (moxmap_get(s->named, name)) return_err("SHADOWING_SAME_SCOPE");
-  assertMessage(!moxmap_get(s->named, name));
+  if (moxmap_get(mList_last(s->named), name)) return_err("SHADOWING_SAME_SCOPE");
+  assertMessage(!moxmap_get(mList_last(s->named), name));
   assertMessage(idx <= msList_len(s->values) + s->start, "%zu <= %zu + %zu", idx, msList_len(s->values), s->start);
-  moxmap_set(s->named, name, idx);
+  moxmap_set(mList_last(s->named), name, idx);
 }
 static inline void scope_yield errs(superscope *ss, scope *s, u32 result) {
   assertMessage(result <= s->start);
@@ -485,17 +488,18 @@ static inline void scope_yield errs(superscope *ss, scope *s, u32 result) {
   Type yielded = ss_type(ss, msList_last(s->values).t);
   yielded.isref = false;
   scope_set_type(ss, v, ss_type_intern(ss, yielded));
-  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = s->start + msList_len(s->values), .d = result}))); // TODO operator stuff
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = s->start + msList_len(s->values), .d = result})));
 }
 
-// superscope helpers
 static inline u32 ss_get_named_failable_noref(superscope *env, scope *s, fptr n) {
-  let o = s;
   let limit = s->start + msList_len(s->values);
   while (s) {
-    if_decl (let val, moxmap_get(s->named, n))
-      if (*val <= limit)
-        return *val;
+    let maps = mList_len(s->named);
+    foreach (let i, range(0, maps)) {
+      let map = mList_arr(s->named)[maps - 1 - i];
+      if_decl (let val, moxmap_get(map, n))
+        if (*val <= limit) return *val;
+    }
     limit = s->start;
     s = s->parent;
   }
@@ -518,13 +522,11 @@ static inline u32 ss_get_named_mut errs(superscope *env, scope *s, fptr n) {
   return val;
 }
 
-// pushing dedupes, so equal types share an index and index equality is type equality
 typeidx ss_type_intern(superscope *ss, Type t) {
-  // the null type is index 0 by definition, never a real entry
   if (tu_is(r_null, t.t)) return 0;
   if_decl (let found, moxmap_get(ss->typeindex, t)) return *found;
   sglist_push(ss->tlist, t);
-  let idx = (typeidx)ss->tlist.len; // 1 based
+  let idx = (typeidx)ss->tlist.len;
   moxmap_set(ss->typeindex, t, idx);
   return idx;
 }
@@ -565,15 +567,13 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
     builtin_id id;
   } builtins[] = {
       {"@fn", builtin_fn},
+      {"@closure", builtin_closure},
       {"@this", builtin__this},
       {"@struct", builtin_struct},
       {"@at", builtin_at},
       {"@where", builtin_where},
       {"@uqot", builtin_uqot},
       {"@qot", builtin_qot},
-      {"@splice", builtin_splice},
-      {"@ast_len", builtin_ast_len},
-      {"@ast_at", builtin_ast_at},
       {"@ast_op", builtin_ast_op},
       {"@apply", builtin_apply},
       {"@type", builtin_type},
@@ -601,7 +601,7 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
       {"@cif", builtin_cif},
       {"@comptime_if", builtin_cif},
       {"@if", builtin_if},
-      {"@while", builtin_while},
+      {"@loop", builtin_loop},
   };
   foreach (let i, vla(builtins))
     catch_errcall(

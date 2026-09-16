@@ -4,6 +4,7 @@
 #include "scope.h"
 #include "wheels/macros.h"
 #include "wheels/print/print_pre.h"
+static u32 lower_builtin_closure errs(superscope *ss, scope *s, astidx args) { return_err("UNIMPLEMENTED", 0); }
 static u32 lower_builtin_fn errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
   if (!EQUAL_ANY(list.len, 2, 3)) return_err("WRONG_ARG_COUNT", 0);
@@ -35,23 +36,23 @@ static u32 lower_builtin_cif errs(superscope *ss, scope *s, astidx args) {
 static u32 lower_builtin_if errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
   if (!EQUAL_ANY(list.len, 2, 3)) return_err("WRONG_ARG_COUNT", 0);
-  let cnds = scope_inferior(ss, s);
-  let cnd = try_err(lower_condition, (ss, cnds, list.start + 0), 0);
-  let ts = scope_inferior(ss, s);
-  try_err(lower, (ss, ts, list.start + 1), 0);
-  let fs = list.len == 3 ? scope_inferior(ss, s) : nullptr;
-  if (fs) try_err(lower, (ss, fs, list.start + 2), 0);
-  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_if, {.cnd = cnds, .t = ts, .f = fs})), 0);
+  u32 cnd = try_err(lower_condition, (ss, s, list.start + 0), 0);
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_ifs, cnd)), 0);
+  try_err(lower, (ss, s, list.start + 1), 0);
+  if (list.len == 3) {
+    try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_ifd, {})), 0);
+    try_err(lower, (ss, s, list.start + 2), 0);
+  }
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_ife, {})), 0);
   return scope_add_value(ss, s, TV_of(ss, T(tu_of(r_void, {}))));
 }
 static u32 lower_builtin_while errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss->asts, args);
   if (!EQUAL_ANY(list.len, 1, 2)) return_err("WRONG_ARG_COUNT", 0);
-  let cnds = scope_inferior(ss, s);
-  try_err(lower_condition, (ss, cnds, list.start + 0), 0);
-  let cs = list.len == 2 ? scope_inferior(ss, s) : nullptr;
-  if (list.len == 2) try_err(lower, (ss, cs, list.start + 1), 0);
-  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_while, {.cnd = cnds, .body = cs})), 0);
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_loops, {})), 0);
+  try_err(lower_condition, (ss, s, list.start + 0), 0);
+  if (list.len == 2) try_err(lower, (ss, s, list.start + 1), 0);
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_loope, {})), 0);
   return scope_add_value(ss, s, TV_of(ss, T(tu_of(r_void, {}))));
 }
 static u32 lower_builtin_at errs(superscope *ss, scope *s, astidx args) {
@@ -456,9 +457,10 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
   return switch_exp(
       builtin,
       (builtin_fn, /*      */ try_err(lower_builtin_fn, (ss, s, args), 0)),
+      (builtin_closure, /* */ try_err(lower_builtin_closure, (ss, s, args), 0)),
       (builtin_if, /*      */ try_err(lower_builtin_if, (ss, s, args), 0)),
       (builtin_cif, /*     */ try_err(lower_builtin_cif, (ss, s, args), 0)),
-      (builtin_while, /*   */ try_err(lower_builtin_while, (ss, s, args), 0)),
+      (builtin_loop, /*    */ try_err(lower_builtin_while, (ss, s, args), 0)),
       (builtin_return, /*  */ try_err(lower_builtin_return, (ss, s, args), 0)),
       (builtin_break, /*   */ try_err(lower_builtin_break, (ss, s, args), 0)),
       (builtin_continue, /**/ try_err(lower_builtin_continue, (ss, s, args), 0)),
@@ -483,9 +485,6 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
       (builtin__this, /*   */ try_err(lower_builtin_this, (ss, s, args), 0)),
       (builtin_qot, /*     */ try_err(lower_builtin_qot, (ss, s, args), 0)),
       (builtin_uqot, /*    */ try_err(lower_builtin_uqot, (ss, s, args), 0)),
-      // (builtin_splice, /*  */ try_err(lower_builtin_splice, (ss, s, args), 0)),
-      // (builtin_ast_len, /* */ try_err(lower_builtin_ast_len, (ss, s, args), 0)),
-      // (builtin_ast_at, /*  */ try_err(lower_builtin_ast_at, (ss, s, args), 0)),
       (builtin_ast_op, /*  */ try_err(lower_builtin_ast_op, (ss, s, args), 0)),
       (builtin_apply, /*   */ try_err(lower_builtin_apply, (ss, s, args), 0)),
       (builtin_at, /*      */ try_err(lower_builtin_at, (ss, s, args), 0)),

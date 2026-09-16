@@ -27,7 +27,9 @@ u32 lower_call errs(superscope *ss, scope *s, u32 left, astidx args) {
   foreach (let i, range(0, alist.len))
     vals.ptr[i] = try_err(lower, (ss, s, alist.start + i), 0);
   let d = scope_add_value(ss, s, TV_any(ss));
-  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_call, {.l = left, .d = d, .args = vals})), 0);
+  u32 args_start = vals.len ? vals.ptr[0] : 0;
+  u32 args_end = vals.len ? vals.ptr[vals.len - 1] + 1 : 0;
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_call, {.l = left, .d = d, .r = args_start, .e = args_end})), 0);
   return d;
 }
 tu_def(
@@ -220,13 +222,11 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
       op_as_enum(opNumber),
       (enop_pipe, {
         let result = scope_add_value(ss, s, TV_any(ss));
-
-        let pipscope = scope_inferior(ss, s);
-        try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_block, pipscope)), 0);
-        try_err(scope_bind, (ss, pipscope, left, fp("_")), 0);
-        try_err(lower, (ss, pipscope, right), 0);
-        try_err(scope_yield, (ss, pipscope, result), 0);
-
+        try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_blocks, {})), 0);
+        try_err(scope_bind, (ss, s, left, fp("_")), 0);
+        try_err(lower, (ss, s, right), 0);
+        try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = result, .l = scope_last_item(ss, s)})), 0);
+        try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_blocke, {})), 0);
         return result;
       }),
       (enop_colon, assertMessage(false, "unreachable")),
