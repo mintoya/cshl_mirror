@@ -48,12 +48,9 @@ typedef enum : u8 {
                     //
   builtin_qot,      // @qot(arg) ast of arg
   builtin_uqot,     // @unqot(arg) evaluate arg
-  builtin_splice,   // @splice(arg) inside a quote, splice a list ast's children in place
-  builtin_ast_len,  // @ast_len(arg) comptime count of a list ast's children
-  builtin_ast_at,   // @ast_at(arg,i) the i-th child of a list ast
+                    // will remove these
   builtin_ast_op,   // @ast_op(sym,a,b) build the ast of "a sym b", sym a comptime string
   builtin_apply,    // @apply(f,args...) call f with evaluated args (ast params get values)
-                    //
   builtin_ref,      // @ref(value) produces a referance to value
   builtin_reft,     // @reft(value) produces the type of a referance to a value
   builtin_at,       // @at(arg) dereference arg
@@ -439,9 +436,6 @@ typePrinter(builtin_id) {
       (builtin_cif, /*     */ PUTS("cif")),
       (builtin_ast, /*     */ PUTS("ast")),
       (builtin_uqot, /*    */ PUTS("uqot")),
-      (builtin_splice, /**/ PUTS("splice")),
-      (builtin_ast_len, /**/ PUTS("ast_len")),
-      (builtin_ast_at, /*  */ PUTS("ast_at")),
       (builtin_ast_op, /*  */ PUTS("ast_op")),
       (builtin_apply, /*   */ PUTS("apply")),
       (builtin_reft, /*    */ PUTS("reft")),

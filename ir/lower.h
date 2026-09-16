@@ -36,23 +36,20 @@ u32 lower_low errs(superscope *ss, scope *s, astidx a) {
          let stmts = ast_block_children(ss->asts, a);
          if (stmts.len != 1)
            return_err("TUPLE", 0);
-         // (a ~= 1); -> {a ~= 1;};
-         // lower(ss, s, &(ast)tu_of(astBBlock, {.loc = pb.loc, .stmts = pb.stmts}));
-         // or
-         // (a ~= 1); -> a ~= 1;//leak decls on pourpose
+         // (a ~= 1); -> a ~= 1;
          try_err(lower, (ss, s, stmts.start), 0);
        })),
       (astBBlock, bb, ({
          let res = scope_add_value(ss, s, TV_any(ss));
-         let sc = scope_inferior(ss, s);
-         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_block, sc)), 0);
+         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_blocks, {})), 0);
          let stmts = ast_block_children(ss->asts, a);
          foreach (let i, span(stmts.start, stmts.len))
-           try_err(lower, (ss, sc, i), 0);
-         try_err(scope_yield, (ss, sc, res), 0);
+           try_err(lower, (ss, s, i), 0);
+         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = res, .l = scope_last_item(ss, s)})), 0);
+         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_blocke, {})), 0);
          res;
        })),
-      (astABlock, _, (return_err("LONE_AB", 0), (u32)0)),
+      (astABlock, _, (return_err("LONE_AB", 0), (u32)0)), // tuples?
       (astDecl, dcl, ({
          let type = T(tu_of(c_any, {}));
          astidx name_idx = ast_child(ss->asts, dcl.name_type_value);
@@ -79,36 +76,9 @@ u32 lower_low errs(superscope *ss, scope *s, astidx a) {
            vt.isconst = true;
            v->t = ss_type_intern(ss, vt);
          }
-         // if (name_idx) {
-         //   let nn = try_err(id_from_ast, (ss, s, name_idx), 0);
-         //   try_err(scope_bind, (ss, s, value, nn), 0);
-         //   println("[LOG:decl] bound {typed_value_full} to {slice(c8)}", ((typed_value_full){*scope_find(ss, s, value), ss_typeenv(ss)}), nn);
-         // }
-         // TODO: this is rediculous and shouldnt be handled here
          if (name_idx) {
            let nn = try_err(id_from_ast, (ss, s, name_idx), 0);
-           let roots = scope_find_rootable(ss, s);
-           bool isfn = tu_is(c_fun, ss_type(ss, scope_find(ss, s, value)->t).t);
-           if (isfn)
-             if_decl (let prev, ss_get_named_failable_noref(ss, s, nn)) {
-               let pv = scope_find(ss, s, prev);
-               if (tu_is(c_fun, ss_type(ss, pv->t).t)) {
-                 let dfn = &ss->functions[pv->v.c_fun.fn - 1];
-                 let nfn = &ss->functions[scope_find(ss, s, value)->v.c_fun.fn - 1];
-                 if (!dfn->body && nfn->body) {
-                   dfn->params = nfn->params;
-                   dfn->retT = nfn->retT;
-                   dfn->body = nfn->body;
-                   dfn->defscope = nfn->defscope;
-                   value = prev;
-                 }
-               }
-             }
-           if (!moxmap_get(s->named, nn)) try_err(scope_bind, (ss, s, value, nn), 0);
-           if (isfn && roots != s && !moxmap_get(roots->named, nn)) {
-             let alias = scope_add_value(ss, roots, *scope_find(ss, s, value));
-             try_err(scope_bind, (ss, roots, alias, nn), 0);
-           }
+           try_err(scope_bind, (ss, s, value, nn), 0);
            println("[LOG:decl] bound {typed_value_full} to {slice(c8)}", ((typed_value_full){*scope_find(ss, s, value), ss_typeenv(ss)}), nn);
          }
          value;
@@ -123,11 +93,9 @@ u32 lower errs(superscope *ss, scope *s, astidx a) {
   // little cursed
   return catch_errcall(
       (lower_low, (ss, s, a)), e, ({
-        let pos = srcpos_ast(ast_at(ss->asts, a), ss->asts);
-        let full = (srcpos_full){pos, ss->plist, ss->flist};
+        let full = ((srcpos_full){srcpos_ast(ast_at(ss->asts, a), ss->asts), ss->plist, ss->flist});
         static thread_local char ns[sizeof(errors_buffer.buf)] = {};
-        strcpy(ns, errors_buffer.buf);
-        pass_err(P$(e, ($.fn = print_ebuff("{cstr}:{srcpos_full}", (char *)ns, full), $)), 0);
+        pass_err(P$(e, ($.fn = print_ebuff("{cstr}:{srcpos_full}", strcpy(ns, errors_buffer.buf), full), $)), 0);
         0;
       })
   );

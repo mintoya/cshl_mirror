@@ -18,7 +18,8 @@ struct scope {
   scope *parent;
   msList(ir) instructions;
   msList(typed_value) values;
-  moxmap(fptr, u32) named;
+  // TODO: keep names around for debugging
+  mList(moxmap(fptr, u32)) named;
   u32 start;
   bool rootable;
 };
@@ -117,6 +118,7 @@ static inline astidx ast_make_empty(superscope *ss) {
   else return ss->foldempty = (sglist_push(ss->asts, tu_of(astEmpty, 0)), ss->asts.len);
 }
 
+u32 scope_last_item(superscope *ss, scope *s);
 scope *scope_inferior(superscope *b, scope *s);
 scope *scope_find_rootable(superscope *b, scope *s);
 void scope_destroy(superscope *b, scope *s);
@@ -532,17 +534,6 @@ typePrinter(scope_full) {
   foreach (let i, span(sc.instructions, msList_len(sc.instructions))) {
     tu_match_void(
         *i,
-        (ir_call, call, {
-          PUTS("(call ");
-          USETYPEPRINTER(u32, call.l.fn), PUTS(" ");
-          USETYPEPRINTER(u32, call.l.spec);
-          PUTS(" (");
-          foreach (let c, span(call.args.ptr, call.args.len))
-            USETYPEPRINTER(u32, *c), c == call.args.ptr ? PUTS(" ") : 0;
-          PUTS("),");
-          USETYPEPRINTER(u32, call.d);
-          PUTS(")");
-        }),
         (ir_array, f, {
           PUTS("(arr ");
           USETYPEPRINTER(u32, f.l), PUTS(" ");
@@ -596,21 +587,6 @@ typePrinter(scope_full) {
           USETYPEPRINTER(u32, sv.l), PUTS(" -> "), USETYPEPRINTER(u32, sv.d);
           PUTS(")");
         }),
-        (ir_if, ifv, {
-          PUTS("(if,");
-          USETYPEPRINTER(scope_full, ((scope_full){ifv.cnd, in.ss})), PUTS(",");
-          USETYPEPRINTER(scope_full, ((scope_full){ifv.t, in.ss})), PUTS(",");
-          USETYPEPRINTER(scope_full, ((scope_full){ifv.f, in.ss}));
-          PUTS(")");
-        }),
-        (ir_while, wv, {
-          PUTS("(while,");
-
-          USETYPEPRINTER(scope_full, ((scope_full){wv.cnd, in.ss})), PUTS(",");
-          USETYPEPRINTER(scope_full, ((scope_full){wv.body, in.ss}));
-          PUTS(")");
-        }),
-        (ir_block, block, PUTS("(block "), USETYPEPRINTER(scope_full, ((scope_full){block, in.ss})), PUTS(")")),
         (ir_ret, v, PUTS("(return "), USETYPEPRINTER(u32, v), PUTS(")")),
         (ir_break, _, PUTS("(break)")),
         (ir_cont, _, PUTS("(continue)")),
@@ -623,18 +599,18 @@ typePrinter(scope_full) {
     if (v != sc.values)
       PUTS(",");
     PUTS("(r"),
-        USETYPEPRINTER(u32, sc.start + (v - sc.values) + 1),
+        USETYPEPRINTER(u32, (v - sc.values) + 1),
         USETYPEPRINTER(typed_value_full, ((typed_value_full){*v, ss_typeenv(in.ss)})),
         PUTS(")");
   }
   PUTS("),");
-  PUTS("(named,");
-  foreach (let v, moxmap_iter(sc.named, fptr, u32)) {
-    PUTS("('"), USENAMEDPRINTER("slice(c8)", v.key), PUTS("' ");
-    USETYPEPRINTER(u32, *v.val);
-    PUTS(")");
-    PUTS(",");
-  }
-  PUTS(")");
+  // PUTS("(named,");
+  // foreach (let v, moxmap_iter(sc.named, fptr, u32)) {
+  //   PUTS("('"), USENAMEDPRINTER("slice(c8)", v.key), PUTS("' ");
+  //   USETYPEPRINTER(u32, *v.val);
+  //   PUTS(")");
+  //   PUTS(",");
+  // }
+  // PUTS(")");
   PUTS(")");
 };

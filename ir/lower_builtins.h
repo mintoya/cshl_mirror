@@ -108,7 +108,6 @@ static astidx_span ast_list_span(astlist al, astidx a) {
   );
 }
 static astidx qot_walk errs(superscope *ss, scope *s, astidx node);
-// walk a block's children, expanding any @splice(list) marker into the list's children
 static astidx qot_walk_block errs(superscope *ss, scope *s, astidx node, u8 tag, srcpos pos) {
   let children = ast_block_children(ss->asts, node);
   let out = msList_init(ss->alloc, astidx);
@@ -239,31 +238,6 @@ static u32 lower_builtin_uqot errs(superscope *ss, scope *s, astidx args) {
   if (!tu_is(c_ast, ss_type(ss, tv.t).t)) return_err("UNQUOTE_TYPE_ERROR", 0);
   if (!tv.v.c_ast) return_err("UNQUOTE_UNKNOWN", 0);
   return try_err(lower, (ss, s, tv.v.c_ast), 0);
-}
-// @splice only means anything inside a quote, where qot_walk expands it
-static u32 lower_builtin_splice errs(superscope *ss, scope *s, astidx args) {
-  return_err("SPLICE_OUTSIDE_QUOTE", 0);
-}
-static u32 lower_builtin_ast_len errs(superscope *ss, scope *s, astidx args) {
-  let list = builtin_arg_list(ss->asts, args);
-  if (list.len != 1) return_err("WRONG_ARG_COUNT", 0);
-  let tv = try_err(temporary_interpret, (ss, s, list.start + 0), 0);
-  if (!tu_is(c_ast, ss_type(ss, tv.t).t)) return_err("AST_LEN_TYPE_ERROR", 0);
-  let sp = ast_list_span(ss->asts, tv.v.c_ast);
-  return scope_add_value(ss, s, TV_bigint(ss, BInt.from.i64(ss->alloc, (i64)sp.len)));
-}
-static u32 lower_builtin_ast_at errs(superscope *ss, scope *s, astidx args) {
-  let list = builtin_arg_list(ss->asts, args);
-  if (list.len != 2) return_err("WRONG_ARG_COUNT", 0);
-  let tv = try_err(temporary_interpret, (ss, s, list.start + 0), 0);
-  if (!tu_is(c_ast, ss_type(ss, tv.t).t)) return_err("AST_AT_TYPE_ERROR", 0);
-  let bi = int_as_bigint(ss->alloc, try_err(temporary_interpret, (ss, s, list.start + 1), 0), ss_typeenv(ss));
-  defer { msList_deInit(ss->alloc, bi); };
-  bigint_expand(ss->alloc, &bi, sizeof(usize) / sizeof(bigint_unit) + 1);
-  usize i = *(usize *)bi;
-  let sp = ast_list_span(ss->asts, tv.v.c_ast);
-  if (i >= sp.len) return_err("AST_AT_RANGE", 0);
-  return scope_add_value(ss, s, TV_ast(ss, sp.start + i));
 }
 // build the ast of "a <sym> b", where sym is a comptime string naming the operator, so a macro
 // can synthesize any operation ("+", ".") and not just the ones with a builtin of their own
@@ -509,9 +483,9 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
       (builtin__this, /*   */ try_err(lower_builtin_this, (ss, s, args), 0)),
       (builtin_qot, /*     */ try_err(lower_builtin_qot, (ss, s, args), 0)),
       (builtin_uqot, /*    */ try_err(lower_builtin_uqot, (ss, s, args), 0)),
-      (builtin_splice, /*  */ try_err(lower_builtin_splice, (ss, s, args), 0)),
-      (builtin_ast_len, /* */ try_err(lower_builtin_ast_len, (ss, s, args), 0)),
-      (builtin_ast_at, /*  */ try_err(lower_builtin_ast_at, (ss, s, args), 0)),
+      // (builtin_splice, /*  */ try_err(lower_builtin_splice, (ss, s, args), 0)),
+      // (builtin_ast_len, /* */ try_err(lower_builtin_ast_len, (ss, s, args), 0)),
+      // (builtin_ast_at, /*  */ try_err(lower_builtin_ast_at, (ss, s, args), 0)),
       (builtin_ast_op, /*  */ try_err(lower_builtin_ast_op, (ss, s, args), 0)),
       (builtin_apply, /*   */ try_err(lower_builtin_apply, (ss, s, args), 0)),
       (builtin_at, /*      */ try_err(lower_builtin_at, (ss, s, args), 0)),

@@ -774,68 +774,6 @@ test_fn(where_at_alias) {
   test_inteq(*(i32 *)r.v.value, 0);
 }
 
-// a closure macro built from the ast list builtins: @ast_len/@ast_at walk the capture
-// list, @apply passes each one by value, @ast_op(".",...) builds `self.name`, and @splice glues
-// the generated members and bindings back into the struct and its "()" body
-test_fn(closure_macro_variadic) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "s32 ~~ @sint(32);\n"
-          "ref ~~ @refT;\n"
-          "ast ~~ @ast();\n"
-          "any ~~ @any();\n"
-          "piece ~~ @fn (mode ~@int(), inst ~ast, v ~ast), ast, {\n"
-          "  @cif((mode == 0), (return @qot (@uqot(v.name) ~ @uqot(v.type))));\n"
-          "  @cif((mode == 1), (return @qot (@uqot(@ast_op(\".\", inst, v.name)) = @uqot(v.value))));\n"
-          "  return @qot (@uqot(v.name) ~@uqot(v.type) = @uqot(@ast_op(\".\", @qot(self), v.name)));\n"
-          "};\n"
-          "pieces ~~ @fn (values ~ast, inst ~ast, mode ~@int(), i ~@int()), ast, {\n"
-          "  @cif(\n"
-          "    (i < @ast_len(values)),\n"
-          "    (return @qot {\n"
-          "      @uqot(@apply(piece, mode, inst, @ast_at(values, i)));\n"
-          "      @splice(@apply(pieces, values, inst, mode, i + 1));\n"
-          "    }),\n"
-          "    (return @qot [])\n"
-          "  );\n"
-          "};\n"
-          "closure ~~ @fn (values ~ast, args ~ast, ret ~ast, body ~ast), any, {\n"
-          "  return @uqot(@qot {\n"
-          "    ClosureType ~type~ @struct {\n"
-          "      Self ~type~ @this();\n"
-          "      @splice(@apply(pieces, values, @qot(inst), 0, 0));\n"
-          "      @id(\"()\") ~~ @fn((self ~Self, @splice(args)), @uqot(ret), {\n"
-          "        @splice(@apply(pieces, values, @qot(inst), 2, 0));\n"
-          "        @splice(body);\n"
-          "      });\n"
-          "    };\n"
-          "    inst ~ClosureType;\n"
-          "    @splice(@apply(pieces, values, @qot(inst), 1, 0));\n"
-          "    @at(@where(inst));\n"
-          "  });\n"
-          "};\n"
-          "counter ~s32 = 0;\n"
-          "add ~~ closure([a ~ (ref s32) = @ref(counter), b ~ s32 = 10], [j ~ s32], s32, {\n"
-          "  a = a + b;\n"
-          "  b = b + j;\n"
-          "  return a + b;\n"
-          "});\n"
-          "result ~~ @fn (), s32, { return add(1); };\n"
-          "result();\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_sint, tv_type(r).t));
-  test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 32);
-  test_inteq(*(i32 *)r.v.value, 21);
-}
-
 test_fn(any_return_adopts_concrete_type) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -1163,14 +1101,6 @@ test_fn(lower_error_type_not_value) {
   let e = lower_source_err(arena, fp("@arr(2, 5);"));
   test_assert(e.err_code);
   test_streq(e.err_code, "TYPE_IS_NOT_VALUE");
-}
-
-test_fn(lower_error_splice_outside_quote) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-  let e = lower_source_err(arena, fp("@splice(@qot(1));"));
-  test_assert(e.err_code);
-  test_streq(e.err_code, "SPLICE_OUTSIDE_QUOTE");
 }
 
 test_fn(lower_error_ast_at_range) {
