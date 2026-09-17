@@ -12,7 +12,7 @@
 u32 lower_call_extra errs(superscope *ss, scope *s, u32 left, u32 first, astidx args) {
   let l = scope_find(ss, s, left);
   iflet_tu (let fn, c_fun, ss_type(ss, l->t).t)
-    return try_err(lower_function_call_with, (ss, s, left, args, first), 0);
+    return try_err(lower_function_call, (ss, s, left, args, first), 0);
   println("calling {Type_full}", ss_tf(ss, ss_type(ss, l->t)));
   return_err("UNSUPPORTED_CALL", 0);
 }
@@ -21,7 +21,7 @@ u32 lower_call errs(superscope *ss, scope *s, u32 left, astidx args) {
   iflet_tu (let builtin, builtin, ss_type(ss, l->t).t)
     return try_err(lower_builtin, (ss, s, builtin, args), 0);
   iflet_tu (let fn, c_fun, ss_type(ss, l->t).t)
-    return try_err(lower_function_call, (ss, s, left, args), 0);
+    return try_err(lower_function_call, (ss, s, left, args, 0), 0);
   let alist = builtin_arg_list(ss->asts, args);
   slice(u32) vals = alist.len ? slice_alloc(ss->alloc, u32, alist.len) : (slice(u32)){};
   foreach (let i, range(0, alist.len))
@@ -212,7 +212,7 @@ u32 lower_math errs(superscope *ss, scope *s, u32 left, u32 right, math_operatio
   let l = scope_find(ss, s, left);
   let r = scope_find(ss, s, right);
   let d = scope_add_value(ss, s, TV_any(ss));
-  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_rawop, {.r = left, .l = right, .d = d, .o = opNumber})), 0);
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_rawop, {.l = left, .r = right, .d = d, .o = opNumber})), 0);
   return d;
 }
 u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber) {
@@ -265,7 +265,7 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
       (enop_as, ({
          let arg = try_err(lower, (ss, s, right), 0);
          let d = scope_add_value(ss, s, TV_any(ss));
-         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_rawop, {.r = left, .l = arg, .d = d, .o = opNumbers.as})), 0);
+         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_rawop, {.l = left, .r = arg, .d = d, .o = opNumbers.as})), 0);
          d;
        })),
       (enop_call, try_err(lower_call, (ss, s, left, right), 0)),

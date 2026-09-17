@@ -61,42 +61,5 @@ cmpres slice_typed_value_cmp_hash(void *env, const void *a, const void *b) {
 }
 //
 
-static inline Type function_item_type errs(superscope *ss, scope *s, astidx item) {
-  let item_node = ast_at(ss->asts, item);
-  let reg = try_err(lower, (ss, s, item), T());
-  typed_value *placeholder = scope_find(ss, s, reg);
-  let t = ss_type(ss, placeholder->t);
-  if (Type_is_comptime(t))
-    *placeholder = (tu_is(c_type, t.t))
-                       ? Type_asValue(ss, T(tu_of(c_any, {})))
-                       : TV_any(ss);
-  return t;
-}
-// creates a generic function, all functions are treated as generic, all global but names are local
-u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, astidx body) {
-  let params = builtin_arg_list(ss->asts, args);
-  // clang-format off
-  let roots = scope_find_rootable(ss,s);
-  msList_push(ss->alloc, ss->functions, {
-      .params = params,
-      .retT = retT,
-      .body = body,
-      .defscope = roots,
-      .instances = msList_init(ss->alloc, function_instance),
-      .mp = moxmap_init(ss->alloc, slice(typed_value), u32, (oxmap_cmp){ slice_typed_value_cmp_hash , ss}),
-  });
-  // clang-format on
-  let arg_scope = scope_inferior(ss, roots);
-  // reserve the run before evaluating the args, since filling it in can intern more types
-  let signature = (c_fun){.start = ss_type_reserve(ss, params.len + 1)};
-  let env = ss_typeenv(ss);
-  foreach (let p, span(params.start, params.len))
-    sglist_get(env.tlist, signature.start - 1 + (p - params.start)) =
-        try_err(function_item_type, (ss, arg_scope, p), 0);
-  sglist_get(env.tlist, signature.start + params.len - 1) =
-      try_err(value_asType, (ss, try_err(temporary_interpret, (ss, arg_scope, retT), 0)), 0);
-  let res = scope_add_value(ss, s, TV_with(ss, T(tu_of(c_fun, signature)), VS(.c_fun = msList_len(ss->functions))));
-  return res;
-}
-static u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astidx args, u32 lead) { TODO("lower_function_call_with"); }
-u32 lower_function_call errs(superscope *ss, scope *s, u32 fn, astidx args) { return try_err(lower_function_call_with, (ss, s, fn, args, 0), 0); }
+u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, astidx body);
+u32 lower_function_call errs(superscope *ss, scope *s, u32 fn, astidx args, u32 lead);

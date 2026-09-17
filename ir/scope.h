@@ -303,7 +303,7 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
       }),
       (ir_rawop, _, {
         let c = &tu_catch(ir_rawop, *i);
-        Type lt = ss_type(env, scope_find(env, s, c->r)->t);
+        Type lt = ss_type(env, scope_find(env, s, c->l)->t);
 
         char op_str[sizeof(u32) + 1] = {};
         memcpy(op_str, &c->o, 4);
@@ -313,7 +313,7 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
           if (m.owner) {
             scope *b = scope_inferior(env, s);
             let method = scope_add_value(env, b, *scope_find(env, m.owner, m.idx));
-            u32 res = try_err(lower_function_call_values, (env, b, method, ((slice(u32)){2, (u32[2]){c->r, c->l}})), 0);
+            u32 res = try_err(lower_function_call_values, (env, b, method, ((slice(u32)){2, (u32[2]){c->l, c->r}})), 0);
             scope_set_type(env, scope_find(env, s, c->d), scope_find(env, b, res)->t);
             try_err(scope_emit_inst, (env, b, (ir)tu_of(ir_set, {.l = res, .d = c->d})), 0);
             return try_err(scope_wrap_child, (env, s, b), nullptr), nullptr;
@@ -321,14 +321,14 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
         }
 
         let e = ss_typeenv(env);
-        Type rt = ss_type(env, scope_find(env, s, c->l)->t);
+        Type rt = ss_type(env, scope_find(env, s, c->r)->t);
 
         if (c->o == opNumbers.call) return_err("UNSUPPORTED_CALL", nullptr);
 
         if (strcmp(op_str, "as") == 0) {
-          let to = try_err(value_asType, (env, *scope_find(env, s, c->l)), nullptr);
+          let to = try_err(value_asType, (env, *scope_find(env, s, c->r)), nullptr);
           scope *b = cast_would_change(lt, to, tenv) ? scope_inferior(env, s) : s;
-          u32 casted = try_err(cast_value, (env, b, c->r, to), 0);
+          u32 casted = try_err(cast_value, (env, b, c->l, to), 0);
           scope_set_type(env, scope_find(env, s, c->d), ss_type_intern(env, to));
           *i = (ir)tu_of(ir_set, {.l = casted, .d = c->d});
           if (b != s) {
@@ -339,7 +339,7 @@ static inline ir *scope_add_inst_typecheck errs(superscope *env, scope *s, ir *i
         }
 
         if ((c->o == opNumbers.eq || c->o == opNumbers.neq) && tu_is(c_type, lt.t) && tu_is(c_type, rt.t)) {
-          bool res = scope_find(env, s, c->r)->v.c_type == scope_find(env, s, c->l)->v.c_type;
+          bool res = scope_find(env, s, c->l)->v.c_type == scope_find(env, s, c->r)->v.c_type;
           if (c->o == opNumbers.neq) res = !res;
           let d = scope_find(env, s, c->d);
           d->t = ss_type_intern(env, T(tu_of(r_bool, {})));
