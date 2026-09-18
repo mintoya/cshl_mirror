@@ -388,10 +388,9 @@ static inline bigint int_as_bigint(allocfn allocator, typed_value t, typeenv e) 
   );
 }
 
-static inline void bigint_into_slot(allocfn alloc, void *slot, usize len, bigint b) {
-  let limbs = (len + sizeof(bigint_unit) - 1) / sizeof(bigint_unit);
-  if (b && msList_len(b) < limbs) bigint_expand(alloc, &b, limbs);
-  memcpy(slot, b, len);
+static inline void bigint_into_slot(u8 *mem, usize len, bigint b) {
+  foreach (let w, range(0, (lineup(len, sizeof(bigint_unit)) / sizeof(bigint_unit))))
+    memcpy(mem, REF(bigint_get(b, w)), MIN$(len - w * sizeof(bigint_unit), sizeof(bigint_unit)));
 }
 static inline void bigint_into_int(superscope *ss, allocfn alloc, typed_value *t, bigint b) {
   let e = ss_typeenv(ss);
@@ -403,8 +402,8 @@ static inline void bigint_into_int(superscope *ss, allocfn alloc, typed_value *t
         msList_deInit(alloc, *o);
         *o = BInt.copy(alloc, b);
       }),
-      (r_sint, si, bigint_into_slot(alloc, t->v.value, Type_sizeof(tt, e), b)),
-      (r_uint, si, bigint_into_slot(alloc, t->v.value, Type_sizeof(tt, e), b)),
+      (r_sint, si, bigint_into_slot(t->v.value, Type_sizeof(tt, e), b)),
+      (r_uint, si, bigint_into_slot(t->v.value, Type_sizeof(tt, e), b)),
       (r_bool, _, { *(u8 *)t->v.value = !!BInt.cmp(b, nullptr); }),
       (r_tag, tg, {
         let temp = (typed_value){.t = tg.t, .v = t->v};
@@ -614,3 +613,11 @@ typePrinter(scope_full) {
   // PUTS(")");
   PUTS(")");
 };
+test_fn(into_int) {
+  usize x = ~(u32)0 + 1;
+  let x2 = x;
+  let b = BInt.from.i64(allocator, x);
+  defer { msList_deInit(allocator, b); }
+  bigint_into_slot((u8 *)&x, sizeof(x), b);
+  test_inteq(x, x2);
+}
