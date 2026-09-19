@@ -277,26 +277,6 @@ static inline u32 enum_as_op(enum_op en) {
   );
 }
 
-static inline bool Type_isint(Type t, typeenv e) {
-  return !t.ptr_level &&
-         tu_match_exp(
-             t.t,
-             (c_int, _, true),
-             (r_uint, _, true),
-             (r_sint, _, true),
-             (r_tag, tg, Type_isint(type_at(e, tg.t), e)),
-             (default, false),
-         );
-}
-
-static inline Type value_asType errs(superscope *ss, typed_value t) {
-  if (!tu_is(c_type, ss_type(ss, t.t).t))
-    return_err("TYPE_IS_NOT_VALUE", T());
-  if (!t.v.c_type) return_err("UNKNOWN_TYPE", T());
-  return type_at(ss_typeenv(ss), t.v.c_type);
-}
-static inline typed_value Type_asValue(superscope *s, Type t) { return TV_type(s, ss_type_intern(s, t)); }
-
 static inline fptr string_escape(allocfn allocator, fptr in) {
   assertMessage(in.len > 1 && in.ptr[0] == '"' && in.ptr[in.len - 1] == '"');
   let result = mList_init(allocator, u8, in.len - 2);
@@ -353,69 +333,6 @@ static inline u32 ss_compileString(superscope *b, scope *s, fptr in) {
   let t = T(tu_of(r_arr, {ss_type_intern(b, T(TypeTree_sint(8))), in.len}));
   t.iscomptime = true;
   return scope_add_value(b, s, TV_with(b, t, VS(in.ptr)));
-}
-static inline bigint int_as_bigint(allocfn allocator, typed_value t, typeenv e) {
-  let tt = type_at(e, t.t);
-  assertMessage(!tt.ptr_level);
-  assertMessage(!tt.isref, "todo");
-  assertMessage(t.v.value, "tried to convert unknown value");
-  return tu_match_exp(
-      tt.t,
-      (c_int, _, BInt.copy(allocator, t.v.c_int)),
-      (r_sint, si, BInt.from.bits(allocator, t.v.value, si.bits, 1)),
-      (r_uint, si, BInt.from.bits(allocator, t.v.value, si.bits, 0)),
-      (r_bool, _, BInt.from.i64(allocator, !!*(u8 *)t.v.value)),
-      // the tag's child index is already interned, so no lookup is needed here
-      (r_tag, tg, int_as_bigint(allocator, (typed_value){.t = tg.t, .v = t.v}, e)),
-      (default,
-       (({
-          if (Type_isint(tt, e))
-            assertMessage(
-                false,
-                "unhandled integer case , %s",
-                snprint(stdAlloc, "{Type_full}", ((Type_full){tt, e})).ptr
-            );
-          assertMessage(
-              false,
-              "expeceted integer, found %s",
-              snprint(stdAlloc, "{typed_value_full}", ((typed_value_full){t, e})).ptr
-          );
-        }),
-        (bigint) nullptr)),
-  );
-}
-
-static inline void bigint_into_slot(u8 *mem, usize len, bigint b) {
-  foreach (let w, range(0, (lineup(len, sizeof(bigint_unit)) / sizeof(bigint_unit))))
-    memcpy(mem, REF(bigint_get(b, w)), MIN$(len - w * sizeof(bigint_unit), sizeof(bigint_unit)));
-}
-static inline void bigint_into_int(superscope *ss, allocfn alloc, typed_value *t, bigint b) {
-  let e = ss_typeenv(ss);
-  let tt = type_at(e, t->t);
-  tu_match_void(
-      tt.t,
-      (c_int, _, {
-        let o = &t->v.c_int;
-        msList_deInit(alloc, *o);
-        *o = BInt.copy(alloc, b);
-      }),
-      (r_sint, si, bigint_into_slot(t->v.value, Type_sizeof(tt, e), b)),
-      (r_uint, si, bigint_into_slot(t->v.value, Type_sizeof(tt, e), b)),
-      (r_bool, _, { *(u8 *)t->v.value = !!BInt.cmp(b, nullptr); }),
-      (r_tag, tg, {
-        let temp = (typed_value){.t = tg.t, .v = t->v};
-        return bigint_into_int(ss, alloc, &temp, b);
-      }),
-      (default, {
-        if (Type_isint(tt, e))
-          assertMessage(
-              false,
-              "unhandled integer case , %s",
-              snprint(stdAlloc, "{Type_full}", ((Type_full){tt, e})).ptr
-          );
-        assertMessage(false, "should not be called with a non-int");
-      }),
-  );
 }
 static inline astidx_span ast_block_children(superscope *ss, astidx args) {
   return tu_match_exp(

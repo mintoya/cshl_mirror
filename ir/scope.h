@@ -133,56 +133,9 @@ static inline cmpres Type_cmp_ndecor(Type a, Type b, typeenv e) {
   );
 }
 static inline bool Type_isnull(Type t) { return tu_is(r_null, t.t); }
-static inline Type Type_stripTag(Type t, typeenv e) {
-  while (tu_is(r_tag, t.t))
-    t.t = type_tree(e, tu_catch(r_tag, t.t).t);
-  return t;
-}
-static inline u32 Type_intLike_bitcount(Type t, typeenv e) {
-  t = Type_stripTag(t, e);
-  return tu_is(r_bool, t.t)   ? 1
-         : tu_is(r_sint, t.t) ? tu_catch(r_sint, t.t).bits
-         : tu_is(r_uint, t.t) ? tu_catch(r_uint, t.t).bits
-                              : 0;
-}
-static inline Type Type_weaker(Type a, Type b, typeenv e) {
-  Type as = Type_stripTag(a, e), bs = Type_stripTag(b, e);
-  bool ac = Type_is_comptime(as), bc = Type_is_comptime(bs);
-  Type pick;
-  if (ac != bc) pick = ac ? bs : as;
-  else if (ac) pick = as;
-  else if (Type_intLike_bitcount(as, e) != Type_intLike_bitcount(bs, e))
-    pick = Type_intLike_bitcount(as, e) > Type_intLike_bitcount(bs, e) ? as : bs;
-  else pick = tu_is(r_uint, as.t) ? as : bs;
-  pick.isref = false;
-  pick.iscomptime = false;
-  pick.isconst = a.isconst && b.isconst;
-  pick.isvolatile = a.isvolatile && b.isvolatile;
-  return pick;
-}
-static bool Type_is_integer_like(Type t, typeenv e) {
-  t = Type_stripTag(t, e);
-  return !t.ptr_level && (tu_is(r_bool, t.t) || Type_isint(t, e));
-}
 static inline void scope_add_inst errs(superscope *env, scope *s, ir i);
 static inline void scope_add_inst_typecheck errs(superscope *env, scope *s, ir i);
 
-static bool scope_cast_would_change(Type from, Type to, typeenv e) {
-  // TODO: volatile and const?
-  return !EQUAL_ANY(
-      0,
-      Type_cmp(e, to, T(tu_of(c_any, {}))),
-      Type_cmp(e, Type_stripTag(from, e), Type_stripTag(to, e))
-  );
-}
-static u32 scope_cast_value errs(superscope *ss, scope *s, u32 left, Type to) {
-  let e = ss_typeenv(ss);
-  let ot = ss_type(ss, scope_find(ss, s, left)->t);
-  if (!scope_cast_would_change(ot, to, e)) return left;
-  let d = scope_add_value(ss, s, TV_of(ss, to));
-  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_cast, {.l = left, .d = d})), 0);
-  return d;
-}
 static inline void scope_add_inst_typecheck errs(superscope *env, scope *s, ir i) {
   let tenv = ss_typeenv(env);
   tu_match_void(
@@ -381,3 +334,5 @@ static inline void ss_deInit(superscope *ss) {
   cba_deinit(ss->alloc);
   adestroy(allocator, ss);
 }
+
+#include "coerce.h"
