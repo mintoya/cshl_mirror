@@ -123,3 +123,50 @@ u32 lower_condition errs(superscope *ss, scope *s, astidx a) {
   let l = try_err(lower, (ss, s, a), 0);
   return try_err(scope_cast_value, (ss, s, l, T(tu_of(r_bool, {}))), 0);
 }
+static inline void scope_add_inst_typecheck errs(superscope *env, scope *s, ir i) {
+  let tenv = ss_typeenv(env);
+  tu_match_void(
+      i,
+      (ir_farg /*  */, _),
+      (ir_blocks /**/, _),
+      (ir_blocke /**/, _),
+      (ir_ifs /*   */, _),
+      (ir_ifd /*   */, _),
+      (ir_ife /*   */, _),
+      (ir_loops /* */, _),
+      (ir_loope /* */, _),
+      (ir_break /* */, _),
+      (ir_cont /*  */, _),
+      (ir_putptr, _, {
+        TODO();
+      }),
+      (ir_getptr, gp, {
+        TODO();
+      }),
+      (ir_getref, pp, {
+        TODO();
+      }),
+      (ir_rawop, _, {
+        TODO();
+      }),
+      (ir_set, _, {
+        TODO();
+      }),
+      (ir_cast, _, {
+        TODO();
+      }),
+      (ir_ret, _, {
+        TODO();
+      }),
+      (ir_call, _, {
+        TODO();
+      }),
+      (ir_array, _, {
+        TODO();
+      }),
+      // find item inside
+      (ir_field, _, {
+        TODO();
+      }),
+  );
+}

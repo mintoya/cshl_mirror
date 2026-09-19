@@ -136,53 +136,6 @@ static inline bool Type_isnull(Type t) { return tu_is(r_null, t.t); }
 static inline void scope_add_inst errs(superscope *env, scope *s, ir i);
 static inline void scope_add_inst_typecheck errs(superscope *env, scope *s, ir i);
 
-static inline void scope_add_inst_typecheck errs(superscope *env, scope *s, ir i) {
-  let tenv = ss_typeenv(env);
-  tu_match_void(
-      i,
-      (ir_farg /*  */, _),
-      (ir_blocks /**/, _),
-      (ir_blocke /**/, _),
-      (ir_ifs /*   */, _),
-      (ir_ifd /*   */, _),
-      (ir_ife /*   */, _),
-      (ir_loops /* */, _),
-      (ir_loope /* */, _),
-      (ir_break /* */, _),
-      (ir_cont /*  */, _),
-      (ir_putptr, _, {
-        TODO();
-      }),
-      (ir_getptr, gp, {
-        TODO();
-      }),
-      (ir_getref, pp, {
-        TODO();
-      }),
-      (ir_rawop, _, {
-        TODO();
-      }),
-      (ir_set, _, {
-        TODO();
-      }),
-      (ir_cast, _, {
-        TODO();
-      }),
-      (ir_ret, _, {
-        TODO();
-      }),
-      (ir_call, _, {
-        TODO();
-      }),
-      (ir_array, _, {
-        TODO();
-      }),
-      // find item inside
-      (ir_field, _, {
-        TODO();
-      }),
-  );
-}
 static inline void scope_add_inst errs(superscope *env, scope *s, ir i) {
   if (tu_is(ir_blocks, i)) scope_push_named(env, s);
   else if (tu_is(ir_blocke, i)) scope_pop_named(s);
