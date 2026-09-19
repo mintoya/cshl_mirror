@@ -36,104 +36,6 @@ tu_def(
 static inline fptr astLit_str(superscope *ss, astLit l) {
   return tu_match_exp(l, (astIdLit, l, ast_text(ss, l)), (astStrLit, l, ast_text(ss, l)), (astNumLit, l, ast_text(ss, l)));
 }
-u32 lower_overload_possible errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber) {
-  let t = ss_type(ss, scope_find(ss, s, left)->t);
-  if (t.ptr_level > 1) return 0;
-  let result = tu_match_exp(
-      t.t,
-      (default, (u32)0),
-      (r_arr, arr, ({ // array index
-                      // no bounds checking, because there is no pointer arithmatic
-         if (opNumber != opNumbers.call) return_err("ARRAY_NO_OP", 0);
-         let right_node = ast_at(ss, right);
-         (void)tu_catch(astABlock, right_node, return_err("ARRAY_NEEDS_ABLOCK", 0));
-         let items = ast_block_children(ss, right);
-         if (items.len != 1) return_err("ARRAY_INDEX_ONE_ARG", 0);
-         let r = try_err(lower, (ss, s, items.start), 0);
-         let d = scope_add_value(ss, s, TV_any(ss));
-         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_array, {.d = d, .r = r, .l = left})), 0);
-         d;
-       })),
-      (c_ast, _, ({
-         u32 ovl = 0;
-         if (opNumber == opNumbers.dot) {
-           let self = scope_find(ss, s, left)->v.c_ast;
-           let right_node = ast_at(ss, right);
-           iflet_tu (let m, astString, right_node) {
-             let ms = ast_text(ss, m);
-             astidx res = 0;
-             if (self && tu_is(astOp, ast_at(ss, self)) && ms.len >= 2 && ms.ptr[0] == '"' && ms.ptr[ms.len - 1] == '"') {
-               let self_node = ast_at(ss, self);
-               let op = tu_catch(astOp, self_node);
-               union {
-                 u32 n;
-                 char s[sizeof(u32)];
-               } spelling = {};
-               memcpy(spelling.s, ms.ptr + 1, ms.len - 2);
-               if (op.number_rep == spelling.n) res = self;
-             }
-             ovl = scope_add_value(ss, s, TV_ast(ss, res ?: ast_make_empty(ss)));
-           } else iflet_tu (let m, astId, right_node) {
-             let ms = ast_text(ss, m);
-             astidx res = 0;
-             if (self)
-               iflet_tu (let op, astOp, ast_at(ss, self)) {
-                 if (fptr_eq(ms, "opleft")) res = ast_child(ss, op.left_right);
-                 else if (fptr_eq(ms, "opright")) res = ast_child(ss, op.left_right + 1);
-               }
-             if (!res && self)
-               iflet_tu (let d, astDecl, ast_at(ss, self)) {
-                 if (fptr_eq(ms, "name")) res = ast_child(ss, d.name_type_value);
-                 else if (fptr_eq(ms, "type")) res = ast_child(ss, d.name_type_value + 1);
-                 else if (fptr_eq(ms, "value")) res = ast_child(ss, d.name_type_value + 2);
-               }
-             if (!res && self)
-               res = tu_match_exp(
-                   ast_at(ss, self),
-                   (astOp, _, /*    */ fptr_eq(ms, "op") /*    */ ? self : (astidx)0),
-                   (astId, _, /*    */ fptr_eq(ms, "id") /*    */ ? self : (astidx)0),
-                   (astDecl, _, /*  */ fptr_eq(ms, "decl") /*  */ ? self : (astidx)0),
-                   (astNumber, _, /**/ fptr_eq(ms, "number") /**/ ? self : (astidx)0),
-                   (astString, _, /**/ fptr_eq(ms, "string") /**/ ? self : (astidx)0),
-                   (astPBlock, _, /**/ fptr_eq(ms, "pblock") /**/ ? self : (astidx)0),
-                   (astBBlock, _, /**/ fptr_eq(ms, "bblock") /**/ ? self : (astidx)0),
-                   (astABlock, _, /**/ fptr_eq(ms, "ablock") /**/ ? self : (astidx)0),
-                   (astEmpty, _, (astidx)0),
-                   (astNull, _, (astidx)0),
-               );
-             ovl = scope_add_value(ss, s, TV_ast(ss, res ?: ast_make_empty(ss)));
-           }
-         } else if (opNumber == opNumbers.eq) {
-           let self = scope_find(ss, s, left)->v.c_ast;
-           let other = scope_find(ss, s, try_err(lower, (ss, s, right), 0));
-           bool res = false;
-           iflet_tu (let arr, r_arr, ss_type(ss, other->t).t) {
-             if (self) {
-               fptr word = tu_match_exp(
-                   ast_at(ss, self),
-                   (astId, id, /*       */ ast_text(ss, id)),
-                   (astNumber, num, /*  */ ast_text(ss, num)),
-                   (astString, str, /*  */ ast_text(ss, str)),
-                   (default, (fptr){})
-               );
-               if (tu_is(astString, ast_at(ss, self)))
-                 word = string_escape(ss->alloc, word);
-               res = fptr_eq(word, ((fptr){arr.count, (u8 *)other->v.value}));
-             }
-           } else if (tu_is(c_ast, ss_type(ss, other->t).t))
-             res = self == other->v.c_ast;
-           ovl = scope_add_value(
-               ss,
-               s,
-               TV_with(ss, T(tu_of(r_bool, {})), VS(avalue(ss->alloc, (bool)res)))
-           );
-         }
-         ovl;
-       })),
-  );
-  // if (!result) println("[LOG] failed overload {opNumber} for {Type}", opNumber, t);
-  return result;
-}
 
 u32 lower_dot errs(superscope *ss, scope *s, u32 left, astidx right, astLit lit) {
   let d = scope_add_value(ss, s, TV_any(ss));
@@ -186,7 +88,6 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
       }),
       (default),
   );
-  if_decl (let ovl, try_err(lower_overload_possible, (ss, s, left, right, opNumber), 0)) return ovl;
   let res = switch_exp(
       (op_as_enum(opNumber)),
       (enop_pipe /*   */, (assertMessage(false, "unreachable"), (u32)0)),

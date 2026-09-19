@@ -87,10 +87,10 @@ static inline typeidx ss_member_reserve(superscope *ss, usize count) {
     sglist_push(ss->sitems, (r_struct_item){});
   return start;
 }
-static inline ast ast_at(superscope *ss, astidx idx) {
-  let al = ss->asts;
+static inline ast ast_at_list(astlist al, astidx idx) {
   return (!idx || idx > al.len) ? (ast)tu_of(astNull, {}) : sglist_get(al, idx - 1);
 }
+static inline ast ast_at(superscope *ss, astidx idx) { return ast_at_list(ss->asts, idx); }
 static inline astidx ast_child(superscope *ss, astidx slot) { return tu_is(astNull, ast_at(ss, slot)) ? 0 : slot; }
 static inline fptr ast_text(superscope *ss, srcpos p) {
   return fp_from_srcpos((srcpos_full){.pidx = p, .plist = ss->plist, .flist = ss->flist});

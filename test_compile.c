@@ -356,7 +356,7 @@ test_fn(ast_dot_operator_match) {
   astidx_full ctx = {};
   let r = ast_probe(arena, fp("a.\"+\""), fp("1 + 2"), &ctx);
   test_assert(tu_is(c_ast, tv_type(r).t));
-  let node = ast_at(ctx.alist, r.v.c_ast);
+  let node = ast_at_list(ctx.alist, r.v.c_ast);
   test_assert(tu_is(astOp, node));
   test_inteq(tu_catch(astOp, node).number_rep, opNumbers.plus);
 }
@@ -368,7 +368,7 @@ test_fn(ast_dot_operator_mismatch) {
   astidx_full ctx = {};
   let r = ast_probe(arena, fp("a.\"+\""), fp("1 - 2"), &ctx);
   test_assert(tu_is(c_ast, tv_type(r).t));
-  test_assert(tu_is(astEmpty, ast_at(ctx.alist, r.v.c_ast)));
+  test_assert(tu_is(astEmpty, ast_at_list(ctx.alist, r.v.c_ast)));
 }
 
 test_fn(ast_dot_operation_members) {
@@ -378,14 +378,14 @@ test_fn(ast_dot_operation_members) {
   astidx_full lctx = {};
   let l = ast_probe(arena, fp("a.opleft"), fp("1 + 2"), &lctx);
   test_assert(tu_is(c_ast, tv_type(l).t));
-  let lnode = ast_at(lctx.alist, l.v.c_ast);
+  let lnode = ast_at_list(lctx.alist, l.v.c_ast);
   test_assert(tu_is(astNumber, lnode));
   test_fpeq(fp_from_srcpos((srcpos_full){.pidx = tu_catch(astNumber, lnode), .plist = lctx.plist, .flist = lctx.flist}), "1");
 
   astidx_full rctx = {};
   let rr = ast_probe(arena, fp("a.opright"), fp("1 + 2"), &rctx);
   test_assert(tu_is(c_ast, tv_type(rr).t));
-  let rnode = ast_at(rctx.alist, rr.v.c_ast);
+  let rnode = ast_at_list(rctx.alist, rr.v.c_ast);
   test_assert(tu_is(astNumber, rnode));
   test_fpeq(fp_from_srcpos((srcpos_full){.pidx = tu_catch(astNumber, rnode), .plist = rctx.plist, .flist = rctx.flist}), "2");
 }
@@ -397,7 +397,7 @@ test_fn(ast_dot_member_check_on_non_op) {
   astidx_full ctx = {};
   let l = ast_probe(arena, fp("a.opleft"), fp("7"), &ctx);
   test_assert(tu_is(c_ast, tv_type(l).t));
-  test_assert(tu_is(astEmpty, ast_at(ctx.alist, l.v.c_ast)));
+  test_assert(tu_is(astEmpty, ast_at_list(ctx.alist, l.v.c_ast)));
 }
 
 test_fn(ast_dot_kind_check) {
@@ -407,19 +407,19 @@ test_fn(ast_dot_kind_check) {
   astidx_full ictx = {};
   let i = ast_probe(arena, fp("a.id"), fp("foo"), &ictx);
   test_assert(tu_is(c_ast, tv_type(i).t));
-  let inode = ast_at(ictx.alist, i.v.c_ast);
+  let inode = ast_at_list(ictx.alist, i.v.c_ast);
   test_assert(tu_is(astId, inode));
   test_fpeq(fp_from_srcpos((srcpos_full){tu_catch(astId, inode), ictx.plist, ictx.flist}), "foo");
 
   astidx_full octx = {};
   let o = ast_probe(arena, fp("a.op"), fp("1 + 2"), &octx);
   test_assert(tu_is(c_ast, tv_type(o).t));
-  test_assert(tu_is(astOp, ast_at(octx.alist, o.v.c_ast)));
+  test_assert(tu_is(astOp, ast_at_list(octx.alist, o.v.c_ast)));
 
   astidx_full ectx = {};
   let e = ast_probe(arena, fp("a.id"), fp("7"), &ectx);
   test_assert(tu_is(c_ast, tv_type(e).t));
-  test_assert(tu_is(astEmpty, ast_at(ectx.alist, e.v.c_ast)));
+  test_assert(tu_is(astEmpty, ast_at_list(ectx.alist, e.v.c_ast)));
 }
 
 // @ast_op builds any operator out of its spelling, so a macro does not need a builtin per operator
@@ -431,12 +431,12 @@ test_fn(ast_op_builds_operator_from_spelling) {
   astidx_full ctx = {};
   let r = ast_probe(arena, fp("@ast_op(\"+\", a, @qot(7))"), fp("3"), &ctx);
   test_assert(tu_is(c_ast, tv_type(r).t));
-  let node = ast_at(ctx.alist, r.v.c_ast);
+  let node = ast_at_list(ctx.alist, r.v.c_ast);
   test_assert(tu_is(astOp, node));
   let op = tu_catch(astOp, node);
   test_inteq(op.number_rep, opNumbers.plus);
-  test_assert(tu_is(astNumber, ast_at(ctx.alist, op.left_right)));
-  test_assert(tu_is(astNumber, ast_at(ctx.alist, op.left_right + 1)));
+  test_assert(tu_is(astNumber, ast_at_list(ctx.alist, op.left_right)));
+  test_assert(tu_is(astNumber, ast_at_list(ctx.alist, op.left_right + 1)));
 }
 
 test_fn(struct_operator_overload_vector_equality_true) {

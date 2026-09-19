@@ -1,11 +1,6 @@
 #pragma once
 #include "common.h"
 #include "lower_op.h"
-#include "scope.h"
-#include "wheels/macros.h"
-#include "wheels/mytypes.h"
-#include "wheels/print/print_pre.h"
-#include <string.h>
 u32 lower_op_wrap errs(superscope *ss, scope *s, astidx left, astidx right, u32 number) {
   if (number == opNumbers.call && tu_or(astOp, ast_at(ss, left), {}).number_rep == opNumbers.colon) {
     let left_node = ast_at(ss, left);
@@ -84,9 +79,7 @@ u32 lower_low errs(superscope *ss, scope *s, astidx a) {
          value;
        })),
   );
-  res
-      ? (void)({ return res; })
-      : return_err("STATEMENT_NULL", 0);
+  assertMessage(res);
   return res;
 }
 u32 lower errs(superscope *ss, scope *s, astidx a) {

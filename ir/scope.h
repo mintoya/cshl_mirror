@@ -1,14 +1,8 @@
 #pragma once
-#include "../type.h"
 #include "common.h"
-#include "ir.h"
-#include "wheels/macros.h"
-#include "wheels/oxmap.h"
-#include "wheels/print/print_pre.h"
-#include <assert.h>
 #include <wheels/allocators/cballocator.h>
-#include <wheels/sList.h>
 #include <wheels/smap.h>
+
 sliceDef(u32);
 static struct {
   char buf[1024];
@@ -128,25 +122,8 @@ static inline Type Type_ref errs(Type t) {
 //
 
 static inline void scope_emit_inst errs(superscope *env, scope *s, ir i) { msList_push(env->alloc, s->instructions, i); }
-static inline void scope_wrap_child errs(superscope *env, scope *s, scope *b) {
-  assertMessage(b != s && b->parent == s, "b not inside s?");
-  assertMessage(b->start == s->start + msList_len(s->values));
-  try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_blocks, {})));
-  foreach (let inst, span(b->instructions, msList_len(b->instructions)))
-    try_err(scope_emit_inst, (env, s, *inst));
-  foreach (let v, span(b->values, msList_len(b->values)))
-    msList_push(env->alloc, s->values, *v);
-  try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_blocke, {})));
-  msList_deInit(env->alloc, b->instructions);
-  msList_deInit(env->alloc, b->values);
-  foreach (let m, mList_iter(b->named))
-    moxmap_deinit(m);
-  mList_deinit(b->named);
-  adestroy(env->alloc, b);
-}
-static bool Type_ncmp_nptr(Type a, Type b, typeenv e) {
-  return a.ptr_level == b.ptr_level && !TypeTree_cmp(e, a.t, b.t);
-}
+
+static bool Type_ncmp_nptr(Type a, Type b, typeenv e) { return a.ptr_level == b.ptr_level && !TypeTree_cmp(e, a.t, b.t); }
 static inline cmpres Type_cmp_ndecor(Type a, Type b, typeenv e) {
   let x = ~((Type){{}, {.isconst = true, .isvolatile = true, .iscomptime = true}}.decorations);
   return Type_cmp(
@@ -154,16 +131,6 @@ static inline cmpres Type_cmp_ndecor(Type a, Type b, typeenv e) {
       P$(a, ($.decorations &= x, $)),
       P$(b, ($.decorations &= x, $))
   );
-}
-static inline Type Type_try_unref(Type t) {
-  if (t.isref)
-    return P$(t, ($.isref = false, $));
-  return (Type){};
-}
-static inline Type Type_try_deref(Type t) {
-  if (t.ptr_level)
-    return P$(t, ($.ptr_level--, $));
-  return (Type){};
 }
 static inline bool Type_isnull(Type t) { return tu_is(r_null, t.t); }
 static inline Type Type_stripTag(Type t, typeenv e) {
