@@ -503,6 +503,24 @@ typePrinter(scope_full) {
         (ir_ret, v, PUTS("(return "), USETYPEPRINTER(u32, v), PUTS(")")),
         (ir_break, _, PUTS("(break)")),
         (ir_cont, _, PUTS("(continue)")),
+        (ir_call, c, {
+          PUTS("(call ");
+          USETYPEPRINTER(u32, c.l), PUTS(" ");
+          USETYPEPRINTER(u32, c.r), PUTS(" "), USETYPEPRINTER(u32, c.e);
+          PUTS(" -> "), USETYPEPRINTER(u32, c.d);
+          PUTS(")");
+        }),
+        (ir_blocks, _, PUTS("(blockstart)")),
+        (ir_blocke, _, PUTS("(blockend)")),
+        (ir_ifs, r, {
+          PUTS("(ifs ");
+          USETYPEPRINTER(u32, r);
+          PUTS(")");
+        }),
+        (ir_ifd, _, PUTS("(ifd)")),
+        (ir_ife, _, PUTS("(ife)")),
+        (ir_loops, _, PUTS("(loops)")),
+        (ir_loope, _, PUTS("(loope)")),
         (default, TODO()),
     );
     PUTS(",");
