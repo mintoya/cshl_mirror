@@ -1,6 +1,7 @@
 #pragma once
 #include "common.h"
 #include "lower_op.h"
+
 u32 lower_op_wrap errs(superscope *ss, scope *s, astidx left, astidx right, u32 number) {
   if (number == opNumbers.call && tu_or(astOp, ast_at(ss, left), {}).number_rep == opNumbers.colon) {
     let left_node = ast_at(ss, left);

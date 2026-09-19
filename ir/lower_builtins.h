@@ -2,8 +2,7 @@
 #include "common.h"
 #include "function.h"
 #include "scope.h"
-#include "wheels/macros.h"
-#include "wheels/print/print_pre.h"
+
 static u32 lower_builtin_closure errs(superscope *ss, scope *s, astidx args) { return_err("UNIMPLEMENTED", 0); }
 static u32 lower_builtin_fn errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss, args);
