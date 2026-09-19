@@ -27,40 +27,9 @@ typed_value interpret errs(superscope *ss, scope *s);
 //
 //
 
-static typed_value *intstate_reg(intstate st, const scope *_s, u32 idx) {
-  let owner = scope_owner((scope *)_s, idx);
-  if_decl (let active, mxmap_get(st->vmap, (const scope *)owner))
-    if (msList_last(active)->len) return &msList_last(active)->ptr[idx - owner->start - 1];
-  return scope_find(st->ss, (scope *)_s, idx);
-}
-
-static void *intstate_data(intstate st, intframe *f, u32 idx) {
-  let v = *intstate_reg(st, f->s, idx);
-  if (!v.v.value) return nullptr;
-  return ss_type(st->ss, v.t).isref ? *(void **)v.v.value : v.v.value;
-}
-
-static void intstate_copy errs(intstate st, typed_value *from, typed_value *to) {
-  let dt = ss_type(st->ss, to->t);
-  tu_match_void(
-      dt.t,
-      (c_int, _, to->v.c_int = from->v.c_int ? BInt.copy(st->ss->alloc, from->v.c_int) : nullptr),
-      (c_ast, _, to->v.c_ast = from->v.c_ast),
-      (c_type, _, to->v.c_type = from->v.c_type),
-      (c_fun, _, to->v.c_fun = from->v.c_fun),
-      (builtin, _, return_err("SET_BUILTIN")),
-      (default, {
-        let size = Type_sizeof(P$(dt, ($.isref = false, $)), ss_typeenv(st->ss));
-        if (!size) return;
-        let data = !from->v.value ? nullptr : ss_type(st->ss, from->t).isref ? *(void **)from->v.value
-                                                                             : from->v.value;
-        if (!data) return_err("VALUE_HAS_NO_STORAGE");
-        void *dst = dt.isref && to->v.value ? *(void **)to->v.value : to->v.value;
-        if (!dst) return_err("REGISTER_HAS_NO_STORAGE");
-        memcpy(dst, data, size);
-      }),
-  );
-}
+static typed_value *intstate_reg(intstate st, const scope *_s, u32 idx);
+static void *intstate_data(intstate st, intframe *f, u32 idx);
+static void intstate_copy errs(intstate st, typed_value *from, typed_value *to);
 
 //
 //

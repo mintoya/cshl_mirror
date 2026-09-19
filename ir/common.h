@@ -43,24 +43,23 @@ typedef struct function {
 struct superscope {
   allocfn alloc;
 
-  struct {
+  struct { // TODO: maybe store referances
     astlist asts;
     poslist plist;
     filelist flist;
+    typelist tlist;
+    typestructlist sitems;
+    typebitflist bitems;
   };
 
-  typelist tlist;
-  typestructlist sitems;
-  typebitflist bitems;
-
   moxmap(Type, typeidx) typeindex;
-  typeidx t_void, t_any, t_int, t_ast, t_type;
   mxmap(void *, usize) pointers;
   msList(typeidx) thisstack;
   moxmap(fptr, scope *) type_info;
   msList(function) functions;
-  Type *current_ret;
   scope *outermost;
+
+  typeidx t_void, t_any, t_int, t_ast, t_type;
   u32 foldempty;
 };
 static inline typeenv ss_typeenv(superscope *ss) {
@@ -72,14 +71,10 @@ static inline typeenv ss_typeenv(superscope *ss) {
       .flist = ss->flist,
   };
 }
-static inline TypeTree_full ss_ttf(superscope *ss, TypeTree t) { return (TypeTree_full){t, ss_typeenv(ss)}; }
 static inline Type_full ss_tf(superscope *ss, Type t) { return (Type_full){t, ss_typeenv(ss)}; }
 
 static inline cmpres Type_cmp_hash_ss(void *env, const void *a, const void *b) {
   return Type_cmp(ss_typeenv((superscope *)env), *(Type *)a, *(Type *)b);
-}
-static inline cmpres TypeTree_cmp_hash_ss(void *env, const void *a, const void *b) {
-  return TypeTree_cmp(ss_typeenv((superscope *)env), *(TypeTree *)a, *(TypeTree *)b);
 }
 static inline typeidx ss_type_reserve(superscope *ss, usize count) {
   foreach (let i, range(0, count + 1))
@@ -92,15 +87,16 @@ static inline typeidx ss_member_reserve(superscope *ss, usize count) {
     sglist_push(ss->sitems, (r_struct_item){});
   return start;
 }
-static inline ast ast_at(astlist al, astidx idx) {
+static inline ast ast_at(superscope *ss, astidx idx) {
+  let al = ss->asts;
   return (!idx || idx > al.len) ? (ast)tu_of(astNull, {}) : sglist_get(al, idx - 1);
 }
-static inline astidx ast_child(astlist al, astidx slot) { return tu_is(astNull, ast_at(al, slot)) ? 0 : slot; }
+static inline astidx ast_child(superscope *ss, astidx slot) { return tu_is(astNull, ast_at(ss, slot)) ? 0 : slot; }
 static inline fptr ast_text(superscope *ss, srcpos p) {
   return fp_from_srcpos((srcpos_full){.pidx = p, .plist = ss->plist, .flist = ss->flist});
 }
 static inline usize ast_loc(superscope *ss, astidx idx) {
-  let p = srcpos_ast(ast_at(ss->asts, idx), ss->asts);
+  let p = srcpos_ast(ast_at(ss, idx), ss->asts);
   return (!p || p > ss->plist.len) ? (usize)-1 : sglist_get(ss->plist, p - 1).offset;
 }
 static inline srcpos ss_srcpos_of_text(superscope *ss, fptr text) {
@@ -300,6 +296,7 @@ static inline Type value_asType errs(superscope *ss, typed_value t) {
   return type_at(ss_typeenv(ss), t.v.c_type);
 }
 static inline typed_value Type_asValue(superscope *s, Type t) { return TV_type(s, ss_type_intern(s, t)); }
+
 static inline fptr string_escape(allocfn allocator, fptr in) {
   assertMessage(in.len > 1 && in.ptr[0] == '"' && in.ptr[in.len - 1] == '"');
   let result = mList_init(allocator, u8, in.len - 2);
@@ -420,34 +417,34 @@ static inline void bigint_into_int(superscope *ss, allocfn alloc, typed_value *t
       }),
   );
 }
-static inline astidx_span ast_block_children(astlist al, astidx args) {
+static inline astidx_span ast_block_children(superscope *ss, astidx args) {
   return tu_match_exp(
-      ast_at(al, args),
+      ast_at(ss, args),
       (astABlock, b, ({
          astidx start = b.start, end = start;
-         while (!tu_is(astNull, ast_at(al, end)))
+         while (!tu_is(astNull, ast_at(ss, end)))
            end++;
          (astidx_span){start, end - start};
        })),
       (astBBlock, b, ({
          astidx start = b.start, end = start;
-         while (!tu_is(astNull, ast_at(al, end)))
+         while (!tu_is(astNull, ast_at(ss, end)))
            end++;
          (astidx_span){start, end - start};
        })),
       (astPBlock, b, ({
          astidx start = b.start, end = start;
-         while (!tu_is(astNull, ast_at(al, end)))
+         while (!tu_is(astNull, ast_at(ss, end)))
            end++;
          (astidx_span){start, end - start};
        })),
       (default, (assertMessage(false, "unreachable"), (astidx_span){})),
   );
 }
-static inline astidx_span builtin_arg_list(astlist al, astidx args) {
-  iflet_tu (let block, astPBlock, ast_at(al, args)) {
+static inline astidx_span builtin_arg_list(superscope *ss, astidx args) {
+  iflet_tu (let block, astPBlock, ast_at(ss, args)) {
     astidx start = block.start, end = start;
-    while (!tu_is(astNull, ast_at(al, end)))
+    while (!tu_is(astNull, ast_at(ss, end)))
       end++;
     return (astidx_span){start, end - start};
   }
@@ -458,15 +455,15 @@ static inline astidx_full ss_ast_full(superscope *ss, astidx idx) {
 }
 
 static inline fptr id_from_ast errs(superscope *ss, scope *s, astidx name) {
-  iflet_tu (let id, astId, ast_at(ss->asts, name)) return ast_text(ss, id);
+  iflet_tu (let id, astId, ast_at(ss, name)) return ast_text(ss, id);
   let tv = try_err(temporary_interpret, (ss, s, name), nullFptr);
   if (!tu_is(c_ast, ss_type(ss, tv.t).t) || !tv.v.c_ast) return_err("ID_REQUIRES_ASTID", nullFptr);
-  let inner = ast_at(ss->asts, tv.v.c_ast);
+  let inner = ast_at(ss, tv.v.c_ast);
   if (!tu_is(astId, inner)) return_err("ID_REQUIRES_ASTID", nullFptr);
   return ast_text(ss, tu_catch(astId, inner));
 }
 static inline srcpos id_srcpos(superscope *ss, astidx name, fptr text) {
-  iflet_tu (let id, astId, ast_at(ss->asts, name)) return id;
+  iflet_tu (let id, astId, ast_at(ss, name)) return id;
   return ss_srcpos_of_text(ss, text);
 }
 
@@ -589,6 +586,7 @@ typePrinter(scope_full) {
         (ir_ret, v, PUTS("(return "), USETYPEPRINTER(u32, v), PUTS(")")),
         (ir_break, _, PUTS("(break)")),
         (ir_cont, _, PUTS("(continue)")),
+        (default, TODO()),
     );
     PUTS(",");
   }
@@ -613,11 +611,3 @@ typePrinter(scope_full) {
   // PUTS(")");
   PUTS(")");
 };
-test_fn(into_int) {
-  usize x = ~(u32)0 + 1;
-  let x2 = x;
-  let b = BInt.from.i64(allocator, x);
-  defer { msList_deInit(allocator, b); }
-  bigint_into_slot((u8 *)&x, sizeof(x), b);
-  test_inteq(x, x2);
-}

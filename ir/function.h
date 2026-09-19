@@ -1,20 +1,13 @@
 #pragma once
-#include "../type.h"
 #include "common.h"
-#include "lower.h"
-#include "scope.h"
-#include "wheels/macros.h"
-#include "wheels/mytypes.h"
-#include "wheels/sList.h"
-#include <string.h>
-#include <wheels/fptr.h>
-#include <wheels/mylist.h>
-#include <wheels/oxmap.h>
 
 sliceDef(typed_value);
 sliceDef(Type);
 
+//
 // cmp
+//
+
 static cmpres typed_value_cmp_typed(Type ta, value_store av, Type tb, value_store bv, typeenv e) {
   if_decl (let cmp, Type_cmp(e, ta, tb)) return cmp;
   assertMessage(Type_is_comptime(ta) ?: (!av.value && !bv.value), "should have nulled that out");
@@ -59,7 +52,10 @@ cmpres slice_typed_value_cmp_hash(void *env, const void *a, const void *b) {
     if_decl (let cmp, typed_value_cmp(ss_typeenv((superscope *)env), av.ptr[i], bv.ptr[i])) return cmp;
   return 0;
 }
+
+//
+//
 //
 
 u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, astidx body);
-u32 lower_function_call errs(superscope *ss, scope *s, u32 fn, astidx args, u32 lead);
+u32 lower_function_call errs(superscope *ss, scope *s, u32 fn, u32 ofirst, astidx args);
