@@ -977,6 +977,25 @@ test_fn(array_access_is_addressable) {
   test_assert(tu_is(r_sint, tv_type(r).t));
   test_inteq(*(i32 *)r.v.value, 0);
 }
+test_fn(ast_array) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "a ~~ @qot [0,1,2,3,4,5];\n"
+          "b ~~ @qot (0,1,2,3,4,5);\n"
+          "c ~~ @qot {0;1;2;3;4;5;};\n"
+          "i ~@sint(32)~@uqot(a[3]) + @uqot(b[1]) + @uqot(c[2]);\n"
+          "i\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_sint, tv_type(r).t));
+  test_inteq(*(i32 *)r.v.value, 6);
+}
 test_fn(sib_fn_call) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -1037,7 +1056,7 @@ test_fn(referance_types_i){
           "i32 ~~ @sint(32);\n"
           "i~i32=5;\n"
           "i2~@refT(@sint(32))=i;\n"
-          "i2 = 67"
+          "i2 = 67;\n"
           "i;\n"
       ),
       nullptr

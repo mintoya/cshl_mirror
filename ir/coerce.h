@@ -137,34 +137,44 @@ static inline void scope_add_inst_typecheck errs(superscope *env, scope *s, ir i
       (ir_loope /* */, _),
       (ir_break /* */, _),
       (ir_cont /*  */, _),
+      // d must be l with one less pointer level
       (ir_putptr, _, {
         TODO();
       }),
+      // d must be l with one more pointer level
       (ir_getptr, gp, {
         TODO();
       }),
+      // d must be l that is a referance
       (ir_getref, pp, {
         TODO();
       }),
+      // all function overloading, functions must return the correct type
+      // besides that, integer operations
       (ir_rawop, _, {
         TODO();
       }),
+      // must check = operator
       (ir_set, _, {
         TODO();
       }),
+      // must check as operator
       (ir_cast, _, {
         TODO();
       }),
+      // must be same type as current return
       (ir_ret, _, {
         TODO();
       }),
+      // normal call + () opeerator member function, must check
       (ir_call, _, {
         TODO();
       }),
+      // find n'th item inside array, must be a referance
       (ir_array, _, {
         TODO();
       }),
-      // find item inside
+      // find n'th item inside bitfield, must be a referance
       (ir_field, _, {
         TODO();
       }),
