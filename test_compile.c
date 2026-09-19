@@ -1008,6 +1008,44 @@ test_fn(sib_fn_call) {
   test_assert(tu_is(r_sint, tv_type(r).t));
   test_inteq(*(i32 *)r.v.value, 111);
 }
+test_fn(referance_types){
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "i32 ~~ @sint(32);\n"
+          "i~i32=5;\n"
+          "i2~@refT(@sint(32))=i;\n"
+          "@at(@where(i2))=67;\n"
+          "i;\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_sint, tv_type(r).t));
+  test_inteq(*(i32 *)r.v.value, 67);
+}
+test_fn(referance_types_i){
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+
+  let r = interpret_source(
+      arena,
+      fp(
+          "i32 ~~ @sint(32);\n"
+          "i~i32=5;\n"
+          "i2~@refT(@sint(32))=i;\n"
+          "i2 = 67"
+          "i;\n"
+      ),
+      nullptr
+  );
+
+  test_assert(tu_is(r_sint, tv_type(r).t));
+  test_inteq(*(i32 *)r.v.value, 67);
+}
 
 test_fn(forward_declarations_fill_in) {
   let arena = arena_new_ext(allocator, 1 << 16);
