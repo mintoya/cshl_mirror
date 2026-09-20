@@ -11,16 +11,15 @@ typedef struct {
   const scope *s;
   // items copy,  last n items are functions arguments
   slice(typed_value) vals;
-  // storage owned by this activation, freed when the frame is popped
   allocfn arena;
+  // where this activation's `return` writes: a register of whoever called it
+  typed_value *ret;
 } intframe;
 typedef struct {
   // stack
   msList(intframe) cs;
   // map of scope to the currently active value list
   mxmap(const scope *, msList(slice(typed_value))) vmap;
-  // what is written to return
-  typed_value *ret;
   superscope *ss;
 } *intstate;
 
@@ -31,8 +30,8 @@ typed_value interpret_shared errs(superscope *ss, scope *s);
 //
 //
 
-static void intstate_push(intstate st, const scope *s, slice(typed_value) args);
-static void intstate_push_shared(intstate st, const scope *s);
+static intframe *intstate_push(intstate st, const scope *s, slice(typed_value) args);
+static intframe *intstate_push_shared(intstate st, const scope *s);
 static void intstate_pop(intstate st);
 static void intstate_run errs(intstate st);
 
@@ -65,8 +64,6 @@ static void intstate_copy errs(intstate st, typed_value *from, typed_value *to) 
         void *src = ss_type(st->ss, from->t).isref
                         ? (from->v.value ? *(void **)from->v.value : nullptr)
                         : from->v.value;
-        // a reference that already points somewhere is written through, one that is still nil binds
-        // to the source's referent instead (how a reference parameter receives its argument)
         void *dst = dref ? (to->v.value ? *(void **)to->v.value : nullptr) : to->v.value;
         if (dref && !dst) {
           if (to->v.value) memcpy(to->v.value, &src, sizeof(src));
@@ -83,8 +80,8 @@ static void intstate_copy errs(intstate st, typed_value *from, typed_value *to) 
 //
 
 static void interpret_ret errs(intstate st, intframe *f, u32 r) {
-  if (!st->ret) return_err("RETURN_NOT_RETURNABLE");
-  try_err(intstate_copy, (st, intstate_reg(st, f->s, r), st->ret));
+  if (!f->ret) return_err("RETURN_NOT_RETURNABLE");
+  try_err(intstate_copy, (st, intstate_reg(st, f->s, r), f->ret));
 }
 static void interpret_set errs(intstate st, intframe *f, ir_set c) {
   try_err(intstate_copy, (st, intstate_reg(st, f->s, c.l), intstate_reg(st, f->s, c.d)));
@@ -185,16 +182,10 @@ static void interpret_call errs(intstate st, intframe *f, ir_call c) {
   };
   foreach (let i, range(0, nargs))
     args.ptr[i] = f->vals.ptr[c.r + i];
-
-  typed_value *caller_ret = st->ret;
-  st->ret = intstate_reg(st, f->s, c.d);
-  intstate_push(st, spec, args);
-  defer { intstate_pop(st); };
-  try_err(intstate_run, (st));
-  st->ret = caller_ret;
+  intstate_push(st, spec, args)->ret = intstate_reg(st, f->s, c.d);
 }
 
-static void intstate_push(intstate st, const scope *s, slice(typed_value) args) {
+static intframe *intstate_push(intstate st, const scope *s, slice(typed_value) args) {
   usize len = msList_len(s->values);
   usize total = len + args.len;
   slice(typed_value) vals = total ? slice_alloc(st->ss->alloc, typed_value, total) : (slice(typed_value)){};
@@ -232,9 +223,11 @@ static void intstate_push(intstate st, const scope *s, slice(typed_value) args) 
   else msList_push(st->ss->alloc, *ml, vals);
 
   msList_push(st->ss->alloc, st->cs, (intframe){.s = s, .vals = vals, .arena = mem});
+  return &msList_last(st->cs);
 }
-static void intstate_push_shared(intstate st, const scope *s) {
+static intframe *intstate_push_shared(intstate st, const scope *s) {
   msList_push(st->ss->alloc, st->cs, (intframe){.s = s, .vals = (slice(typed_value)){.ptr = (typed_value *)s->values, .len = msList_len(s->values)}});
+  return &msList_last(st->cs);
 }
 static void intstate_pop(intstate st) {
   let frame = msList_pop(st->cs);
@@ -292,7 +285,11 @@ static usize intstate_leave_loop(intframe *f, usize from) {
 static void intstate_run errs(intstate st) {
   while (true) {
     intframe *f = &msList_last(st->cs);
-    if (f->pc >= msList_len(f->s->instructions)) return;
+    if (f->pc >= msList_len(f->s->instructions)) {
+      if (msList_len(st->cs) == 1) return;
+      intstate_pop(st);
+      continue;
+    }
     usize at = f->pc;
     ir inst = f->s->instructions[at];
     f->pc++;
@@ -342,10 +339,7 @@ static void intstate_deInit(intstate st) {
   msList_deInit(st->ss->alloc, st->cs);
 }
 
-// the value written to the return slot, copied into the long lived allocator: a frame's arena dies
-// with the frame, so nothing may point into it
 static typed_value interpret_retrieve(superscope *ss, typed_value out) {
-  // a reference is one dereference away from the value the program actually yielded
   if (ss_type(ss, out.t).isref) {
     Type t = ss_type(ss, out.t);
     t.isref = false;
@@ -365,8 +359,7 @@ static typed_value interpret_retrieve(superscope *ss, typed_value out) {
 static typed_value interpret_into errs(superscope *ss, scope *s, typed_value *ret) {
   intstate st = intstate_init(ss->alloc, ss);
   defer { intstate_deInit(st); };
-  intstate_push(st, s, (slice(typed_value)){});
-  st->ret = ret;
+  intstate_push(st, s, (slice(typed_value)){})->ret = ret;
   try_err(intstate_run, (st), (typed_value){});
   if (!ret->v.value) {
     println("[INTO] empty ret type={Type_full}", ((Type_full){ss_type(ss, ret->t), ss_typeenv(ss)}));
@@ -378,11 +371,10 @@ static typed_value interpret_into errs(superscope *ss, scope *s, typed_value *re
 static typed_value interpret_impl errs(superscope *ss, scope *s, bool own_registers) {
   intstate st = intstate_init(ss->alloc, ss);
   defer { intstate_deInit(st); };
-  if (own_registers) intstate_push_shared(st, s);
-  else intstate_push(st, s, (slice(typed_value)){});
-  intframe *entry = &msList_last(st->cs);
+  intframe *entry = own_registers ? intstate_push_shared(st, s)
+                                  : intstate_push(st, s, (slice(typed_value)){});
   typed_value *yield = &entry->vals.ptr[entry->vals.len - 1];
-  st->ret = yield;
+  entry->ret = yield;
   try_err(intstate_run, (st), (typed_value){});
   if (!yield->v.value && Type_sizeof(ss_type(ss, yield->t), ss_typeenv(ss)))
     return_err("YIELD_EMPTY", (typed_value){});

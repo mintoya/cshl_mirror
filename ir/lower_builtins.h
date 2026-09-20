@@ -13,8 +13,7 @@ static u32 lower_builtin_fn errs(superscope *ss, scope *s, astidx args) {
 static u32 lower_builtin_cif errs(superscope *ss, scope *s, astidx args) {
   builtin_args(ss, args, 2, 3);
   let value = ({
-    let ns = P$(scope_inferior(ss, s), ($->rootable = false, $));
-    defer { scope_destroy(ss, ns); };
+    let ns = scope_inferior(ss, s);
     try_err(lower_condition, (ss, ns, list.start + 0), 0);
     try_err(interpret, (ss, ns), 0);
   });
@@ -371,7 +370,7 @@ static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
   let _this = T(tu_of(r_tag, {ss_type_intern(ss, T(tu_of(r_struct, members))), unique_type_name(ss)}));
   let this_idx = ss_type_intern(ss, _this);
 
-  let working_scope = scope_inferior(ss, scope_find_rootable(ss, s));
+  let working_scope = scope_inferior(ss, s);
   msList_push(ss->alloc, ss->thisstack, this_idx);
   defer { msList_pop(ss->thisstack); };
   moxmap_set(ss->type_info, type_name(ss_typeenv(ss), _this.t.r_tag.name), working_scope);

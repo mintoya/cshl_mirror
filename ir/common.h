@@ -21,7 +21,6 @@ struct scope {
   // TODO: keep names around for debugging
   mList(moxmap(fptr, u32)) named;
   u32 start;
-  bool rootable;
   struct {
     u32 fn, index;
   } instance;
@@ -117,8 +116,6 @@ static inline astidx ast_make_empty(superscope *ss) {
 
 u32 scope_last_item(superscope *ss, scope *s);
 scope *scope_inferior(superscope *b, scope *s);
-scope *scope_find_rootable(superscope *b, scope *s);
-void scope_destroy(superscope *b, scope *s);
 u32 scope_add_value(superscope *env, scope *s, typed_value v);
 typeidx ss_type_intern(superscope *ss, Type t);
 static inline Type *ss_getType(superscope *ss, Type t) {
@@ -146,13 +143,9 @@ typed_value interpret errs /*          */ (superscope *ss, scope *s);
 static u32 lower_function_call_values errs(superscope *ss, scope *s, u32 fn, slice(u32) vals);
 
 typed_value temporary_interpret errs(superscope *ss, scope *s, astidx a) {
-  let work = P$(scope_inferior(ss, s), ($->rootable = false, $));
-  defer { scope_destroy(ss, work); };
+  let work = scope_inferior(ss, s);
   try_err(lower, (ss, work, a), (typed_value){});
-  let result = try_err(interpret, (ss, work), (typed_value){});
-  if (tu_is(c_int, ss_type(ss, result.t).t) && result.v.c_int)
-    result.v.c_int = BInt.copy(ss->alloc, result.v.c_int);
-  return result;
+  return try_err(interpret, (ss, work), (typed_value){});
 }
 
 typedef enum enum_op {

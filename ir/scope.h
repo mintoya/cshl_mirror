@@ -44,7 +44,6 @@ scope *scope_inferior(superscope *b, scope *s) {
           .values = msList_init(b->alloc, typed_value),
           .named = named,
           .start = s ? s->start + msList_len(s->values) : 0,
-          .rootable = s ? s->rootable : true,
       })
   );
   scope_add_value(b, res, TV_void(b));
@@ -57,25 +56,6 @@ static inline void scope_pop_named(scope *s) {
   if (mList_len(s->named) > 1) moxmap_deinit(mList_pop(s->named));
 }
 
-scope *scope_find_rootable(superscope *b, scope *s) {
-  while (!s->rootable)
-    s = s->parent;
-  assertMessage(s);
-  return s;
-}
-void scope_destroy(superscope *b, scope *s) {
-  foreach (let item, span(s->values, msList_len(s->values))) {
-    let it = ss_type(b, item->t);
-    if (tu_is(c_int, it.t) && !it.isref)
-      msList_deInit(b->alloc, item->v.c_int);
-  }
-  msList_deInit(b->alloc, s->values);
-  msList_deInit(b->alloc, s->instructions);
-  foreach (let m, mList_iter(s->named))
-    moxmap_deinit(m);
-  mList_deinit(s->named);
-  adestroy(b->alloc, s);
-}
 static inline void scope_resize_value(superscope *env, typed_value *v) {
   if (v->v.value) return;
   if_decl (let sz, Type_sizeof(ss_type(env, v->t), ss_typeenv(env)))
