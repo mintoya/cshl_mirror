@@ -95,12 +95,6 @@ test_fn(interpret_string_value) {
   test_fpeq(((fptr){arr.count, (u8 *)r.v.value}), "yo");
 }
 
-test_file_1(interpret_type_fn);
-
-test_file_1(interpret_zero_arg_call);
-
-test_file_1(interpret_global_comptime_mutation);
-
 static interp ast_probe(allocfn arena, fptr dotwork, fptr arg, astidx_full *ctx) {
   let src = snprint(
       arena,
@@ -142,15 +136,6 @@ test_fn(interpret_comptime_recursion_low) {
 }
 */
 
-test_file_1(interpret_runtime_recursion);
-
-// a const declaration binds the register it declares in place, so `~~ f()` retypes the call's
-// destination register; the callee returns an unqualified value and const says nothing about the
-// value's shape, so the return still has to be accepted
-test_file_1(const_declaration_retypes_call_destination);
-
-test_file_1(if_cshl);
-
 test_fn(bool_bigint_roundtrip) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -169,10 +154,6 @@ test_fn(bool_bigint_roundtrip) {
   bigint_into_int(env, arena, &tv, BInt.from.i64(arena, 0));
   test_inteq(*mem, 0);
 }
-
-// a bigint is only as wide as the value in it, so writing one into a wider integer has to extend it
-// to the slot first: the write reads the slot's bytes straight out of the bigint's limbs
-test_file_1(wide_integer_write_extends_the_bigint);
 
 test_fn(ast_dot_operator_match) {
   let arena = arena_new_ext(allocator, 1 << 16);
@@ -264,14 +245,6 @@ test_fn(ast_op_builds_operator_from_spelling) {
   test_assert(tu_is(astNumber, ast_at_list(ctx.alist, op.left_right + 1)));
 }
 
-test_file_1(struct_operator_overload_vector_equality_true);
-
-test_file_1(struct_cast_ovl);
-
-test_file_1(type_equality_comptime);
-
-test_file_1(type_equality_comptime_false);
-
 test_fn(struct_operator_overload_vector_equality_false) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -300,73 +273,38 @@ test_fn(struct_operator_overload_vector_equality_false) {
   test_inteq(*(u8 *)r.v.value, 0);
 }
 
+test_file_1(interpret_type_fn);
+test_file_1(interpret_zero_arg_call);
+test_file_1(interpret_global_comptime_mutation);
+test_file_1(interpret_runtime_recursion);
+test_file_1(const_declaration_retypes_call_destination);
+test_file_1(if_cshl);
+test_file_1(wide_integer_write_extends_the_bigint);
+test_file_1(struct_operator_overload_vector_equality_true);
+test_file_1(struct_cast_ovl);
+test_file_1(type_equality_comptime);
+test_file_1(type_equality_comptime_false);
 test_file_1(struct_operator_overload_self_in_body);
-
 test_file_1(struct_as_overload);
-
-// `as` with no overload member is just a cast to the type the right hand side names
 test_file_1(as_without_overload_is_a_cast);
-
-// a function cannot capture the frame it was written in, so a closure carries its captures in a
-// struct and calls itself through a "()" overload
 test_file_1(struct_closure_capture);
-
-// a "()" overload called as the last expression has to yield the call result, not a cast that
-// coerced one of its arguments; the call allocates those casts above the result register
 test_file_1(overload_call_yields_the_result_after_arg_coercion);
-
-// an explicit @ref capture stores the address, so the call aliases the source
 test_file_1(struct_ref_capture);
-
-// a lowered lvalue is a ref, so @where must not address the ref register itself, and @at must give
-// back an alias of the pointee
 test_file_1(where_at_alias);
-
-// a function declared to return `any` resolves to the concrete type of what it returns,
-// so callers can use the result as that type instead of an erased `any`
 test_file_1(any_return_adopts_concrete_type);
-
-// integer math lands on the weaker of the two operand types, so a runtime int beats a comptime
-// literal and the wider int wins. coercing the operands allocates temporaries above the result, so
-// this also pins down that the block still yields the result and not one of those casts
 test_file_1(math_coerces_to_the_weaker_int);
-
-// a comptime literal next to a runtime int must not drag the result back to the comptime int
-// (the `3 + x` case)
 test_file_1(comptime_literal_math_adopts_runtime_type);
-
 test_file_1(math_unsigned_is_weaker_at_the_same_width);
-
-// bxor is a bitwise operator like band and bor: it lands on the weaker of the two ints and toggles
-// the bits that only one of the operands carries
 test_file_1(bxor_toggles_the_bits);
-
-// two comptime operands have nothing to coerce and still fold to a comptime int
 test_file_1(comptime_math_stays_comptime);
-
-// a.b = c has to write into the struct, and reading it back has to see that same member, so the
-// access register is the member rather than a copy of it. a variable on the right is copied into
-// the member, so s.a is 5 after y changes, not an alias of y
 test_file_1(field_assignment_writes_into_the_struct);
-
-// the access is an lvalue inside the struct, so @where on it addresses the member and @at writes
-// back through that address, the same way it does for a named local
 test_file_1(field_access_is_addressable);
-
-// x[i] is an lvalue inside the array, so writing it writes the element, and a variable on the
-// right is copied in rather than bound to the access register and thrown away with it
 test_file_1(array_assignment_writes_into_the_array);
-
 test_file_1(array_access_is_addressable);
-
 test_file_1(ast_array);
-
 test_file_1(ast_array_falsy);
-
 test_file_1(sib_fn);
-
 test_file_1(referance_types);
-
 test_file_1(referance_types_i);
 
 //
