@@ -1,8 +1,14 @@
 ast ~~ @ast();
 int ~~ @int();
-@ast_len ~~ @fn (in ~ast, i ~int),int,{
-  @cif (in[i]), (return @apply(@ast_len, in, i + 1));
+ast_lenr ~~ @fn (in ~ast,i~int),int,{
+  @cif (in[i]), (return @uqot@qot(ast_lenr(@uqot(in),i+1)));
   return i;
 };
-l~@sint(32)~@ast_len([0,1,2,3], 0);
-l == 4;
+ast_len ~~ @fn (in ~ast),int,{
+  return @uqot@qot(ast_lenr(@uqot(in),0));
+};
+
+(ast_len({0;1;2;3;}) == 4)
+  and (ast_len((0,1,2,3)) == 4) 
+  and (ast_len([0,1,2,3]) == 4)
+  ;

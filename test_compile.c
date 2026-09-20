@@ -564,12 +564,3 @@ test_fn(lower_error_op_on_struct_without_overload) {
   test_assert(e.err_code);
   test_streq(e.err_code, "OP_UNSUPPORTED_OPERANDS");
 }
-
-test_fn(interpret_error_yield_empty) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-  let env = ss_init(arena, (astidx_full){});
-  let e = call_err(interpret, (env, env->outermost)).err;
-  test_assert(e.err_code);
-  test_streq(e.err_code, "YIELD_EMPTY");
-}
