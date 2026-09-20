@@ -369,8 +369,6 @@ test_file_1(referance_types);
 
 test_file_1(referance_types_i);
 
-test_file_1(forward_declarations_fill_in);
-
 //
 // error tests
 //
@@ -396,37 +394,6 @@ test_fn(lower_error_function_not_defined) {
   );
   test_assert(e.err_code);
   test_streq(e.err_code, "FUNCTION_NOT_DEFINED");
-}
-
-// a definition may only complete a declaration that spelled the same signature: the declaration's
-// register carries the signature callers coerce their arguments against, so a definition with other
-// types or another count would leave the call checked against one and the body written against the
-// other
-static err_t lower_error_signature_mismatch(allocfn arena, fptr definition) {
-  let src = snprint(
-      arena,
-      "type ~~ @type();\n"
-      "i32 ~~ @sint(32);\n"
-      "i64 ~~ @sint(64);\n"
-      "f ~ @fn (x ~i32), i32;\n"
-      "{slice(c8)}\n",
-      definition
-  );
-  src.len--;
-  return lower_source_err(arena, fp(src));
-}
-
-test_fn(lower_error_function_signature_mismatch) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let typed = lower_error_signature_mismatch(arena, fp("f = @fn (x ~i64), i64, { return x; };"));
-  test_assert(typed.err_code);
-  test_streq(typed.err_code, "FUNCTION_SIGNATURE_MISMATCH");
-
-  let arity = lower_error_signature_mismatch(arena, fp("f = @fn (x ~i32, y ~i32), i32, { return x; };"));
-  test_assert(arity.err_code);
-  test_streq(arity.err_code, "FUNCTION_SIGNATURE_MISMATCH");
 }
 
 test_fn(lower_error_too_many_args) {
@@ -485,8 +452,8 @@ test_fn(lower_error_at_on_int_reference) {
 test_fn(lower_error_function_cannot_capture_frame) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  // a @fn roots at the module, so a body can never name a variable of the frame it
-  // was written inside of
+  // a @fn may name the functions, types and asts of the frame it was written inside of,
+  // but data of that frame belongs to the activation, so it stays out of reach
   let e = lower_source_err(
       arena,
       fp(

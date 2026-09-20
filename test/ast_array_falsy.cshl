@@ -1,10 +1,10 @@
 ast ~~ @ast();
 int ~~ @int();
-ast_lenr ~~ @fn (in ~ast,i~int),int,{
-  @cif (in[i]), (return @uqot@qot(ast_lenr(@uqot(in),i+1)));
-  return i;
-};
 ast_len ~~ @fn (in ~ast),int,{
+  ast_lenr ~~ @fn (in ~ast,i~int),int,{
+    @cif (in[i]), (return @uqot@qot(ast_lenr(@uqot(in),i+1)));
+    return i;
+  };
   return @uqot@qot(ast_lenr(@uqot(in),0));
 };
 
