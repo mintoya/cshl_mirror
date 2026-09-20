@@ -8,7 +8,6 @@ __attribute__((constructor)) static void unbuffer_test_output(void) {
   setvbuf(stderr, nullptr, _IONBF, 0);
 }
 
-//
 #include "indentprinter.h"
 #include "test_compile.c"
 

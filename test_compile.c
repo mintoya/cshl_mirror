@@ -369,7 +369,6 @@ test_file_1(referance_types);
 
 test_file_1(referance_types_i);
 
-
 test_file_1(forward_declarations_fill_in);
 
 //
@@ -409,7 +408,7 @@ static err_t lower_error_signature_mismatch(allocfn arena, fptr definition) {
       "type ~~ @type();\n"
       "i32 ~~ @sint(32);\n"
       "i64 ~~ @sint(64);\n"
-      "f ~~ @fn (x ~i32), i32;\n"
+      "f ~ @fn (x ~i32), i32;\n"
       "{slice(c8)}\n",
       definition
   );
@@ -421,11 +420,11 @@ test_fn(lower_error_function_signature_mismatch) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
 
-  let typed = lower_error_signature_mismatch(arena, fp("f ~~ @fn (x ~i64), i64, { return x; };"));
+  let typed = lower_error_signature_mismatch(arena, fp("f = @fn (x ~i64), i64, { return x; };"));
   test_assert(typed.err_code);
   test_streq(typed.err_code, "FUNCTION_SIGNATURE_MISMATCH");
 
-  let arity = lower_error_signature_mismatch(arena, fp("f ~~ @fn (x ~i32, y ~i32), i32, { return x; };"));
+  let arity = lower_error_signature_mismatch(arena, fp("f = @fn (x ~i32, y ~i32), i32, { return x; };"));
   test_assert(arity.err_code);
   test_streq(arity.err_code, "FUNCTION_SIGNATURE_MISMATCH");
 }

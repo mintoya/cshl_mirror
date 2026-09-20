@@ -56,7 +56,6 @@ static inline void scope_push_named(superscope *b, scope *s) {
 static inline void scope_pop_named(scope *s) {
   if (mList_len(s->named) > 1) moxmap_deinit(mList_pop(s->named));
 }
-u32 scope_last_item(superscope *, scope *s) { return s->start + msList_len(s->values); }
 
 scope *scope_find_rootable(superscope *b, scope *s) {
   while (!s->rootable)
@@ -117,6 +116,15 @@ static inline Type Type_ref errs(Type t) {
     return_err("REFERENCE_TO_COMPTIME_ONLY", T());
   return P$(t, ($.isref = true, $));
 }
+static inline Type value_asType errs(superscope *ss, typed_value t) {
+  if (!tu_is(c_type, ss_type(ss, t.t).t))
+    return_err("TYPE_IS_NOT_VALUE", T());
+  if (!t.v.c_type) return_err("UNKNOWN_TYPE", T());
+  return type_at(ss_typeenv(ss), t.v.c_type);
+}
+
+u32 scope_last_item(superscope *, scope *s) { return s->start + msList_len(s->values); }
+
 //
 //
 //
@@ -215,6 +223,7 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
   res->t_void = ss_type_intern(res, T(tu_of(r_void, {})));
   res->t_any = ss_type_intern(res, T(tu_of(c_any, {})));
   res->t_int = ss_type_intern(res, T(tu_of(c_int, {})));
+  res->t_bool = ss_type_intern(res, T(tu_of(r_bool, {})));
   res->t_ast = ss_type_intern(res, T(tu_of(c_ast, {})));
   res->t_type = ss_type_intern(res, T(tu_of(c_type, {})));
   res->alloc = cba_init(allocator, nullptr, irb_cbb, res->pointers);

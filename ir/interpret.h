@@ -1,6 +1,8 @@
 #pragma once
 #include "common.h"
 #include "scope.h"
+#include "wheels/print/print_pre.h"
+extern ptrstype(outputFunction) sexplike;
 
 sliceDef(typed_value);
 typedef struct {
@@ -9,6 +11,8 @@ typedef struct {
   const scope *s;
   // items copy,  last n items are functions arguments
   slice(typed_value) vals;
+  // storage owned by this activation, freed when the frame is popped
+  allocfn arena;
 } intframe;
 typedef struct {
   // stack
@@ -21,14 +25,58 @@ typedef struct {
 } *intstate;
 
 typed_value interpret errs(superscope *ss, scope *s);
+typed_value interpret_shared errs(superscope *ss, scope *s);
 
 //
 //
 //
 
-static typed_value *intstate_reg(intstate st, const scope *_s, u32 idx);
-static void *intstate_data(intstate st, intframe *f, u32 idx);
-static void intstate_copy errs(intstate st, typed_value *from, typed_value *to);
+static void intstate_push(intstate st, const scope *s, slice(typed_value) args);
+static void intstate_push_shared(intstate st, const scope *s);
+static void intstate_pop(intstate st);
+static void intstate_run errs(intstate st);
+
+static typed_value *intstate_reg(intstate st, const scope *_s, u32 idx) {
+  let owner = scope_owner((scope *)_s, idx);
+  if (owner)
+    for (usize i = msList_len(st->cs); i--;) {
+      intframe *fr = &st->cs[i];
+      if (fr->s == owner) return &fr->vals.ptr[idx - owner->start - 1];
+    }
+  return scope_find(st->ss, (scope *)_s, idx);
+}
+static void *intstate_data(intstate st, intframe *f, u32 idx) {
+  let tv = intstate_reg(st, f->s, idx);
+  if (ss_type(st->ss, tv->t).isref) return tv->v.value ? *(void **)tv->v.value : nullptr;
+  return tv->v.value;
+}
+static void intstate_copy errs(intstate st, typed_value *from, typed_value *to) {
+  tu_match_void(
+      ss_type(st->ss, to->t).t,
+      (c_int, _, to->v.c_int = BInt.copy(st->ss->alloc, from->v.c_int)),
+      (builtin, _, return_err("SET_BUILTIN")),
+      (c_ast, _, to->v.c_ast = from->v.c_ast),
+      (c_fun, _, to->v.c_fun = from->v.c_fun),
+      (c_type, _, to->v.c_type = from->v.c_type),
+      (default, {
+        Type dt = ss_type(st->ss, to->t);
+        bool dref = dt.isref;
+        dt.isref = false;
+        void *src = ss_type(st->ss, from->t).isref
+                        ? (from->v.value ? *(void **)from->v.value : nullptr)
+                        : from->v.value;
+        // a reference that already points somewhere is written through, one that is still nil binds
+        // to the source's referent instead (how a reference parameter receives its argument)
+        void *dst = dref ? (to->v.value ? *(void **)to->v.value : nullptr) : to->v.value;
+        if (dref && !dst) {
+          if (to->v.value) memcpy(to->v.value, &src, sizeof(src));
+        } else if (dst && src) {
+          if_decl (let sz, Type_sizeof(dt, ss_typeenv(st->ss)))
+            memcpy(dst, src, sz);
+        }
+      })
+  );
+}
 
 //
 //
@@ -52,7 +100,7 @@ static void interpret_getptr errs(intstate st, intframe *f, ir_getptr c) {
 static void interpret_getref errs(intstate st, intframe *f, ir_getref c) { try_err(interpret_getptr, (st, f, (ir_getptr){.l = c.l, .d = c.d})); }
 static void interpret_putptr errs(intstate st, intframe *f, ir_putptr c) {
   void *target = *(void **)intstate_reg(st, f->s, c.l)->v.value;
-  intstate_reg(st, f->s, c.d)->v.value = target;
+  *(void **)intstate_reg(st, f->s, c.d)->v.value = target;
 }
 static void interpret_field errs(intstate st, intframe *f, ir_field c) {
   let e = ss_typeenv(st->ss);
@@ -71,14 +119,17 @@ static void interpret_cast errs(intstate st, intframe *f, ir_cast c) {
   if (tu_is(c_int, ss_type(st->ss, d->t).t)) d->v.c_int = BInt.copy(st->ss->alloc, bits);
   else bigint_into_int(st->ss, st->ss->alloc, d, bits); // writes through the destination's storage
 }
+static bigint bigint_xor(allocfn allocator, bigint a, bigint b) {
+  return BInt.sub(allocator, BInt.bit.bor(allocator, a, b), BInt.bit.band(allocator, a, b));
+}
 static void interpret_rawop errs(intstate st, intframe *f, ir_rawop c) {
   let al = arena_new_ext(st->ss->alloc, 1024);
   defer { arena_cleanup(al); };
 
-  let left = *intstate_reg(st, f->s, c.r);
-  left.v.value = intstate_data(st, f, c.r);
-  let right = *intstate_reg(st, f->s, c.l);
-  right.v.value = intstate_data(st, f, c.l);
+  let left = *intstate_reg(st, f->s, c.l);
+  left.v.value = intstate_data(st, f, c.l);
+  let right = *intstate_reg(st, f->s, c.r);
+  right.v.value = intstate_data(st, f, c.r);
   let lhs = int_as_bigint(al, left, ss_typeenv(st->ss));
   let rhs = int_as_bigint(al, right, ss_typeenv(st->ss));
   let out = switch_exp(
@@ -92,6 +143,7 @@ static void interpret_rawop errs(intstate st, intframe *f, ir_rawop c) {
       (enop_shr /*  */, BInt.bit.shift(al, lhs, BInt.negate(al, rhs))),
       (enop_oband /**/, BInt.bit.band(al, lhs, rhs)),
       (enop_obor /* */, BInt.bit.bor(al, lhs, rhs)),
+      (enop_bxor /**/, bigint_xor(al, lhs, rhs)),
       (enop_oand /* */, BInt.from.i64(al, !!(BInt.cmp(lhs, nullptr) && BInt.cmp(rhs, nullptr)))),
       (enop_oor /*  */, BInt.from.i64(al, !!(BInt.cmp(lhs, nullptr) || BInt.cmp(rhs, nullptr)))),
       (enop_eq /*   */, BInt.from.i64(al, !BInt.cmp(lhs, rhs))),
@@ -118,28 +170,83 @@ static void interpret_array errs(intstate st, intframe *f, ir_array c) {
   intstate_reg(st, f->s, c.d)->v.value =
       (u8 *)intstate_data(st, f, c.l) + *(usize *)at * Type_sizeof(type_at(e, arr.t), e);
 }
-static void interpret_call errs(intstate st, intframe *f, ir_call c) { return_err("UNIMPLEMENTED_CALL"); }
-// }
+static void interpret_call errs(intstate st, intframe *f, ir_call c) {
+  let fnv = intstate_reg(st, f->s, c.l);
+  if (!tu_is(c_fun, ss_type(st->ss, fnv->t).t)) return_err("CALL_NOT_FUNCTION");
+  u32 fn = fnv->v.c_fun.fn;
+  u32 specn = fnv->v.c_fun.spec;
+  if (!fn) return_err("CALL_NOT_FUNCTION");
+  scope *spec = st->ss->functions[fn - 1].instances[specn].spec;
+
+  usize nargs = c.e > c.r ? (usize)(c.e - c.r) : 0;
+  slice(typed_value) args = nargs ? slice_alloc(st->ss->alloc, typed_value, nargs) : (slice(typed_value)){};
+  defer {
+    if (nargs) slice_free(st->ss->alloc, args);
+  };
+  foreach (let i, range(0, nargs))
+    args.ptr[i] = f->vals.ptr[c.r + i];
+
+  typed_value *caller_ret = st->ret;
+  st->ret = intstate_reg(st, f->s, c.d);
+  intstate_push(st, spec, args);
+  defer { intstate_pop(st); };
+  try_err(intstate_run, (st));
+  st->ret = caller_ret;
+}
 
 static void intstate_push(intstate st, const scope *s, slice(typed_value) args) {
   usize len = msList_len(s->values);
-  slice(typed_value) vals = (len + args.len) ? slice_alloc(st->ss->alloc, typed_value, len + args.len) : (slice(typed_value)){};
+  usize total = len + args.len;
+  slice(typed_value) vals = total ? slice_alloc(st->ss->alloc, typed_value, total) : (slice(typed_value)){};
   if (len) memcpy(vals.ptr, s->values, len * sizeof(typed_value));
   if (args.len) memcpy(vals.ptr + len, args.ptr, args.len * sizeof(typed_value));
 
+  allocfn mem = arena_new_ext(st->ss->alloc, 1024);
+  allocfn tmp = arena_new_ext(st->ss->alloc, 256);
+  defer { arena_cleanup(tmp); };
+  u64 *olds = total ? *acreate(tmp, u64[total]) : nullptr;
+  foreach (let i, range(0, total)) {
+    typed_value *v = &vals.ptr[i];
+    if (olds) olds[i] = 0;
+    if (Type_is_comptime(ss_type(st->ss, v->t))) continue;
+    if_decl (let sz, Type_sizeof(ss_type(st->ss, v->t), ss_typeenv(st->ss))) {
+      let old = v->v.value;
+      void *fresh = nullptr;
+      if (old)
+        foreach (let j, range(0, i))
+          if (olds[j] == (u64)(uintptr_t)old) {
+            fresh = vals.ptr[j].v.value;
+            break;
+          }
+      if (!fresh) {
+        fresh = acreate(mem, u8[sz]);
+        if (old) memcpy(fresh, old, sz);
+      }
+      if (olds) olds[i] = (u64)(uintptr_t)old;
+      v->v.value = fresh;
+    }
+  }
+
   let ml = mxmap_get(st->vmap, s);
-  if (!ml) mxmap_set(st->vmap, s, msList_initArr(st->ss->alloc, (slice(typed_value)[]){vals}));
+  if (!ml || !*ml) mxmap_set(st->vmap, s, msList_initArr(st->ss->alloc, (slice(typed_value)[]){vals}));
   else msList_push(st->ss->alloc, *ml, vals);
 
-  msList_push(st->ss->alloc, st->cs, (intframe){.s = s, .vals = vals});
+  msList_push(st->ss->alloc, st->cs, (intframe){.s = s, .vals = vals, .arena = mem});
+}
+static void intstate_push_shared(intstate st, const scope *s) {
+  msList_push(st->ss->alloc, st->cs, (intframe){.s = s, .vals = (slice(typed_value)){.ptr = (typed_value *)s->values, .len = msList_len(s->values)}});
 }
 static void intstate_pop(intstate st) {
   let frame = msList_pop(st->cs);
-  let list = *mxmap_get(st->vmap, frame.s);
-  msList_pop(list);
-  mxmap_set(st->vmap, frame.s, msList_len(list) ? list : nullptr);
-  if (!msList_len(list)) msList_deInit(st->ss->alloc, list);
+  let ml = mxmap_get(st->vmap, frame.s);
+  if (ml && *ml) {
+    let list = *ml;
+    msList_pop(list);
+    mxmap_set(st->vmap, frame.s, msList_len(list) ? list : nullptr);
+    if (!msList_len(list)) msList_deInit(st->ss->alloc, list);
+  }
 
+  if (frame.arena) arena_cleanup(frame.arena);
   if (frame.vals.ptr && frame.vals.ptr != frame.s->values) slice_free(st->ss->alloc, frame.vals);
 }
 
@@ -191,10 +298,9 @@ static void intstate_run errs(intstate st) {
     f->pc++;
     tu_match_void(
         inst,
-        (ir_blocks, _, ), // a wrapped child keeps its registers in this activation
+        (ir_blocks, _, ),
         (ir_blocke, _, ),
-        (ir_ife, /*  */ _, ),
-        // a true condition runs the body, which the pc has already reached, a false one starts past it
+        (ir_ife, _, ),
         (ir_ifs, cond, if (!*(bool *)intstate_reg(st, f->s, cond)->v.value) f->pc = intstate_after_branch(f, at)),
         (ir_ifd, /*   */ _, f->pc = intstate_after_branch(f, at)),
         (ir_loops, /* */ _, ),
@@ -219,26 +325,72 @@ static void intstate_run errs(intstate st) {
   }
 }
 
-typed_value interpret errs(superscope *ss, scope *s) {
-  intstate st = avalue(
-      ss->alloc,
+static intstate intstate_init(allocfn alloc, superscope *ss) {
+  return avalue(
+      alloc,
       ((ptrstype(intstate)){
-          .cs = msList_init(ss->alloc, intframe),
-          .vmap = mxmap_init(ss->alloc, const scope *, msList(slice(typed_value))),
+          .cs = msList_init(alloc, intframe),
+          .vmap = mxmap_init(alloc, const scope *, msList(slice(typed_value))),
           .ss = ss,
       })
   );
-  defer {
-    while (msList_len(st->cs))
-      intstate_pop(st);
-    mxmap_deinit(st->vmap);
-    msList_deInit(ss->alloc, st->cs);
-  };
+}
+static void intstate_deInit(intstate st) {
+  while (msList_len(st->cs))
+    intstate_pop(st);
+  mxmap_deinit(st->vmap);
+  msList_deInit(st->ss->alloc, st->cs);
+}
+
+// the value written to the return slot, copied into the long lived allocator: a frame's arena dies
+// with the frame, so nothing may point into it
+static typed_value interpret_retrieve(superscope *ss, typed_value out) {
+  // a reference is one dereference away from the value the program actually yielded
+  if (ss_type(ss, out.t).isref) {
+    Type t = ss_type(ss, out.t);
+    t.isref = false;
+    out.t = ss_type_intern(ss, t);
+    out.v.value = out.v.value ? *(void **)out.v.value : nullptr;
+  }
+  if (tu_is(c_int, ss_type(ss, out.t).t) && out.v.c_int)
+    out.v.c_int = BInt.copy(ss->alloc, out.v.c_int);
+  else if_decl (let sz, Type_sizeof(ss_type(ss, out.t), ss_typeenv(ss))) {
+    let mem = acreate(ss->alloc, u8[sz]);
+    if (out.v.value) memcpy(mem, out.v.value, sz);
+    out.v.value = mem;
+  }
+  return out;
+}
+
+static typed_value interpret_into errs(superscope *ss, scope *s, typed_value *ret) {
+  intstate st = intstate_init(ss->alloc, ss);
+  defer { intstate_deInit(st); };
   intstate_push(st, s, (slice(typed_value)){});
+  st->ret = ret;
+  try_err(intstate_run, (st), (typed_value){});
+  if (!ret->v.value) {
+    println("[INTO] empty ret type={Type_full}", ((Type_full){ss_type(ss, ret->t), ss_typeenv(ss)}));
+    print_wf(sexplike, "[INTO] {scope_full}\n", ((scope_full){(scope *)s, ss}));
+  }
+  return interpret_retrieve(ss, *ret);
+}
+
+static typed_value interpret_impl errs(superscope *ss, scope *s, bool own_registers) {
+  intstate st = intstate_init(ss->alloc, ss);
+  defer { intstate_deInit(st); };
+  if (own_registers) intstate_push_shared(st, s);
+  else intstate_push(st, s, (slice(typed_value)){});
   intframe *entry = &msList_last(st->cs);
   typed_value *yield = &entry->vals.ptr[entry->vals.len - 1];
   st->ret = yield;
   try_err(intstate_run, (st), (typed_value){});
-  if (!yield->v.value) return_err("YIELD_EMPTY", (typed_value){});
-  return *yield;
+  if (!yield->v.value && Type_sizeof(ss_type(ss, yield->t), ss_typeenv(ss)))
+    return_err("YIELD_EMPTY", (typed_value){});
+  return interpret_retrieve(ss, *yield);
+}
+typed_value interpret errs(superscope *ss, scope *s) {
+  return try_err(interpret_impl, (ss, s, false), (typed_value){});
+}
+typed_value interpret_shared errs(superscope *ss, scope *s) {
+  return try_err(interpret_impl, (ss, s, true), (typed_value){});
 }

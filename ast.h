@@ -21,11 +21,10 @@ static inline fptr read_file(allocfn allocator, const char *filename) {
 typedef u32 astidx;
 sliceDef(astidx);
 typedef struct
-    //__attribute__((packed))
     ast ast;
 typedef sglist(ast) astlist;
 
-static struct { // opNumbers
+static struct {
   u32
       call,
       dot,
@@ -38,6 +37,7 @@ static struct { // opNumbers
       oor,
       oband,
       obor,
+      bxor,
       shr,
       shl,
       mor,
@@ -69,6 +69,7 @@ static struct { // opNumbers
   opNumbers.oor = /*    */ ((opS){"or"}).n;
   opNumbers.oband = /*  */ ((opS){"band"}).n;
   opNumbers.obor = /*   */ ((opS){"bor"}).n;
+  opNumbers.bxor = /*   */ ((opS){"bxor"}).n;
   opNumbers.shr = /*    */ ((opS){"shr"}).n;
   opNumbers.shl = /*    */ ((opS){"shl"}).n;
   opNumbers.mor = /*    */ ((opS){">"}).n;
@@ -101,13 +102,11 @@ tu_def(
       union {
         c8 symliteral[sizeof(u32)];
         u32 number_rep;
-      }; //
+      };
     }),
-    // starting from start, null-termintaed
-    // could remove pos if all of tthem were garunteed to have at least one member
-    (astABlock, struct { srcpos pos;astidx start; }), // []
-    (astBBlock, struct { srcpos pos;astidx start; }), // {}
-    (astPBlock, struct { srcpos pos;astidx start; }), // ()
+    (astABlock, struct { srcpos pos;astidx start; }),
+    (astBBlock, struct { srcpos pos;astidx start; }),
+    (astPBlock, struct { srcpos pos;astidx start; }),
 );
 
 static_assert(sizeof(ast), "");

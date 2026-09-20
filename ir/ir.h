@@ -14,8 +14,8 @@ tu_def(
     (ir_call, /*   */ struct { u32 l, d, r, e; }), // d = l(r ... e)
     (ir_set, /*    */ struct { u32 l, d; }),       // d = l
                                                    //
-    (ir_blocks, /*  */ struct {}),                 // blockstart
-    (ir_blocke, /*  */ struct {}),                 // blockend
+    (ir_blocks, /*  */ struct {}),
+    (ir_blocke, /*  */ struct {}),
                                                    //
     (ir_ifs, /*     */ u32),                       // if(r) {
     (ir_ifd, /*     */ struct {}),                 // }else{
@@ -26,7 +26,7 @@ tu_def(
                                                    //
     (ir_loops, /*   */ struct {}),                 // while(true){
     (ir_loope, /*   */ struct {}),                 // }
-    (ir_break, /*   */ struct {}),                 // break;
-    (ir_cont, /*    */ struct {}),                 // continue;
+    (ir_break, /*   */ struct {}),
+    (ir_cont, /*    */ struct {}),
 );
 static_assert(sizeof(ir));

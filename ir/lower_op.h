@@ -6,7 +6,6 @@ u32 lower_call_extra errs(superscope *ss, scope *s, u32 left, u32 first, astidx 
   let l = scope_find(ss, s, left);
   iflet_tu (let fn, c_fun, ss_type(ss, l->t).t)
     return try_err(lower_function_call, (ss, s, left, first, args), 0);
-  // println("calling {Type_full}", ss_tf(ss, ss_type(ss, l->t)));
   return_err("UNSUPPORTED_CALL", 0);
 }
 u32 lower_call errs(superscope *ss, scope *s, u32 left, astidx args) {
@@ -16,7 +15,6 @@ u32 lower_call errs(superscope *ss, scope *s, u32 left, astidx args) {
   iflet_tu (let fn, c_fun, ss_type(ss, l->t).t)
     return try_err(lower_function_call, (ss, s, left, 0, args), 0);
 
-  // ast to coerce to the right values
   let start = msList_len(s->values);
   let alist = builtin_arg_list(ss, args);
   foreach (let it, span(alist.start, alist.len))
@@ -38,8 +36,8 @@ static inline fptr astLit_str(superscope *ss, astLit l) {
 }
 
 u32 lower_dot errs(superscope *ss, scope *s, u32 left, astidx right, astLit lit) {
-  let d = scope_add_value(ss, s, TV_any(ss));
   let r = scope_add_value(ss, s, TV_ast(ss, right));
+  let d = scope_add_value(ss, s, TV_any(ss));
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_rawop, {.l = left, .r = r, .d = d, .o = opNumbers.dot})), 0);
   return d;
 }
@@ -50,7 +48,6 @@ u32 lower_math errs(superscope *ss, scope *s, u32 left, u32 right, u32 op) {
 }
 u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber) {
   // these are not overloadable
-  // dot probably coming soon
   switch_tuple(
       op_as_enum(opNumber),
       (enop_pipe, {
@@ -90,10 +87,6 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
   );
   let res = switch_exp(
       (op_as_enum(opNumber)),
-      (enop_pipe /*   */, (assertMessage(false, "unreachable"), (u32)0)),
-      (enop_colon /*  */, (assertMessage(false, "unreachable"), (u32)0)),
-      (enop_set /*    */, (assertMessage(false, "unreachable"), (u32)0)),
-      (enop_iexpand /**/, (assertMessage(false, "unreachable"), (u32)0)),
       (enop_as, ({
          let arg = try_err(lower, (ss, s, right), 0);
          let d = scope_add_value(ss, s, TV_any(ss));
@@ -111,24 +104,10 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
             ),
             try_err(lower_dot, (ss, s, left, right, $), 0));
        })),
-      // operators are handled, so it should just be math now
-      (enop_mul, /*  */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), opNumber), 0)),
-      (enop_div, /*  */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), opNumber), 0)),
-      (enop_mod, /*  */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), opNumber), 0)),
-      (enop_plus, /* */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), opNumber), 0)),
-      (enop_minus, /**/ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), opNumber), 0)),
-      (enop_shr, /*  */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), opNumber), 0)),
-      (enop_shl, /*  */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), opNumber), 0)),
-      (enop_oand, /* */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), opNumber), 0)),
-      (enop_oor, /*  */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), opNumber), 0)),
-      (enop_oband, /**/ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), opNumber), 0)),
-      (enop_obor, /* */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), opNumber), 0)),
-      (enop_les, /*  */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), opNumber), 0)),
-      (enop_mor, /*  */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), opNumber), 0)),
-      (enop_moq, /*  */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), opNumber), 0)),
-      (enop_eq, /*   */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), opNumber), 0)),
-      (enop_neq, /*  */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), opNumber), 0)),
-      (enop_leq, /*  */ try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), opNumber), 0)),
+      (default, ({
+         assertMessage(enum_op_is_math(op_as_enum(opNumber)), "unhandled operator");
+         try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), opNumber), 0);
+       })),
   );
   if (!res) return_err("LOWER_FAILED", 0);
   return res;

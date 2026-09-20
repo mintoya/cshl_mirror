@@ -45,35 +45,34 @@ u32 lower_low errs(superscope *ss, scope *s, astidx a) {
          try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_blocke, {})), 0);
          res;
        })),
-      (astABlock, _, (return_err("LONE_AB", 0), (u32)0)), // tuples?
+      (astABlock, _, (return_err("LONE_AB", 0), (u32)0)),
       (astDecl, dcl, ({
+         astidx nameidx = ast_child(ss, dcl.name_type_value);
+         astidx typeidx = ast_child(ss, dcl.name_type_value + 1);
+         astidx valueidx = ast_child(ss, dcl.name_type_value + 2);
          let type = T(tu_of(c_any, {}));
-         astidx name_idx = ast_child(ss, dcl.name_type_value);
-         astidx type_idx = ast_child(ss, dcl.name_type_value + 1);
-         astidx value_idx = ast_child(ss, dcl.name_type_value + 2);
-         if (type_idx) {
-           let t = try_err(temporary_interpret, (ss, s, type_idx), 0);
+         if (typeidx) {
+           let t = try_err(temporary_interpret, (ss, s, typeidx), 0);
            type = try_err(value_asType, (ss, t), 0);
          }
          u32 value = 0;
-         if (value_idx) {
-           value = try_err(lower, (ss, s, value_idx), 0);
+         if (valueidx) {
+           value = try_err(lower, (ss, s, valueidx), 0);
            assertMessage(value);
          } else {
-           if (!type_idx) return_err("DECL_NO_TYPE_OR_VALUE", 0);
+           if (!typeidx) return_err("DECL_NO_TYPE_OR_VALUE", 0);
            value = scope_add_value(ss, s, TV_of(ss, type));
          }
          value = try_err(scope_cast_value, (ss, s, value, type), 0);
 
          if (dcl.isconst) {
-           // types are values here, so a modifier change has to be re-interned
            let v = scope_find(ss, s, value);
            let vt = ss_type(ss, v->t);
            vt.isconst = true;
            v->t = ss_type_intern(ss, vt);
          }
-         if (name_idx) {
-           let nn = try_err(id_from_ast, (ss, s, name_idx), 0);
+         if (nameidx) {
+           let nn = try_err(id_from_ast, (ss, s, nameidx), 0);
            try_err(scope_bind, (ss, s, value, nn), 0);
            println("[LOG:decl] bound {typed_value_full} to {slice(c8)}", ((typed_value_full){*scope_find(ss, s, value), ss_typeenv(ss)}), nn);
          }
@@ -84,7 +83,6 @@ u32 lower_low errs(superscope *ss, scope *s, astidx a) {
   return res;
 }
 u32 lower errs(superscope *ss, scope *s, astidx a) {
-  // little cursed
   return catch_errcall(
       (lower_low, (ss, s, a)), e, ({
         static thread_local char ns[sizeof(errors_buffer.buf)] = {};

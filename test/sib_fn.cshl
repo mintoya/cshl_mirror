@@ -1,13 +1,13 @@
-i ~~ @sint;
-outer ~~ @fn (run ~(i 32),in ~(i 32)),(i 32),{
+i32 ~~ @sint(32);
+outer ~~ @fn (run ~i32,in ~i32),i32,{
   run = run + 1;
 
-  odd ~~ @fn (a ~(i 32),o ~(i 32)),(i 32),
+  odd ~~ @fn (a ~i32,o ~i32),i32,
     return(outer(a,o * 3 + 1));
-  even ~~ @fn (a ~(i 32),e ~(i 32)),(i 32),
+  even ~~ @fn (a ~i32,e ~i32),i32,
     return(outer(a,e / 2));
 
-  resolve ~~ @fn (r ~(i 32),n ~(i 32)),(i 32),{
+  resolve ~~ @fn (r ~i32,n ~i32),i32,{
     @if((n == 1)  , (return r - 1));
     @if((n band 1), (return odd(r,n)));
     return even(r,n);

@@ -22,14 +22,15 @@ struct scope {
   mList(moxmap(fptr, u32)) named;
   u32 start;
   bool rootable;
+  struct {
+    u32 fn, index;
+  } instance;
 };
 sliceDef(scope);
 
 typedef struct {
   Type ret;
   scope *spec;
-  typed_value *key;
-  usize key_len;
 } function_instance;
 
 typedef struct function {
@@ -59,7 +60,7 @@ struct superscope {
   msList(function) functions;
   scope *outermost;
 
-  typeidx t_void, t_any, t_int, t_ast, t_type;
+  typeidx t_void, t_any, t_int, t_bool, t_ast, t_type;
   u32 foldempty;
 };
 static inline typeenv ss_typeenv(superscope *ss) {
@@ -73,7 +74,7 @@ static inline typeenv ss_typeenv(superscope *ss) {
 }
 static inline Type_full ss_tf(superscope *ss, Type t) { return (Type_full){t, ss_typeenv(ss)}; }
 
-static inline cmpres Type_cmp_hash_ss(void *env, const void *a, const void *b) {
+static cmpres Type_cmp_hash_ss(void *env, const void *a, const void *b) {
   return Type_cmp(ss_typeenv((superscope *)env), *(Type *)a, *(Type *)b);
 }
 static inline typeidx ss_type_reserve(superscope *ss, usize count) {
@@ -134,7 +135,9 @@ static inline typed_value TV_any /*   */ (superscope *ss) { return (typed_value)
 static inline typed_value TV_bigint /**/ (superscope *ss, bigint b) { return (typed_value){.t = ss->t_int, .v = {.c_int = b}}; }
 static inline typed_value TV_ast /*   */ (superscope *ss, astidx a) { return (typed_value){.t = ss->t_ast, .v = {.c_ast = a}}; }
 static inline typed_value TV_type /*  */ (superscope *ss, typeidx t) { return (typed_value){.t = ss->t_type, .v = {.c_type = t}}; }
+static inline typed_value TV_bool /*  */ (superscope *ss, bool v) { return (typed_value){.t = ss->t_bool, .v = VS(avalue(ss->alloc, v))}; }
 static inline Type ss_ast_type(superscope *ss) { return ss_type(ss, ss->t_ast); }
+static inline Type ss_bool_type(superscope *ss) { return ss_type(ss, ss->t_bool); }
 typed_value *scope_find(superscope *env, scope *s, u32 idx);
 static inline void scope_bind errs(superscope *env, scope *s, u32 idx, fptr name);
 
@@ -165,6 +168,7 @@ typedef enum enum_op {
   enop_oor,
   enop_oband,
   enop_obor,
+  enop_bxor,
   enop_shr,
   enop_shl,
   enop_mor,
@@ -190,91 +194,98 @@ typedef enum enum_boolean_op {
 } enum_boolean_op;
 
 typePrinter(enum_op) {
-  switch_exp(
+  switch_tuple(
       in,
-      (enop_call, (PUTS("call"), 0)),
-      (enop_dot, (PUTS("dot"), 0)),
-      (enop_colon, (PUTS("colon"), 0)),
-      (enop_mul, (PUTS("mul"), 0)),
-      (enop_div, (PUTS("div"), 0)),
-      (enop_mod, (PUTS("mod"), 0)),
-      (enop_plus, (PUTS("plus"), 0)),
-      (enop_minus, (PUTS("minus"), 0)),
-      (enop_oand, (PUTS("oand"), 0)),
-      (enop_oor, (PUTS("oor"), 0)),
-      (enop_oband, (PUTS("oband"), 0)),
-      (enop_obor, (PUTS("obor"), 0)),
-      (enop_shr, (PUTS("shr"), 0)),
-      (enop_shl, (PUTS("shl"), 0)),
-      (enop_mor, (PUTS("mor"), 0)),
-      (enop_les, (PUTS("les"), 0)),
-      (enop_moq, (PUTS("moq"), 0)),
-      (enop_leq, (PUTS("leq"), 0)),
-      (enop_eq, (PUTS("eq"), 0)),
-      (enop_neq, (PUTS("neq"), 0)),
-      (enop_pipe, (PUTS("pipe"), 0)),
-      (enop_set, (PUTS("set"), 0)),
-      (enop_iexpand, (PUTS("iexpand"), 0)),
-      (enop_as, (PUTS("as"), 0)),
-      (default, (PUTS("unknown!!!"), 0)),
+      (enop_call, PUTS("call")),
+      (enop_dot, PUTS("dot")),
+      (enop_colon, PUTS("colon")),
+      (enop_mul, PUTS("mul")),
+      (enop_div, PUTS("div")),
+      (enop_mod, PUTS("mod")),
+      (enop_plus, PUTS("plus")),
+      (enop_minus, PUTS("minus")),
+      (enop_oand, PUTS("oand")),
+      (enop_oor, PUTS("oor")),
+      (enop_oband, PUTS("oband")),
+      (enop_obor, PUTS("obor")),
+      (enop_bxor, PUTS("bxor")),
+      (enop_shr, PUTS("shr")),
+      (enop_shl, PUTS("shl")),
+      (enop_mor, PUTS("mor")),
+      (enop_les, PUTS("les")),
+      (enop_moq, PUTS("moq")),
+      (enop_leq, PUTS("leq")),
+      (enop_eq, PUTS("eq")),
+      (enop_neq, PUTS("neq")),
+      (enop_pipe, PUTS("pipe")),
+      (enop_set, PUTS("set")),
+      (enop_iexpand, PUTS("iexpand")),
+      (enop_as, PUTS("as")),
+      (default, PUTS("unknown!!!"))
   );
 }
 
+static inline bool enum_op_is_math(enum_op op) { return op >= enop_mul && op <= enop_neq; }
+
 static inline enum_op op_as_enum(u32 opn) {
-  return opn == opNumbers.call      ? enop_call
-         : opn == opNumbers.dot     ? enop_dot
-         : opn == opNumbers.colon   ? enop_colon
-         : opn == opNumbers.mul     ? enop_mul
-         : opn == opNumbers.div     ? enop_div
-         : opn == opNumbers.mod     ? enop_mod
-         : opn == opNumbers.plus    ? enop_plus
-         : opn == opNumbers.minus   ? enop_minus
-         : opn == opNumbers.oand    ? enop_oand
-         : opn == opNumbers.oor     ? enop_oor
-         : opn == opNumbers.oband   ? enop_oband
-         : opn == opNumbers.obor    ? enop_obor
-         : opn == opNumbers.shr     ? enop_shr
-         : opn == opNumbers.shl     ? enop_shl
-         : opn == opNumbers.mor     ? enop_mor
-         : opn == opNumbers.les     ? enop_les
-         : opn == opNumbers.moq     ? enop_moq
-         : opn == opNumbers.leq     ? enop_leq
-         : opn == opNumbers.eq      ? enop_eq
-         : opn == opNumbers.neq     ? enop_neq
-         : opn == opNumbers.pipe    ? enop_pipe
-         : opn == opNumbers.set     ? enop_set
-         : opn == opNumbers.iexpand ? enop_iexpand
-         : opn == opNumbers.as      ? enop_as
-                                    : (assertMessage(false, "Unknown operator %x", opn), 0);
+  if (opn == opNumbers.call) return enop_call;
+  if (opn == opNumbers.dot) return enop_dot;
+  if (opn == opNumbers.colon) return enop_colon;
+  if (opn == opNumbers.mul) return enop_mul;
+  if (opn == opNumbers.div) return enop_div;
+  if (opn == opNumbers.mod) return enop_mod;
+  if (opn == opNumbers.plus) return enop_plus;
+  if (opn == opNumbers.minus) return enop_minus;
+  if (opn == opNumbers.oand) return enop_oand;
+  if (opn == opNumbers.oor) return enop_oor;
+  if (opn == opNumbers.oband) return enop_oband;
+  if (opn == opNumbers.obor) return enop_obor;
+  if (opn == opNumbers.bxor) return enop_bxor;
+  if (opn == opNumbers.shr) return enop_shr;
+  if (opn == opNumbers.shl) return enop_shl;
+  if (opn == opNumbers.mor) return enop_mor;
+  if (opn == opNumbers.les) return enop_les;
+  if (opn == opNumbers.moq) return enop_moq;
+  if (opn == opNumbers.leq) return enop_leq;
+  if (opn == opNumbers.eq) return enop_eq;
+  if (opn == opNumbers.neq) return enop_neq;
+  if (opn == opNumbers.pipe) return enop_pipe;
+  if (opn == opNumbers.set) return enop_set;
+  if (opn == opNumbers.iexpand) return enop_iexpand;
+  if (opn == opNumbers.as) return enop_as;
+  assertMessage(false, "Unknown operator %x", opn);
 }
 static inline u32 enum_as_op(enum_op en) {
   return switch_exp(
       en,
-      (enop_dot /*    */, opNumbers.dot),
-      (enop_colon /*  */, opNumbers.colon),
-      (enop_mul /*    */, opNumbers.mul),
-      (enop_div /*    */, opNumbers.div),
-      (enop_mod /*    */, opNumbers.mod),
-      (enop_plus /*   */, opNumbers.plus),
-      (enop_minus /*  */, opNumbers.minus),
-      (enop_oand /*   */, opNumbers.oand),
-      (enop_oor /*    */, opNumbers.oor),
-      (enop_oband /*  */, opNumbers.oband),
-      (enop_obor /*   */, opNumbers.obor),
-      (enop_shr /*    */, opNumbers.shr),
-      (enop_shl /*    */, opNumbers.shl),
-      (enop_mor /*    */, opNumbers.mor),
-      (enop_les /*    */, opNumbers.les),
-      (enop_moq /*    */, opNumbers.moq),
-      (enop_leq /*    */, opNumbers.leq),
-      (enop_eq /*     */, opNumbers.eq),
-      (enop_neq /*    */, opNumbers.neq),
-      (enop_pipe /*   */, opNumbers.pipe),
-      (enop_set /*    */, opNumbers.set),
-      (enop_iexpand /**/, opNumbers.iexpand),
-      (enop_as /*     */, opNumbers.as),
-      (enop_call /*   */, opNumbers.call)
+      (enop_call, opNumbers.call),
+      (enop_dot, opNumbers.dot),
+      (enop_colon, opNumbers.colon),
+      (enop_mul, opNumbers.mul),
+      (enop_div, opNumbers.div),
+      (enop_mod, opNumbers.mod),
+      (enop_plus, opNumbers.plus),
+      (enop_minus, opNumbers.minus),
+      (enop_oand, opNumbers.oand),
+      (enop_oor, opNumbers.oor),
+      (enop_oband, opNumbers.oband),
+      (enop_obor, opNumbers.obor),
+      (enop_bxor, opNumbers.bxor),
+      (enop_shr, opNumbers.shr),
+      (enop_shl, opNumbers.shl),
+      (enop_mor, opNumbers.mor),
+      (enop_les, opNumbers.les),
+      (enop_moq, opNumbers.moq),
+      (enop_leq, opNumbers.leq),
+      (enop_eq, opNumbers.eq),
+      (enop_neq, opNumbers.neq),
+      (enop_pipe, opNumbers.pipe),
+      (enop_set, opNumbers.set),
+      (enop_iexpand, opNumbers.iexpand),
+      (enop_as, opNumbers.as),
+      (default, assertMessage(false, "Unknown operator %u", en); (u32)0)
   );
+  return 0;
 }
 
 static inline fptr string_escape(allocfn allocator, fptr in) {
@@ -334,39 +345,31 @@ static inline u32 ss_compileString(superscope *b, scope *s, fptr in) {
   t.iscomptime = true;
   return scope_add_value(b, s, TV_with(b, t, VS(in.ptr)));
 }
+// the children of a block sit consecutively in the ast list, terminated by the null node
+static inline astidx_span ast_run(superscope *ss, astidx start) {
+  astidx end = start;
+  while (!tu_is(astNull, ast_at(ss, end)))
+    end++;
+  return (astidx_span){start, end - start};
+}
 static inline astidx_span ast_block_children(superscope *ss, astidx args) {
   return tu_match_exp(
       ast_at(ss, args),
-      (astABlock, b, ({
-         astidx start = b.start, end = start;
-         while (!tu_is(astNull, ast_at(ss, end)))
-           end++;
-         (astidx_span){start, end - start};
-       })),
-      (astBBlock, b, ({
-         astidx start = b.start, end = start;
-         while (!tu_is(astNull, ast_at(ss, end)))
-           end++;
-         (astidx_span){start, end - start};
-       })),
-      (astPBlock, b, ({
-         astidx start = b.start, end = start;
-         while (!tu_is(astNull, ast_at(ss, end)))
-           end++;
-         (astidx_span){start, end - start};
-       })),
+      (astABlock, b, ast_run(ss, b.start)),
+      (astBBlock, b, ast_run(ss, b.start)),
+      (astPBlock, b, ast_run(ss, b.start)),
       (default, (assertMessage(false, "unreachable"), (astidx_span){})),
   );
 }
 static inline astidx_span builtin_arg_list(superscope *ss, astidx args) {
-  iflet_tu (let block, astPBlock, ast_at(ss, args)) {
-    astidx start = block.start, end = start;
-    while (!tu_is(astNull, ast_at(ss, end)))
-      end++;
-    return (astidx_span){start, end - start};
-  }
+  iflet_tu (let block, astPBlock, ast_at(ss, args)) return ast_run(ss, block.start);
   return (astidx_span){args, 1};
 }
+#define builtin_args(ss, args, ...)      \
+  let list = builtin_arg_list(ss, args); \
+  if (!EQUAL_ANY(list.len, __VA_ARGS__)) return_err("WRONG_ARG_COUNT", 0)
+#define builtin_no_args(ss, args) \
+  if (builtin_arg_list(ss, args).len) return_err("WRONG_ARG_COUNT", 0)
 static inline astidx_full ss_ast_full(superscope *ss, astidx idx) {
   return (astidx_full){.idx = idx, .alist = ss->asts, .plist = ss->plist, .flist = ss->flist};
 }
@@ -536,13 +539,5 @@ typePrinter(scope_full) {
         PUTS(")");
   }
   PUTS("),");
-  // PUTS("(named,");
-  // foreach (let v, moxmap_iter(sc.named, fptr, u32)) {
-  //   PUTS("('"), USENAMEDPRINTER("slice(c8)", v.key), PUTS("' ");
-  //   USETYPEPRINTER(u32, *v.val);
-  //   PUTS(")");
-  //   PUTS(",");
-  // }
-  // PUTS(")");
   PUTS(")");
 };

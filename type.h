@@ -18,12 +18,11 @@ typedef enum : u8 {
   builtin_closure,
   builtin_if,       // @if(cnd , then ,)
   builtin_cif,      // @cif same as if, comptime, produces only one branch
-  builtin_loop,     // @loop(cnd , body) //
+  builtin_loop,     // @loop(body)
   builtin_return,   // return x return
   builtin_break,    // @break()
   builtin_continue, // @continue()
                     //
-                    // then when called with expression, yields an r_func
   builtin__id,      // @id(str) an id which corresponds to this string, **evaluates it**
                     //
   builtin_ast,      // @ast() type of ast
@@ -49,7 +48,6 @@ typedef enum : u8 {
                     //
   builtin_qot,      // @qot(arg) ast of arg
   builtin_uqot,     // @unqot(arg) evaluate arg
-                    // will remove these
   builtin_ast_op,   // @ast_op(sym,a,b) build the ast of "a sym b", sym a comptime string
   builtin_apply,    // @apply(f,args...) call f with evaluated args (ast params get values)
   builtin_ref,      // @ref(value) produces a referance to value
@@ -274,9 +272,7 @@ static usize TypeTree_sizeof(TypeTree t, typeenv e) {
       (c_int, _, (usize)0),
       (c_any, _, (usize)0),
       (c_fun, _, (usize)0),
-      //  0 for it's own reason
       (r_void, _, (usize)0),
-      //
       (r_uint, u, lineup(u.bits, CHAR_BIT) / CHAR_BIT),
       (r_bool, _, TypeTree_sizeof(TypeTree_uint(1), e)),
       (r_sint, u, TypeTree_sizeof(TypeTree_uint(u.bits), e)),
@@ -500,7 +496,6 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, typeen
       (r_uint, bits, PUTS("u"), USETYPEPRINTER(usize, (usize)bits.bits)),
       (r_sint, bits, PUTS("s"), USETYPEPRINTER(usize, (usize)bits.bits)),
 
-      // Complex, require recursion
       (r_arr, arr, {
         typeTreePrinterWorker_add(in, visitedmap);
         PUTS("(a ["), USETYPEPRINTER(usize, (usize)arr.count), PUTS("],");
@@ -570,7 +565,6 @@ typePrinter(Type_full) {
 // test
 
 test_fn(type_bools) {
-  // i dereferance bools as bools later
   typeenv e = {};
   let boolean = T(tu_of(r_bool, {}));
   test_inteq(sizeof(bool), Type_sizeof(boolean, e));

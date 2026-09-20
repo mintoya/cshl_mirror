@@ -108,7 +108,7 @@ static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u3
     astidx start = (astidx)alist->len + 1;
     for (u32 i = 0; i < rc; i++)
       sglist_push(*alist, roots[i]);
-    sglist_push(*alist, null_ast()); // null-terminator
+    sglist_push(*alist, null_ast());
 
     let pos = register_pos(plist, fileIndex, ts_node);
     return (ast)(!strcmp(type, "program") || !strcmp(type, "bblock") ? (ast)tu_of(astBBlock, {.pos = pos, .start = start})

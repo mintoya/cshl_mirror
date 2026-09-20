@@ -7,7 +7,7 @@
 #include "wheels/fptr.h"
 #include <wheels/allocators/arenaAllocator.h>
 #include <wheels/allocators/debugallocator.h>
-//
+
 #include "ir/interpret.h"
 #include "ir/lower.h"
 
@@ -15,7 +15,6 @@ astidx_full parse_source errs(allocfn out_allocator, fptr input, const char *fil
 
 // { util
 void on_allocation(void *, usize in, usize out, void *, const char *file, uint line) {
-  // println("(alloc) {} -> {},{cstr}:{}", in, out, file, line);
 }
 // }
 cmd_main(
@@ -29,9 +28,6 @@ cmd_main(
 ) {
   let allocator = debugAllocator(.allocator = stdAlloc, .onalloc = on_allocation);
   defer {
-    // foreach (let allocation, vtable(debugallocator_iterator, allocator)) {
-    //   allocation.trace.size;
-    // }
     println("(log) stats : {dbga_stats}", debugAllocator_stats(allocator));
     debugAllocatorDeInit(allocator);
   };
@@ -66,7 +62,7 @@ cmd_main(
     catch_errcall((lower, (env, env->outermost, ctx.idx)), e, (err_panic(e), (u32)0));
     print_wf(sexplike, "{scope_full}\n", ((scope_full){env->outermost, env}));
     if (execute) {
-      let res = catch_errcall((interpret, (env, env->outermost)), e, (err_panic(e), (typed_value){}));
+      let res = catch_errcall((interpret_shared, (env, env->outermost)), e, (err_panic(e), (typed_value){}));
       print_wf(sexplike, "result: {typed_value_full}\n", ((typed_value_full){res, ss_typeenv(env)}));
       print_wf(sexplike, "after interpret\n{scope_full}\n", ((scope_full){env->outermost, env}));
     }
