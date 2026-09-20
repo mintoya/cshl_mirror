@@ -1,0 +1,8 @@
+ast ~~ @ast();
+int ~~ @int();
+@ast_len ~~ @fn (in ~ast, i ~int),int,{
+  @cif (in[i]), (return @apply(@ast_len, in, i + 1));
+  return i;
+};
+l~@sint(32)~@ast_len([0,1,2,3], 0);
+l == 4;

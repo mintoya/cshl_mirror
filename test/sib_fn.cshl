@@ -1,0 +1,18 @@
+i ~~ @sint;
+outer ~~ @fn (run ~(i 32),in ~(i 32)),(i 32),{
+  run = run + 1;
+
+  odd ~~ @fn (a ~(i 32),o ~(i 32)),(i 32),
+    return(outer(a,o * 3 + 1));
+  even ~~ @fn (a ~(i 32),e ~(i 32)),(i 32),
+    return(outer(a,e / 2));
+
+  resolve ~~ @fn (r ~(i 32),n ~(i 32)),(i 32),{
+    @if((n == 1)  , (return r - 1));
+    @if((n band 1), (return odd(r,n)));
+    return even(r,n);
+  };
+  return resolve(run,in);
+};
+
+outer(0,1000) == 111;
