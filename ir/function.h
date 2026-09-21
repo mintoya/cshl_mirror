@@ -127,7 +127,7 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
     let instance = &function_item->instances[*inst];
     if (Type_is_comptime(instance->ret)) {
       let result = scope_add_value(ss, s, TV_of(ss, instance->ret));
-      (void)try_err(interpret_into, (ss, instance->spec, scope_find(ss, s, result)), 0);
+      (void)try_err(interpret, (ss, instance->spec), 0);
       return result;
     }
     u32 callee = try_err(function_call_specialize, (ss, s, fnreg, *inst), 0);
@@ -176,7 +176,7 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
 
   if (Type_is_comptime(ret)) {
     let result = scope_add_value(ss, s, TV_of(ss, ret));
-    (void)try_err(interpret_into, (ss, spec, scope_find(ss, s, result)), 0);
+    (void)try_err(interpret, (ss, spec), 0);
     return result;
   }
   u32 callee = try_err(function_call_specialize, (ss, s, fnreg, spec_number), 0);

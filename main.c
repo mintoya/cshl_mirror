@@ -70,12 +70,12 @@ cmd_main(
       let out = fopen(strcat(strcat((char[100]){}, args[1]), ".c"), "w+");
       assertMessage(out);
       printerfunction_context pctx = {.put = fileprint, .arb = out, .allocator = allocator};
-      makeTypes(env, fileprint, pctx);
-      makeFuncs(env, fileprint, pctx);
-      makeScope(env, env->outermost, fileprint, pctx);
+      // makeTypes(env, fileprint, pctx);
+      // makeFuncs(env, fileprint, pctx);
+      // makeScope(env, env->outermost, fileprint, pctx);
     }
     if (execute) {
-      let res = catch_errcall((interpret_shared, (env, env->outermost)), e, (err_panic(e), (typed_value){}));
+      let res = catch_errcall((interpret, (env, env->outermost)), e, (err_panic(e), (typed_value){}));
       print_wf(sexplike, "result: {typed_value_full}\n", ((typed_value_full){res, ss_typeenv(env)}));
       print_wf(sexplike, "after interpret\n{scope_full}\n", ((scope_full){env->outermost, env}));
     }
