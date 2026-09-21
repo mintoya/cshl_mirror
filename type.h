@@ -45,6 +45,7 @@ typedef enum : u8 {
   builtin_rawget,   // @rawget(v,name) member v.name itself, ignoring a overload
                     //
   builtin_struct,   // @struct{} struct of declarations
+  builtin_union,    // @union{} union of declarations, all members share offset 0
   builtin__this,    // @this() inside of struct, this is the result type
                     //
   builtin_qot,      // @qot(arg) ast of arg
@@ -390,6 +391,7 @@ cmpres TypeTree_cmp(typeenv e, TypeTree a, TypeTree b) {
         return 0;
       }),
 
+
       (r_bitfield, ai, {
         let bi = tu_catch(r_bitfield, b);
         u32 an = type_bitf_len(e, ai), bn = type_bitf_len(e, bi);
@@ -453,6 +455,7 @@ typePrinter(builtin_id) {
       (builtin_loop, /*    */ PUTS("loop")),
       (builtin_sizeof, /*  */ PUTS("sizeof")),
       (builtin_struct, /*  */ PUTS("struct")),
+      (builtin_union, /*   */ PUTS("union")),
       (builtin_return, /*  */ PUTS("return")),
       (builtin_typeof, /*  */ PUTS("typeof")),
       (builtin_alignof, /* */ PUTS("alignof")),
@@ -518,6 +521,7 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, typeen
         }
         PUTS(")");
       }),
+
       (r_bitfield, st, {
         typeTreePrinterWorker_add(in, visitedmap);
         PUTS("(bf,");

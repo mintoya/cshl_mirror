@@ -426,10 +426,47 @@ static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
 
   e = ss_typeenv(ss);
   void sexplike(const char *data, void *userdata, usize len, bool flush);
-  print_wf(sexplike, "[LOG] created struct : {Type_full}\n", ((Type_full){type_at(e, _this.t.r_tag.t), e}));
-  print_wf(sexplike, "[LOG] it's scope {scope_full}\n", ((scope_full){working_scope, ss}));
+  // print_wf(sexplike, "[LOG] created struct : {Type_full}\n", ((Type_full){type_at(e, _this.t.r_tag.t), e}));
+  // print_wf(sexplike, "[LOG] it's scope {scope_full}\n", ((scope_full){working_scope, ss}));
   return scope_add_value(ss, s, Type_asValue(ss, _this));
 }
+static u32 lower_builtin_union errs(superscope *ss, scope *s, astidx args) {
+  builtin_args(ss, args, 1);
+  let union_node = ast_at(ss, list.start + 0);
+  tu_catch(astBBlock, union_node, return_err("UNION_EXPECTS_BLOCK", 0));
+  let stmts = ast_block_children(ss, list.start);
+
+  let members = (r_struct){.start = ss_member_reserve(ss, stmts.len)};
+  let _this = T(tu_of(r_tag, {ss_type_intern(ss, T(tu_of(r_struct, members))), unique_type_name(ss)}));
+
+  foreach (let i, range(0, stmts.len)) {
+    let stmt_node = ast_at(ss, stmts.start + i);
+    let dcl = tu_catch(astDecl, stmt_node, return_err("UNION_MEMBER_NOT_DECL", 0));
+
+    astidx nameidx = ast_child(ss, dcl.name_type_value);
+    astidx typeidx = ast_child(ss, dcl.name_type_value + 1);
+    if (!nameidx) return_err("UNION_MEMBER_NO_NAME", 0);
+    if (!typeidx) return_err("UNION_MEMBER_NO_TYPE", 0);
+    if (ast_child(ss, dcl.name_type_value + 2)) return_err("UNION_MEMBER_INITIALIZER", 0);
+
+    let name = try_err(id_from_ast, (ss, s, nameidx), 0);
+    Type bt = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, typeidx), 0)), 0);
+    if (Type_is_comptime(bt)) return_err("UNION_MEMBER_COMPTIME", 0);
+
+    let e = ss_typeenv(ss);
+    r_struct_item *ri = type_struct_item(e, members, i);
+    ri->name = id_srcpos(ss, nameidx, name);
+    ri->t = bt;
+    ri->offset = 0;
+    ri->alignment = Type_alignof(bt, e);
+  }
+
+  let e = ss_typeenv(ss);
+  void sexplike(const char *data, void *userdata, usize len, bool flush);
+  print_wf(sexplike, "[LOG] created union : {Type_full}\n", ((Type_full){type_at(e, _this.t.r_tag.t), e}));
+  return scope_add_value(ss, s, Type_asValue(ss, _this));
+}
+
 static u32 lower_builtin_this errs(superscope *ss, scope *s, astidx args) {
   builtin_no_args(ss, args);
   if (!msList_len(ss->thisstack)) return_err("THIS_OUTSIDE_STRUCT", 0);
@@ -476,6 +513,7 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
       (builtin_offsetof, /**/ try_err(lower_builtin_offsetof, (ss, s, args), 0)),
       (builtin_rawget, /*  */ try_err(lower_builtin_rawget, (ss, s, args), 0)),
       (builtin_struct, /*  */ try_err(lower_builtin_struct, (ss, s, args), 0)),
+      (builtin_union, /*   */ try_err(lower_builtin_union, (ss, s, args), 0)),
       (builtin__this, /*   */ try_err(lower_builtin_this, (ss, s, args), 0)),
       (builtin_qot, /*     */ try_err(lower_builtin_qot, (ss, s, args), 0)),
       (builtin_uqot, /*    */ try_err(lower_builtin_uqot, (ss, s, args), 0)),

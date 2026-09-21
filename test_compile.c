@@ -287,6 +287,7 @@ test_file_1(type_equality_comptime_false);
 test_file_1(struct_operator_overload_self_in_body);
 test_file_1(struct_as_overload);
 test_file_1(dot);
+test_file_1(union_members_share_offset_zero);
 test_file_1(as_without_overload_is_a_cast);
 test_file_1(struct_closure_capture);
 test_file_1(overload_call_yields_the_result_after_arg_coercion);
@@ -453,6 +454,21 @@ test_fn(lower_error_order_types) {
   let e = lower_source_err(arena, fp("(@sint(8) < @sint(16));"));
   test_assert(e.err_code);
   test_streq(e.err_code, "OP_UNSUPPORTED_OPERANDS");
+}
+
+test_fn(lower_error_union_member_initializer) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s32 ~~ @sint(32);\n"
+          "U ~type~ @union{ a ~s32 = 1; };\n"
+      )
+  );
+  test_assert(e.err_code);
+  test_streq(e.err_code, "UNION_MEMBER_INITIALIZER");
 }
 
 test_fn(lower_error_op_on_struct_without_overload) {

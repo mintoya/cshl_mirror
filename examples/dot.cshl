@@ -1,17 +1,36 @@
 type ~~ @type();
 ast ~~ @ast();
+any ~~ @any();
 i32 ~type~ @sint(32);
+fn  ~~ @fn (a ~ast),ast,{
+  return 
+    @qot @fn(
+      @uqot(a."()".opleft),
+      @uqot(a."()".opright."()".opleft),
+      @uqot(a."()".opright."()".opright),
+    );
+};
 Point ~type~ @struct{
   Self ~type~ @this();
   x ~i32;
   y ~i32;
-  // `.` is overloadable, so reaching a field from inside the overload means asking for it raw
-  @id(".") ~~ @fn (this~@refT(Self) ,l~ast),@refT(i32),{
-    @cif((l == "x"),(return @ref(@rawget(this, l))));
-    @cif((l == "y"),(return @ref(@rawget(this, l))));
+  @id(".") ~~ fn' (this~@refT(Self) ,l~ast)@refT(i32){
+    @cif((l == "x"),(return @ref(@rawget(this, "x"))));
+    @cif((l == "y"),(return @ref(@rawget(this, "y"))));
+  };
+  @id("+") ~~ fn' (
+    this~Self,
+    other~Self,
+  )Self{
+    result ~Self;
+    result.x = other.x + this.x;
+    result.y = other.y + this.y;
+    return result;
   };
 };
 a ~Point;
 a.x = 6;
 a.y = 5;
 a;
+a+a;
+
