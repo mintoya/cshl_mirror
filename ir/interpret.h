@@ -199,7 +199,8 @@ static void interpret_call errs(intstate st, intframe *f, ir_call c) {
   };
   foreach (let i, range(0, nargs))
     args.ptr[i] = f->vals.ptr[c.r + i];
-  intstate_push(st, spec, args)->ret = intstate_reg(st, f->s, c.d);
+  typed_value *ret = intstate_reg(st, f->s, c.d);
+  intstate_push(st, spec, args)->ret = ret;
 }
 
 static intframe *intstate_push(intstate st, const scope *s, slice(typed_value) args) {
