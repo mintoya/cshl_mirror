@@ -286,6 +286,7 @@ test_file_1(type_equality_comptime);
 test_file_1(type_equality_comptime_false);
 test_file_1(struct_operator_overload_self_in_body);
 test_file_1(struct_as_overload);
+test_file_1(dot);
 test_file_1(as_without_overload_is_a_cast);
 test_file_1(struct_closure_capture);
 test_file_1(overload_call_yields_the_result_after_arg_coercion);

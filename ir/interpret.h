@@ -331,6 +331,7 @@ static void intstate_run errs(intstate st) {
         (ir_getptr, /**/ c, try_err(interpret_getptr, (st, f, c))),
         (ir_putptr, /**/ c, try_err(interpret_putptr, (st, f, c))),
         (ir_field, /* */ c, try_err(interpret_field, (st, f, c))),
+        (ir_rawdot, /**/ _, return_err("RAW_DOT_IN_INTERPRETER")),
         (ir_cast, /*  */ c, try_err(interpret_cast, (st, f, c))),
         (ir_rawop, /* */ c, try_err(interpret_rawop, (st, f, c))),
         (ir_array, /* */ c, try_err(interpret_array, (st, f, c))),

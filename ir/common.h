@@ -465,6 +465,13 @@ typePrinter(scope_full) {
           PUTS(" -> "), USETYPEPRINTER(u32, op.d);
           PUTS(")");
         }),
+        (ir_rawdot, op, {
+          PUTS("(rawdot ");
+          USETYPEPRINTER(u32, op.l), PUTS(" ");
+          USETYPEPRINTER(u32, op.r);
+          PUTS(" -> "), USETYPEPRINTER(u32, op.d);
+          PUTS(")");
+        }),
         (ir_farg, op, {
           PUTS("(farg ");
           USETYPEPRINTER(u32, op.l), PUTS(",");

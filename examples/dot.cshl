@@ -1,21 +1,17 @@
 type ~~ @type();
+ast ~~ @ast();
 i32 ~type~ @sint(32);
-{ 
-  Point ~type~ @struct{
-    Self ~type~ @this();
-    x ~i32;
-    y ~i32;
+Point ~type~ @struct{
+  Self ~type~ @this();
+  x ~i32;
+  y ~i32;
+  // `.` is overloadable, so reaching a field from inside the overload means asking for it raw
+  @id(".") ~~ @fn (this~@refT(Self) ,l~ast),@refT(i32),{
+    @cif((l == "x"),(return @ref(@rawget(this, l))));
+    @cif((l == "y"),(return @ref(@rawget(this, l))));
   };
-  a ~Point;
-  px ~~ a.x;
 };
-{ 
-  Point ~type~ @struct{
-    Self ~type~ @this();
-    x ~i32;
-    y ~i32;
-    sz ~~ @sizeof(Self);
-  };
-  a ~Point;
-  ps ~~ Point.sz; 
-};
+a ~Point;
+a.x = 6;
+a.y = 5;
+a;

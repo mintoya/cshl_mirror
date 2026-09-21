@@ -1,12 +1,12 @@
 type ~~ @type();
-i ~~ @sint;
+i32 ~~ @sint(32);
 wrapped ~type~ @struct{
   Self ~type~ @this();
-  v ~ i 32;
+  v ~ i32;
   @id("as") ~~ @fn (self ~Self, target ~type), @sint(32), {
     return self.v;
   };
 };
 a ~wrapped; a.v = 7;
-b ~i 32~ a as @sint(32);
+b ~i32~ a as i32;
 b == 7;

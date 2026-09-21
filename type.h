@@ -42,6 +42,7 @@ typedef enum : u8 {
   builtin_sizeof,   // @sizeof(T) comptime size of T in bytes
   builtin_alignof,  // @alignof(T) comptime alignment of T
   builtin_offsetof, // @offsetof(T,member) comptime offset of member in T
+  builtin_rawget,   // @rawget(v,name) member v.name itself, ignoring a overload
                     //
   builtin_struct,   // @struct{} struct of declarations
   builtin__this,    // @this() inside of struct, this is the result type
@@ -457,6 +458,7 @@ typePrinter(builtin_id) {
       (builtin_alignof, /* */ PUTS("alignof")),
       (builtin_continue, /**/ PUTS("continue")),
       (builtin_offsetof, /**/ PUTS("offsetof")),
+      (builtin_rawget, /*   */ PUTS("rawget")),
       (builtin_volatile, /**/ PUTS("volatile")),
   );
 }

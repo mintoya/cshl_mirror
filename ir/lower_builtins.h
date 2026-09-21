@@ -353,6 +353,15 @@ static u32 lower_builtin_offsetof errs(superscope *ss, scope *s, astidx args) {
   return_err("NO_MEMBER", 0);
 }
 
+static u32 lower_builtin_rawget errs(superscope *ss, scope *s, astidx args) {
+  builtin_args(ss, args, 2);
+  let recv = try_err(lower, (ss, s, list.start + 0), 0);
+  let name = try_err(lower, (ss, s, list.start + 1), 0);
+  let d = scope_add_value(ss, s, TV_any(ss));
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_rawdot, {.l = recv, .r = name, .d = d})), 0);
+  return d;
+}
+
 static srcpos unique_type_name(superscope *ss) {
   static usize struct_count = 0;
   let str = snprint(ss->alloc, "$struct{usize}", struct_count++);
@@ -465,6 +474,7 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
       (builtin_sizeof, /*  */ try_err(lower_builtin_sizeof, (ss, s, args), 0)),
       (builtin_alignof, /* */ try_err(lower_builtin_alignof, (ss, s, args), 0)),
       (builtin_offsetof, /**/ try_err(lower_builtin_offsetof, (ss, s, args), 0)),
+      (builtin_rawget, /*  */ try_err(lower_builtin_rawget, (ss, s, args), 0)),
       (builtin_struct, /*  */ try_err(lower_builtin_struct, (ss, s, args), 0)),
       (builtin__this, /*   */ try_err(lower_builtin_this, (ss, s, args), 0)),
       (builtin_qot, /*     */ try_err(lower_builtin_qot, (ss, s, args), 0)),

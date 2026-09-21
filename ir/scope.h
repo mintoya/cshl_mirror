@@ -235,6 +235,7 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
       {"@sizeof", builtin_sizeof},
       {"@alignof", builtin_alignof},
       {"@offsetof", builtin_offsetof},
+      {"@rawget", builtin_rawget},
       {"@ref", builtin_ref},
       {"@refT", builtin_reft},
       {"@volatile", builtin_volatile},
