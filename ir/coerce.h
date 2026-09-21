@@ -1,6 +1,8 @@
 #pragma once
 #include "common.h"
 #include "scope.h"
+#include "wheels/fptr.h"
+#include "wheels/macros.h"
 
 static inline Type Type_stripTag(Type t, typeenv e) {
   while (tu_is(r_tag, t.t))
@@ -232,14 +234,22 @@ static void lower_ast_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d)
 }
 
 static fptr value_to_fptr(superscope *ss, typed_value v) {
-  if (!tu_is(c_ast, ss_type(ss, v.t).t) || !v.v.c_ast) return nullFptr;
-  return tu_match_exp(
-      ast_at(ss, v.v.c_ast),
-      (astId, id, ast_text(ss, id)),
-      (astString, str, ast_text(ss, str)),
-      (astNumber, num, ast_text(ss, num)),
-      (default, nullFptr),
-  );
+  let type = ss_type(ss, v.t);
+  if (tu_is(r_arr, type.t)) {
+    let dec = P$(T(), ($.iscomptime = true, $)).decorations;
+    if (dec != type.decorations) return nullFptr;
+    let len = tu_catch(r_arr, type.t).count;
+    assertMessage(v.v.value || !len, "null pointer with a length");
+    return (fptr){len, (u8 *)v.v.value};
+  } else if (tu_is(c_ast, type.t) && v.v.c_ast)
+    return tu_match_exp(
+        ast_at(ss, v.v.c_ast),
+        (astId, id, ast_text(ss, id)),
+        (astString, str, ast_text(ss, str)),
+        (astNumber, num, ast_text(ss, num)),
+        (default, nullFptr),
+    );
+  return nullFptr;
 }
 static void lower_dot_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d) {
   let tenv = ss_typeenv(ss);
