@@ -463,7 +463,7 @@ static u32 lower_builtin_union errs(superscope *ss, scope *s, astidx args) {
 
   let e = ss_typeenv(ss);
   void sexplike(const char *data, void *userdata, usize len, bool flush);
-  print_wf(sexplike, "[LOG] created union : {Type_full}\n", ((Type_full){type_at(e, _this.t.r_tag.t), e}));
+  // print_wf(sexplike, "[LOG] created union : {Type_full}\n", ((Type_full){type_at(e, _this.t.r_tag.t), e}));
   return scope_add_value(ss, s, Type_asValue(ss, _this));
 }
 

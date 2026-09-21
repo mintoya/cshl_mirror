@@ -19,7 +19,7 @@ u32 lower_op_wrap errs(superscope *ss, scope *s, astidx left, astidx right, u32 
   return try_err(lower_op, (ss, s, try_err(lower, (ss, s, left), 0), right, number), 0);
 }
 u32 lower_low errs(superscope *ss, scope *s, astidx a) {
-  if (!a) return (println("[WARNING] null ast in lower"), scope_add_value(ss, s, TV_void(ss)));
+  if (!a) return scope_add_value(ss, s, TV_void(ss));
   let res = tu_match_exp(
       ast_at(ss, a),
       (astNull, _, (return_err("ENCOUNTERED_NULL_AST", 0), (u32)0)),
@@ -74,7 +74,7 @@ u32 lower_low errs(superscope *ss, scope *s, astidx a) {
          if (nameidx) {
            let nn = try_err(id_from_ast, (ss, s, nameidx), 0);
            try_err(scope_bind, (ss, s, value, nn), 0);
-           println("[LOG:decl] bound {typed_value_full} to {slice(c8)}", ((typed_value_full){*scope_find(ss, s, value), ss_typeenv(ss)}), nn);
+           // println("[LOG:decl] bound {typed_value_full} to {slice(c8)}", ((typed_value_full){*scope_find(ss, s, value), ss_typeenv(ss)}), nn);
          }
          value;
        })),

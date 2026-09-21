@@ -117,6 +117,8 @@ static inline astidx ast_make_empty(superscope *ss) {
 u32 scope_last_item(superscope *ss, scope *s);
 scope *scope_inferior(superscope *b, scope *s);
 u32 scope_add_value(superscope *env, scope *s, typed_value v);
+scope *scope_owner(scope *s, u32 idx);
+
 typeidx ss_type_intern(superscope *ss, Type t);
 static inline Type *ss_getType(superscope *ss, Type t) {
   return &sglist_get(ss->tlist, ss_type_intern(ss, t) - 1);
