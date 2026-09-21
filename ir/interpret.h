@@ -4,20 +4,22 @@
 #include "wheels/print/print_pre.h"
 extern ptrstype(outputFunction) sexplike;
 
-sliceDef(typed_value);
+typedef struct {
+  usize len;
+  typed_value ptr[];
+} *intfram_vs;
 typedef struct {
   usize pc;
   // corresponding scope
   const scope *s;
   // items copy,  last n items are functions arguments
-  slice(typed_value) vals;
+  intfram_vs vals;
   slice(u8) store;
   typed_value *ret;
 } intframe;
 typedef struct {
-  // stack
   msList(intframe) cs;
-  mxmap(const scope *, msList(slice(typed_value))) vmap;
+  mxmap(const scope *, msList(intfram_vs)) vmap;
   allocfn scratch;
   superscope *ss;
 } *intstate;
@@ -26,9 +28,23 @@ static allocfn intstate_scratch(intstate st) {
   else arena_clear(st->scratch);
   return st->scratch;
 }
-static void intstate_track(intstate st, const scope *s, slice(typed_value) vals) {
+// the frame's registers live in one length prefixed run, so the count and the
+// values share a single allocation; a shared frame owns nothing, its registers
+// are the scope's own, so it tracks a null here and intstate_reg falls through
+// to the scope
+static intfram_vs intfram_vs_alloc(allocfn alloc, usize len) {
+  intfram_vs res = nullptr;
+  res = (intfram_vs)acreate_extra(alloc, typeof(*res), len * sizeof(typed_value));
+  res->len = len;
+  return res;
+}
+static void intfram_vs_free(allocfn alloc, intfram_vs vs) {
+  if (!vs) return;
+  adestroy(alloc, (ptrof(arrof(u8, sizeof(typeof(*vs)) + vs->len * sizeof(typed_value))))vs);
+}
+static void intstate_track(intstate st, const scope *s, intfram_vs vals) {
   let ml = mxmap_get(st->vmap, s);
-  if (!ml || !*ml) mxmap_set(st->vmap, s, msList_initArr(st->ss->alloc, (slice(typed_value)[]){vals}));
+  if (!ml || !*ml) mxmap_set(st->vmap, s, msList_initArr(st->ss->alloc, (intfram_vs[]){vals}));
   else msList_push(st->ss->alloc, *ml, vals);
 }
 static void intstate_untrack(intstate st, const scope *s) {
@@ -47,7 +63,7 @@ typed_value interpret_shared errs(superscope *ss, scope *s);
 //
 //
 
-static intframe *intstate_push(intstate st, const scope *s, slice(typed_value) args);
+static intframe *intstate_push(intstate st, const scope *s, intfram_vs args);
 static intframe *intstate_push_shared(intstate st, const scope *s);
 static void intstate_pop(intstate st);
 static void intstate_run errs(intstate st);
@@ -56,11 +72,15 @@ static typed_value *intstate_reg(intstate st, const scope *_s, u32 idx) {
   let owner = scope_owner((scope *)_s, idx);
   if (owner) {
     // nearly every access names a register of the frame that is running, so check that first
-    if (msList_len(st->cs) && msList_last(st->cs).s == owner)
-      return &msList_last(st->cs).vals.ptr[idx - owner->start - 1];
+    if (msList_len(st->cs) && msList_last(st->cs).s == owner) {
+      intfram_vs vals = msList_last(st->cs).vals;
+      if (vals) return &vals->ptr[idx - owner->start - 1];
+    }
     let ml = mxmap_get(st->vmap, (const scope *)owner);
-    if (ml && *ml && msList_len(*ml))
-      return &msList_last(*ml).ptr[idx - owner->start - 1];
+    if (ml && *ml && msList_len(*ml)) {
+      intfram_vs vals = msList_last(*ml);
+      if (vals) return &vals->ptr[idx - owner->start - 1];
+    }
   }
   return scope_find(st->ss, (scope *)_s, idx);
 }
@@ -108,8 +128,8 @@ static void interpret_set errs(intstate st, intframe *f, ir_set c) {
 }
 static void interpret_farg errs(intstate st, intframe *f, ir_farg c) {
   let base = msList_len(f->s->values);
-  if (base + c.l >= f->vals.len) return_err("FUNCTION_ARG_OOB");
-  try_err(intstate_copy, (st, &f->vals.ptr[base + c.l], intstate_reg(st, f->s, c.d)));
+  if (base + c.l >= f->vals->len) return_err("FUNCTION_ARG_OOB");
+  try_err(intstate_copy, (st, &f->vals->ptr[base + c.l], intstate_reg(st, f->s, c.d)));
 }
 static void interpret_getptr errs(intstate st, intframe *f, ir_getptr c) {
   *(void **)intstate_reg(st, f->s, c.d)->v.value = intstate_data(st, f, c.l);
@@ -193,27 +213,27 @@ static void interpret_call errs(intstate st, intframe *f, ir_call c) {
   scope *spec = st->ss->functions[fn - 1].instances[specn].spec;
 
   usize nargs = c.e > c.r ? (usize)(c.e - c.r) : 0;
-  slice(typed_value) args = nargs ? slice_alloc(st->ss->alloc, typed_value, nargs) : (slice(typed_value)){};
+  intfram_vs args = nargs ? intfram_vs_alloc(st->ss->alloc, nargs) : nullptr;
   defer {
-    if (nargs) slice_free(st->ss->alloc, args);
+    if (nargs) intfram_vs_free(st->ss->alloc, args);
   };
   foreach (let i, range(0, nargs))
-    args.ptr[i] = f->vals.ptr[c.r + i];
+    args->ptr[i] = f->vals->ptr[c.r + i];
   typed_value *ret = intstate_reg(st, f->s, c.d);
   intstate_push(st, spec, args)->ret = ret;
 }
 
-static intframe *intstate_push(intstate st, const scope *s, slice(typed_value) args) {
+static intframe *intstate_push(intstate st, const scope *s, intfram_vs args) {
   usize len = msList_len(s->values);
-  usize total = len + args.len;
-  slice(typed_value) vals = total ? slice_alloc(st->ss->alloc, typed_value, total) : (slice(typed_value)){};
-  if (len) memcpy(vals.ptr, s->values, len * sizeof(typed_value));
-  if (args.len) memcpy(vals.ptr + len, args.ptr, args.len * sizeof(typed_value));
+  usize total = len + (args ? args->len : 0);
+  intfram_vs vals = intfram_vs_alloc(st->ss->alloc, total);
+  if (len) memcpy(vals->ptr, s->values, len * sizeof(typed_value));
+  if (args && args->len) memcpy(vals->ptr + len, args->ptr, args->len * sizeof(typed_value));
 
   usize olds_size = total ? lineup(total * sizeof(u64), alignof(myAlign)) : 0;
   usize store_size = 0;
   foreach (let i, range(0, total)) {
-    typed_value *v = &vals.ptr[i];
+    typed_value *v = &vals->ptr[i];
     if (Type_is_comptime(ss_type(st->ss, v->t))) continue;
     if_decl (let sz, Type_sizeof(ss_type(st->ss, v->t), ss_typeenv(st->ss)))
       store_size += lineup(sz, alignof(myAlign));
@@ -222,7 +242,7 @@ static intframe *intstate_push(intstate st, const scope *s, slice(typed_value) a
   u64 *olds = (u64 *)store.ptr;
   u8 *cursor = store.ptr + olds_size;
   foreach (let i, range(0, total)) {
-    typed_value *v = &vals.ptr[i];
+    typed_value *v = &vals->ptr[i];
     if (olds) olds[i] = 0;
     if (Type_is_comptime(ss_type(st->ss, v->t))) continue;
     if_decl (let sz, Type_sizeof(ss_type(st->ss, v->t), ss_typeenv(st->ss))) {
@@ -231,7 +251,7 @@ static intframe *intstate_push(intstate st, const scope *s, slice(typed_value) a
       if (old)
         foreach (let j, range(0, i))
           if (olds[j] == (u64)(uintptr_t)old) {
-            fresh = vals.ptr[j].v.value;
+            fresh = vals->ptr[j].v.value;
             break;
           }
       if (!fresh) {
@@ -249,15 +269,14 @@ static intframe *intstate_push(intstate st, const scope *s, slice(typed_value) a
   return &msList_last(st->cs);
 }
 static intframe *intstate_push_shared(intstate st, const scope *s) {
-  slice(typed_value) vals = {.ptr = (typed_value *)s->values, .len = msList_len(s->values)};
-  intstate_track(st, s, vals);
-  msList_push(st->ss->alloc, st->cs, (intframe){.s = s, .vals = vals});
+  intstate_track(st, s, nullptr);
+  msList_push(st->ss->alloc, st->cs, (intframe){.s = s});
   return &msList_last(st->cs);
 }
 static void intstate_pop(intstate st) {
   let frame = msList_pop(st->cs);
   intstate_untrack(st, frame.s);
-  if (frame.vals.ptr && frame.vals.ptr != frame.s->values) slice_free(st->ss->alloc, frame.vals);
+  intfram_vs_free(st->ss->alloc, frame.vals);
   if (frame.store.ptr) slice_free(st->ss->alloc, frame.store);
 }
 
@@ -300,6 +319,36 @@ static usize intstate_leave_loop(intframe *f, usize from) {
   assertMessage(false, "break outside of a loop");
   return msList_len(ins);
 }
+static void intstate_inst errs(intstate st, intframe *f, usize at, ir inst) {
+  tu_match_void(
+      inst,
+      (ir_blocks, _, ),
+      (ir_blocke, _, ),
+      (ir_ife, _, ),
+      (ir_ifs, cond, if (!*(bool *)intstate_reg(st, f->s, cond)->v.value) f->pc = intstate_after_branch(f, at)),
+      (ir_ifd, /*   */ _, f->pc = intstate_after_branch(f, at)),
+      (ir_loops, /* */ _, ),
+      (ir_loope, /* */ _, f->pc = intstate_loop_head(f, at)),
+      (ir_break, /* */ _, f->pc = intstate_leave_loop(f, at)),
+      (ir_cont, /*  */ _, f->pc = intstate_loop_head(f, at)),
+      (ir_ret, /*   */ r, {
+        try_err(interpret_ret, (st, f, r));
+        f->pc = msList_len(f->s->instructions);
+      }),
+      (ir_set, /*   */ c, try_err(interpret_set, (st, f, c))),
+      (ir_farg, /*  */ c, try_err(interpret_farg, (st, f, c))),
+      (ir_getref, /**/ c, try_err(interpret_getref, (st, f, c))),
+      (ir_getptr, /**/ c, try_err(interpret_getptr, (st, f, c))),
+      (ir_putptr, /**/ c, try_err(interpret_putptr, (st, f, c))),
+      (ir_field, /* */ c, try_err(interpret_field, (st, f, c))),
+      (ir_rawdot, /**/ _, return_err("RAW_DOT_IN_INTERPRETER")),
+      (ir_cast, /*  */ c, try_err(interpret_cast, (st, f, c))),
+      (ir_rawop, /* */ c, try_err(interpret_rawop, (st, f, c))),
+      (ir_array, /* */ c, try_err(interpret_array, (st, f, c))),
+      (ir_call, /*  */ c, try_err(interpret_call, (st, f, c))),
+      (default, assertMessage(false, "unhandled instruction in the interpreter")),
+  );
+}
 static void intstate_run errs(intstate st) {
   while (true) {
     intframe *f = &msList_last(st->cs);
@@ -311,33 +360,7 @@ static void intstate_run errs(intstate st) {
     usize at = f->pc;
     ir inst = f->s->instructions[at];
     f->pc++;
-    tu_match_void(
-        inst,
-        (ir_blocks, _, ),
-        (ir_blocke, _, ),
-        (ir_ife, _, ),
-        (ir_ifs, cond, if (!*(bool *)intstate_reg(st, f->s, cond)->v.value) f->pc = intstate_after_branch(f, at)),
-        (ir_ifd, /*   */ _, f->pc = intstate_after_branch(f, at)),
-        (ir_loops, /* */ _, ),
-        (ir_loope, /* */ _, f->pc = intstate_loop_head(f, at)),
-        (ir_break, /* */ _, f->pc = intstate_leave_loop(f, at)),
-        (ir_cont, /*  */ _, f->pc = intstate_loop_head(f, at)),
-        (ir_ret, /*   */ r, {
-          try_err(interpret_ret, (st, f, r));
-          f->pc = msList_len(f->s->instructions);
-        }),
-        (ir_set, /*   */ c, try_err(interpret_set, (st, f, c))),
-        (ir_farg, /*  */ c, try_err(interpret_farg, (st, f, c))),
-        (ir_getref, /**/ c, try_err(interpret_getref, (st, f, c))),
-        (ir_getptr, /**/ c, try_err(interpret_getptr, (st, f, c))),
-        (ir_putptr, /**/ c, try_err(interpret_putptr, (st, f, c))),
-        (ir_field, /* */ c, try_err(interpret_field, (st, f, c))),
-        (ir_rawdot, /**/ _, return_err("RAW_DOT_IN_INTERPRETER")),
-        (ir_cast, /*  */ c, try_err(interpret_cast, (st, f, c))),
-        (ir_rawop, /* */ c, try_err(interpret_rawop, (st, f, c))),
-        (ir_array, /* */ c, try_err(interpret_array, (st, f, c))),
-        (ir_call, /*  */ c, try_err(interpret_call, (st, f, c))),
-    );
+    try_err(intstate_inst, (st, f, at, inst), (void)0);
   }
 }
 
@@ -346,7 +369,7 @@ static intstate intstate_init(allocfn alloc, superscope *ss) {
       alloc,
       ((ptrstype(intstate)){
           .cs = msList_init(alloc, intframe),
-          .vmap = mxmap_init(alloc, const scope *, msList(slice(typed_value))),
+          .vmap = mxmap_init(alloc, const scope *, msList(intfram_vs)),
           .ss = ss,
       })
   );
@@ -379,7 +402,7 @@ static typed_value interpret_retrieve(superscope *ss, typed_value out) {
 static typed_value interpret_into errs(superscope *ss, scope *s, typed_value *ret) {
   intstate st = intstate_init(ss->alloc, ss);
   defer { intstate_deInit(st); };
-  intstate_push(st, s, (slice(typed_value)){})->ret = ret;
+  intstate_push(st, s, nullptr)->ret = ret;
   try_err(intstate_run, (st), (typed_value){});
   if (!ret->v.value) {
     println("[INTO] empty ret type={Type_full}", ((Type_full){ss_type(ss, ret->t), ss_typeenv(ss)}));
@@ -392,8 +415,10 @@ static typed_value interpret_impl errs(superscope *ss, scope *s, bool own_regist
   intstate st = intstate_init(ss->alloc, ss);
   defer { intstate_deInit(st); };
   intframe *entry = own_registers ? intstate_push_shared(st, s)
-                                  : intstate_push(st, s, (slice(typed_value)){});
-  typed_value *yield = &entry->vals.ptr[entry->vals.len - 1];
+                                  : intstate_push(st, s, nullptr);
+  // a shared frame keeps its registers in the scope, so its yield is the scope's last one
+  typed_value *yield = entry->vals ? &entry->vals->ptr[entry->vals->len - 1]
+                                   : scope_find(ss, (scope *)s, scope_last_item(ss, (scope *)s));
   entry->ret = yield;
   try_err(intstate_run, (st), (typed_value){});
   if (!yield->v.value && Type_sizeof(ss_type(ss, yield->t), ss_typeenv(ss)))
@@ -405,4 +430,11 @@ typed_value interpret errs(superscope *ss, scope *s) {
 }
 typed_value interpret_shared errs(superscope *ss, scope *s) {
   return try_err(interpret_impl, (ss, s, true), (typed_value){});
+}
+void interpret_instruction errs(superscope *ss, scope *s, ir i) {
+  intstate st = intstate_init(ss->alloc, ss);
+  defer { intstate_deInit(st); };
+  intframe *f = intstate_push_shared(st, s);
+  f->pc = 1;
+  try_err(intstate_inst, (st, f, 0, i), (void)0);
 }

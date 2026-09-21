@@ -171,8 +171,7 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
 
   let body = function_item->body;
   try_err(lower, (ss, spec, body), 0);
-  // a body returning an `any` names the concrete type of what it returns, so the instance's return
-  // type is only settled once the body is lowered
+  // scope_finish(ss, spec);
   ret = ss->functions[fn - 1].instances[spec_number].ret;
 
   if (Type_is_comptime(ret)) {

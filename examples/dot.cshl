@@ -15,8 +15,8 @@ Point ~type~ @struct{
   x ~i32;
   y ~i32;
   @id(".") ~~ fn' (this~@refT(Self) ,l~ast)@refT(i32){
-    @cif((l == "x"),(return @ref(@rawget(this, "x"))));
-    @cif((l == "y"),(return @ref(@rawget(this, "y"))));
+    @cif((l == "x"),(return @ref(@rawget(this, "y"))));
+    @cif((l == "y"),(return @ref(@rawget(this, "x"))));
   };
   @id("+") ~~ fn' (
     this~Self,
@@ -29,9 +29,5 @@ Point ~type~ @struct{
   };
 };
 a ~Point;
-a.x = 6;
-a.y = 5;
-a.z = 5;
-a;
-a+a;
+a."e" = 5;
 
