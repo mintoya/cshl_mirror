@@ -15,4 +15,4 @@ outer ~~ @fn (run ~i32,in ~i32),i32,{
   return resolve(run,in);
 };
 
-outer(0,1000) == 111;
+outer(0,63728127) == 949;
