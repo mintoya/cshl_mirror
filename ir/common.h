@@ -117,7 +117,7 @@ static inline astidx ast_make_empty(superscope *ss) {
 u32 scope_last_item(superscope *ss, scope *s);
 scope *scope_inferior(superscope *b, scope *s);
 u32 scope_add_value(superscope *env, scope *s, typed_value v);
-scope *scope_owner(scope *s, u32 idx);
+scope *scope_owner(const scope *s, u32 idx);
 
 typeidx ss_type_intern(superscope *ss, Type t);
 static inline Type *ss_getType(superscope *ss, Type t) {
@@ -137,7 +137,7 @@ static inline typed_value TV_type /*  */ (superscope *ss, typeidx t) { return (t
 static inline typed_value TV_bool /*  */ (superscope *ss, bool v) { return (typed_value){.t = ss->t_bool, .v = VS(avalue(ss->alloc, v))}; }
 static inline Type ss_ast_type(superscope *ss) { return ss_type(ss, ss->t_ast); }
 static inline Type ss_bool_type(superscope *ss) { return ss_type(ss, ss->t_bool); }
-typed_value *scope_find(superscope *env, scope *s, u32 idx);
+typed_value *scope_find(superscope *env, const scope *s, u32 idx);
 static inline void scope_bind errs(superscope *env, scope *s, u32 idx, fptr name);
 
 u32 lower errs /*                      */ (superscope *ss, scope *s, astidx a);

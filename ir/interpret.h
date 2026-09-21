@@ -40,7 +40,7 @@ static intfram_vs intfram_vs_alloc(allocfn alloc, usize len) {
 }
 static void intfram_vs_free(allocfn alloc, intfram_vs vs) {
   if (!vs) return;
-  adestroy(alloc, (ptrof(arrof(u8, sizeof(typeof(*vs)) + vs->len * sizeof(typed_value))))vs);
+  adestroy(alloc, (ptrof(arrof(u8, sizeof(typeof(*vs)) + vs->len * sizeof(typed_value)))) vs);
 }
 static void intstate_track(intstate st, const scope *s, intfram_vs vals) {
   let ml = mxmap_get(st->vmap, s);
@@ -70,17 +70,14 @@ static void intstate_run errs(intstate st);
 
 static typed_value *intstate_reg(intstate st, const scope *_s, u32 idx) {
   let owner = scope_owner((scope *)_s, idx);
-  if (owner) {
-    // nearly every access names a register of the frame that is running, so check that first
-    if (msList_len(st->cs) && msList_last(st->cs).s == owner) {
-      intfram_vs vals = msList_last(st->cs).vals;
-      if (vals) return &vals->ptr[idx - owner->start - 1];
-    }
-    let ml = mxmap_get(st->vmap, (const scope *)owner);
-    if (ml && *ml && msList_len(*ml)) {
-      intfram_vs vals = msList_last(*ml);
-      if (vals) return &vals->ptr[idx - owner->start - 1];
-    }
+  if (msList_len(st->cs) && msList_last(st->cs).s == owner) {
+    intfram_vs vals = msList_last(st->cs).vals;
+    if (vals) return &vals->ptr[idx - owner->start - 1];
+  }
+  let ml = mxmap_get(st->vmap, (const scope *)owner);
+  if (ml && *ml && msList_len(*ml)) {
+    intfram_vs vals = msList_last(*ml);
+    if (vals) return &vals->ptr[idx - owner->start - 1];
   }
   return scope_find(st->ss, (scope *)_s, idx);
 }

@@ -21,14 +21,14 @@ char *print_errsbuffer(void *) { return (char *)errors_buffer.buf; }
   print_errsbuffer;                                            \
 })
 
-scope *scope_owner(scope *s, u32 idx) {
+scope *scope_owner(const scope *s, u32 idx) {
   while (s)
     if (idx > s->start && idx <= s->start + msList_len(s->values))
       return s;
     else s = s->parent;
   return nullptr;
 }
-typed_value *scope_find(superscope *env, scope *s, u32 idx) {
+typed_value *scope_find(superscope *env, const scope *s, u32 idx) {
   let owner = scope_owner(s, idx);
   assertMessage(owner, "value %u not found in scope", idx);
   return &owner->values[idx - owner->start - 1];
@@ -136,7 +136,7 @@ static inline void scope_bind errs(superscope *env, scope *s, u32 idx, fptr name
   moxmap_set(mList_last(s->named), name, idx);
 }
 
-static inline u32 ss_get_named_failable_noref(superscope *env, scope *s, fptr n) {
+static u32 ss_get_named_failable_noref(superscope *env, scope *s, fptr n) {
   let limit = s->start + msList_len(s->values);
   while (s) {
     let maps = mList_len(s->named);
