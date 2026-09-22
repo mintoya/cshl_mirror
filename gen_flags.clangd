@@ -12,12 +12,3 @@
 } 
 | to yaml 
 | save -f .clangd;
-
-{
-  path      :("tsversion/parser.so" | path expand ),
-  highlights:("tsversion/queries/highlights.scm" | path expand ),
-  folds     :("tsversion/queries/folds.scm" | path expand ),
-  extension :"cshl",
-} 
-| to json
-| save -f .tsconfig.json;
