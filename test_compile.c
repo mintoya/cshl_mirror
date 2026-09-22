@@ -228,8 +228,6 @@ test_fn(ast_dot_kind_check) {
   test_assert(tu_is(astEmpty, ast_at_list(ectx.alist, e.v.c_ast)));
 }
 
-// @ast_op builds any operator out of its spelling, so a macro does not need a builtin per operator
-// and an operand can be another ast it computed
 test_fn(ast_op_builds_operator_from_spelling) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -389,17 +387,35 @@ test_fn(lower_error_at_on_int_reference) {
   test_streq(e.err_code, "AT_NOT_REF");
 }
 
-test_fn(lower_error_function_cannot_capture_frame) {
+test_fn(function_can_capture_comptime) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  // a @fn may name the functions, types and asts of the frame it was written inside of,
-  // but data of that frame belongs to the activation, so it stays out of reach
-  let e = lower_source_err(
+  let r = interpret_source(
       arena,
       fp(
           "outer ~~ @fn (x ~@int()),@int(),{\n"
           "  hidden ~ @int() = 7;\n"
-          "  inner ~~ @fn (y ~@int()),@int(),{ return hidden; };\n"
+          "  inner ~~ @fn (y ~@int()),@int(),{ return hidden + x + y; };\n"
+          "  return inner(1);\n"
+          "};\n"
+          "outer(2) + outer(3);\n"
+      ),
+      nullptr
+  );
+  test_assert(tu_is(c_int, tv_type(r).t));
+  test_assert(!BInt.cmp(r.v.c_int, BInt.from.i64(arena, 21)));
+}
+
+test_fn(lower_error_function_cannot_capture_frame) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  // Runtime locals belong to the enclosing activation, even with a literal initializer.
+  let e = lower_source_err(
+      arena,
+      fp(
+          "outer ~~ @fn (x ~@sint(32)),@sint(32),{\n"
+          "  hidden ~ @sint(32) = 7;\n"
+          "  inner ~~ @fn (y ~@sint(32)),@sint(32),{ return hidden; };\n"
           "  return inner(1);\n"
           "};\n"
           "outer(1);\n"
@@ -485,4 +501,20 @@ test_fn(lower_error_op_on_struct_without_overload) {
   );
   test_assert(e.err_code);
   test_streq(e.err_code, "OP_UNSUPPORTED_OPERANDS");
+}
+
+// Exercise the same heap-backed allocation path as the CLI: an outer arena
+// masks attempts to resize temporary-arena storage with the wrong allocator.
+test_fn(interpret_recursion_heap_allocator) {
+  let heap = debugAllocator(.allocator = stdAlloc);
+  defer { debugAllocatorDeInit(heap); };
+  let ct = catch_errcall(
+      (parse_source, (heap, nullFptr, "test/sib_fn.cshl")),
+      e, (err_panic(e), (astidx_full){})
+  );
+  let ss = ss_init(heap, ct);
+  catch_errcall((lower, (ss, ss->outermost, ct.idx)), e, (err_panic(e), (u32)0));
+  let result = catch_errcall((interpret, (ss, ss->outermost)), e, (err_panic(e), (typed_value){}));
+  test_assert(tu_is(r_bool, ss_type(ss, result.t).t));
+  test_assert(*(bool *)result.v.value);
 }

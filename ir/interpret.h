@@ -49,6 +49,7 @@ typed_value intstate_findreg(intstate is, u32 reg) {
 }
 typed_value intstate_findreg_value(intstate is, u32 reg) {
   let r = intstate_findreg(is, reg);
+  r.v = *(value_store *)r.v.value;
   let t = ss_type(is->ss, r.t);
   if (t.isref) {
     let nt = ss_type_intern(is->ss, P$(t, ($.isref = false, $)));
@@ -72,7 +73,8 @@ void intstate_pushs(intstate is, const scope *s, slice(typed_value) fnargs, type
   defer { mxmap_set(is->vmap, s, npl); };
 
   usize sn = msList_len(s->values);
-  usize n = sn + fnargs.len + !!retT;
+  usize argc = s->instance.fn ? is->ss->functions[s->instance.fn - 1].params.len : fnargs.len;
+  usize n = sn + argc + 1;
   usize framesize = 0;
 
   foreach (let i, range(0, sn)) {
@@ -103,6 +105,8 @@ void intstate_pushs(intstate is, const scope *s, slice(typed_value) fnargs, type
       (*vals)[i] = src.v;
     } else {
       (*vals)[i].value = store + off;
+      usize sz = Type_sizeof(t, ss_typeenv(is->ss));
+      if (sz && src.v.value) memcpy((*vals)[i].value, src.v.value, sz);
       off += lineup(Type_sizeof(t, ss_typeenv(is->ss)), alignof(myAlign));
     }
   }
@@ -132,7 +136,7 @@ void intstate_pushs(intstate is, const scope *s, slice(typed_value) fnargs, type
       (*vals)[di].value = store + off;
   }
 
-  msList_push(is->ss->alloc, npl, vals);
+  msList_push(is->temp, npl, vals);
   msList_push(is->ss->alloc, is->cs, ((intframe){.pc = 0, .sp = s, .vals = vals, .framesize = framesize}));
 }
 typed_value intstate_pop(intstate is) {
@@ -149,7 +153,7 @@ typed_value intstate_pop(intstate is) {
     usize argc = fn->params.len;
 
     r = (typed_value){
-        .t = ss_type_intern(is->ss, inst->ret),
+        .t = f.rt ? f.rt : ss_type_intern(is->ss, inst->ret),
         .v = (*f.vals)[sn + argc],
     };
   } else {
@@ -171,11 +175,15 @@ static allocfn intstate_scratch(intstate is) {
   return is->scratch;
 }
 void interpret_ret errs(intstate is, ir_ret r) {
-  let v = intstate_findreg(is, r);
+  let v = intstate_findreg_value(is, r);
   let s = msList_last(is->cs).sp;
   let fn = &is->ss->functions[s->instance.fn - 1];
   usize argc = fn->params.len;
-  (*msList_last(is->cs).vals)[argc + 1] = v.v;
+  if (fn->instances[s->instance.index].ret.isref) {
+    v = intstate_findreg(is, r);
+    v.v = *(value_store *)v.v.value;
+  }
+  (*msList_last(is->cs).vals)[msList_len(s->values) + argc] = v.v;
   msList_last(is->cs).rt = v.t;
   is->rsig = intstate_return;
 }
@@ -198,13 +206,14 @@ void interpret_set errs(intstate is, ir_set c) {
   let l = intstate_findreg_value(is, c.l);
   let d = intstate_findreg_value(is, c.d);
 
+  let slot = (value_store *)intstate_findreg(is, c.d).v.value;
   tu_match_void(
       ss_type(is->ss, d.t).t,
       (builtin, _, return_err("SET_BUILTIN")),
-      (c_int, _, d.v.c_int = BInt.copy(is->ss->alloc, l.v.c_int)),
-      (c_ast, _, d.v.c_ast = l.v.c_ast),
-      (c_fun, _, d.v.c_fun = l.v.c_fun),
-      (c_type, _, d.v.c_type = l.v.c_type),
+      (c_int, _, slot->c_int = BInt.copy(is->ss->alloc, l.v.c_int)),
+      (c_ast, _, slot->c_ast = l.v.c_ast),
+      (c_fun, _, slot->c_fun = l.v.c_fun),
+      (c_type, _, slot->c_type = l.v.c_type),
       (default, {
         Type dt = ss_type(is->ss, d.t);
         if_decl (let sz, Type_sizeof(dt, ss_typeenv(is->ss)))
@@ -214,16 +223,15 @@ void interpret_set errs(intstate is, ir_set c) {
 }
 void interpret_getptr errs(intstate is, ir_getptr c) {
   let l = intstate_findreg_value(is, c.l);
-  let d = intstate_findreg_value(is, c.d);
+  let d = intstate_findreg(is, c.d);
 
   *(void **)((value_store *)d.v.value)->value = l.v.value;
 }
 void interpret_putptr errs(intstate is, ir_putptr c) {
-  let l = intstate_findreg_value(is, c.l);
-  let d = intstate_findreg_value(is, c.d);
-
-  void *p = *(void **)((value_store *)l.v.value)->value;
-  *(void **)((value_store *)d.v.value)->value = p;
+  let l = intstate_findreg(is, c.l);
+  let d = intstate_findreg(is, c.d);
+  let lv = *(value_store *)l.v.value;
+  *(void **)((value_store *)d.v.value)->value = *(void **)lv.value;
 }
 void interpret_getref errs(intstate is, ir_getref c) {
   let l = intstate_findreg_value(is, c.l);
@@ -247,8 +255,10 @@ void interpret_field errs(intstate is, ir_field c) {
   if (!strct.start) return_err("FIELD_ACCESS");
 
   let d = intstate_findreg(is, c.d);
-  ((value_store *)d.v.value)->value =
-      (u8 *)l.v.value + type_struct_item(e, strct, c.i)->offset;
+  let member = type_struct_item(e, strct, c.i);
+  void *address = (u8 *)l.v.value + member->offset;
+  if (member->t.isref) ((value_store *)d.v.value)->value = address;
+  else *(void **)((value_store *)d.v.value)->value = address;
 }
 
 void interpret_cast errs(intstate is, ir_cast c) {
@@ -377,7 +387,7 @@ void interpret_array errs(intstate is, ir_array c) {
   );
 
   let d = intstate_findreg(is, c.d);
-  ((value_store *)d.v.value)->value =
+  *(void **)((value_store *)d.v.value)->value =
       (u8 *)l.v.value +
       *(usize *)at * Type_sizeof(type_at(e, arr.t), e);
 }
@@ -493,16 +503,27 @@ static void intstate_inst errs(intstate is, usize at, ir inst) {
 }
 
 static void intstate_run errs(intstate is) {
-  while (is->rsig == intstate_normal) {
+  while (true) {
     let f = &msList_last(is->cs);
-    if (f->pc >= msList_len(f->sp->instructions))
-      return;
+    if (is->rsig == intstate_return || f->pc >= msList_len(f->sp->instructions)) {
+      if (msList_len(is->cs) == 1) return;
+      let result = intstate_pop(is);
+      is->rsig = intstate_normal;
+      let caller = &msList_last(is->cs);
+      let call = tu_catchr(ir_call, caller->sp->instructions[caller->pc - 1]);
+      let d = intstate_findreg(is, call.d);
+      let dst = (value_store *)d.v.value;
+      if (Type_is_comptime(ss_type(is->ss, d.t))) *dst = result.v;
+      else if_decl (let sz, Type_sizeof(ss_type(is->ss, d.t), ss_typeenv(is->ss)))
+        memcpy(dst->value, result.v.value, sz);
+      continue;
+    }
     usize at = f->pc++;
     ir inst = f->sp->instructions[at];
-
     try_err(intstate_inst, (is, at, inst));
   }
 }
+
 typed_value interpret errs(superscope *ss, scope *s) {
   let is = intstate_new(ss);
 

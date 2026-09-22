@@ -126,9 +126,8 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
   if_decl (let inst, moxmap_get(function_item->mp, key)) {
     let instance = &function_item->instances[*inst];
     if (Type_is_comptime(instance->ret)) {
-      let result = scope_add_value(ss, s, TV_of(ss, instance->ret));
-      (void)try_err(interpret, (ss, instance->spec), 0);
-      return result;
+      let result = try_err(interpret, (ss, instance->spec), 0);
+      return scope_add_value(ss, s, result);
     }
     u32 callee = try_err(function_call_specialize, (ss, s, fnreg, *inst), 0);
     let result = scope_add_value(ss, s, TV_of(ss, instance->ret));
@@ -175,9 +174,8 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
   ret = ss->functions[fn - 1].instances[spec_number].ret;
 
   if (Type_is_comptime(ret)) {
-    let result = scope_add_value(ss, s, TV_of(ss, ret));
-    (void)try_err(interpret, (ss, spec), 0);
-    return result;
+    let result = try_err(interpret, (ss, spec), 0);
+    return scope_add_value(ss, s, result);
   }
   u32 callee = try_err(function_call_specialize, (ss, s, fnreg, spec_number), 0);
   let result = scope_add_value(ss, s, TV_of(ss, ret));
@@ -203,10 +201,14 @@ static u32 lower_function_call_args errs(superscope *ss, scope *s, u32 fn, slice
 
   let key = msList_init(ss->alloc, typed_value);
   defer { msList_deInit(ss->alloc, key); };
-  u32 rpos = (u32)msList_len(s->values);
+  u32 rpos = s->start + (u32)msList_len(s->values) + 1;
   foreach (let i, range(0, nparams)) {
     msList_push(ss->alloc, key, *scope_find(ss, s, leads.ptr[i]));
-    scope_add_value(ss, s, *scope_find(ss, s, leads.ptr[i]));
+    let dst = scope_add_value(ss, s, *scope_find(ss, s, leads.ptr[i]));
+    if (ss_type(ss, key[i].t).isref)
+      try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_putptr, {.l = leads.ptr[i], .d = dst})), 0);
+    else
+      try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = leads.ptr[i], .d = dst})), 0);
   }
   foreach (let l, span(key, msList_len(key)))
     l->v.value = (!Type_is_comptime(ss_type(ss, l->t)) && l->v.value) ? nullptr : l->v.value;

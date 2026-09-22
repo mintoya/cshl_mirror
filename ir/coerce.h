@@ -398,7 +398,10 @@ static void tcheck_rawop errs(superscope *env, scope *s, ir_rawop op) {
       let method = scope_add_value(env, s, *scope_find(env, m.owner, m.idx));
       u32 res = try_err(lower_function_call_values, (env, s, method, ((slice(u32)){2, (u32[2]){op.l, op.r}})));
       scope_set_type(env, scope_find(env, s, op.d), scope_find(env, s, res)->t);
-      msList_push(env->alloc, s->instructions, (ir)tu_of(ir_set, {.l = res, .d = op.d}));
+      if (scope_reg_type(env, s, res).isref)
+        msList_push(env->alloc, s->instructions, (ir)tu_of(ir_putptr, {.l = res, .d = op.d}));
+      else
+        msList_push(env->alloc, s->instructions, (ir)tu_of(ir_set, {.l = res, .d = op.d}));
       return;
     }
   }
@@ -430,14 +433,22 @@ static void tcheck_set errs(superscope *env, scope *s, ir_set st) {
   let tenv = ss_typeenv(env);
   Type dt = scope_reg_type(env, s, st.d);
   Type lt = scope_reg_type(env, s, st.l);
-  // both sides are references: the destination has to point where the source does
+  // Assigning a reference member binds its stored reference.
   if (lt.isref && dt.isref && !Type_cmp_ndecor(lt, dt, tenv)) {
-    try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_putptr, {.l = st.l, .d = st.d})));
-    return;
+    foreach (let inst, span(s->instructions, msList_len(s->instructions))) {
+      if (!tu_is(ir_field, *inst) || inst->ir_field.d != st.d) continue;
+      let fld = inst->ir_field;
+      let base = scope_reg_to_type_stripTag(env, s, fld.l);
+      let members = TypeTree_inner_struct(base.t, tenv);
+      if (members.start && type_struct_item(tenv, members, fld.i)->t.isref) {
+        try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_putptr, {.l = st.l, .d = st.d})));
+        return;
+      }
+    }
   }
   if (!tu_is(c_any, Type_stripTag(lt, tenv).t)) {
     let dv = scope_find(env, s, st.d);
-    if (scope_adopt_any(env, dv, lt)) dt = ss_type(env, dv->t);
+    if (scope_adopt_any(env, dv, P$(lt, ($.isref = false, $)))) dt = ss_type(env, dv->t);
   }
   dt = Type_stripTag(dt, tenv);
   dt.isref = false;
@@ -452,6 +463,8 @@ static void tcheck_cast errs(superscope *env, scope *s, ir_cast cv) {
   let tenv = ss_typeenv(env);
   Type lt = scope_reg_type(env, s, cv.l);
   Type dt = scope_reg_type(env, s, cv.d);
+  if (lt.isref && dt.isref && !Type_cmp_ndecor(lt, dt, tenv))
+    return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_putptr, {.l = cv.l, .d = cv.d})));
   if (Type_ncmp_nptr(Type_stripTag(lt, tenv), Type_stripTag(dt, tenv), tenv))
     return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_set, {.l = cv.l, .d = cv.d})));
 
@@ -528,6 +541,7 @@ static void tcheck_call errs(superscope *env, scope *s, ir_call call) {
     if (items.len != 1) return_err("ARRAY_INDEX_ONE_ARG");
     u32 idx = try_err(lower, (env, s, items.start));
     let elem = type_at(tenv, inner.t);
+    elem.isref = true;
     let dv = scope_find(env, s, call.d);
     scope_set_type(env, dv, ss_type_intern(env, elem));
     try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_array, {.l = call.l, .d = call.d, .r = idx})));
@@ -555,7 +569,10 @@ static void tcheck_call errs(superscope *env, scope *s, ir_call call) {
   u32 res = try_err(lower_function_call_values, (env, s, method, vals));
   slice_free(env->alloc, vals);
   scope_set_type(env, scope_find(env, s, call.d), scope_find(env, s, res)->t);
-  msList_push(env->alloc, s->instructions, (ir)tu_of(ir_set, {.l = res, .d = call.d}));
+  if (scope_reg_type(env, s, res).isref)
+    msList_push(env->alloc, s->instructions, (ir)tu_of(ir_putptr, {.l = res, .d = call.d}));
+  else
+    msList_push(env->alloc, s->instructions, (ir)tu_of(ir_set, {.l = res, .d = call.d}));
 }
 // ref to n-th arral elment
 static void tcheck_array errs(superscope *env, scope *s, ir_array arr) {
@@ -569,7 +586,7 @@ static void tcheck_array errs(superscope *env, scope *s, ir_array arr) {
   asref.isref = true;
   let dv = scope_find(env, s, arr.d);
   Type dt = scope_reg_to_type_stripTag(env, s, arr.d);
-  if (!scope_adopt_any(env, dv, elem) && Type_cmp_ndecor(elem, dt, tenv) && Type_cmp_ndecor(asref, dt, tenv))
+  if (!scope_adopt_any(env, dv, asref) && Type_cmp_ndecor(elem, dt, tenv) && Type_cmp_ndecor(asref, dt, tenv))
     return_err("ARRAY_TYPE");
   if (!Type_is_integer_like(scope_reg_type(env, s, arr.r), tenv)) return_err("ARRAY_INDEX_NON_INT");
   try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_array, arr)));
@@ -590,7 +607,7 @@ static void tcheck_field errs(superscope *env, scope *s, ir_field fld) {
   asref.isref = true;
   let dv = scope_find(env, s, fld.d);
   Type dt = scope_reg_to_type_stripTag(env, s, fld.d);
-  if (!scope_adopt_any(env, dv, member) && Type_cmp_ndecor(member, dt, tenv) && Type_cmp_ndecor(asref, dt, tenv))
+  if (!scope_adopt_any(env, dv, asref) && Type_cmp_ndecor(member, dt, tenv) && Type_cmp_ndecor(asref, dt, tenv))
     return_err("FIELD_TYPE");
   try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_field, fld)));
 }

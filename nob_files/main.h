@@ -62,7 +62,7 @@ Procs build_compiler(void) {
   return p;
 }
 int build_main(int nargs, char **args) {
-  if (!mkdir_if_not_exists("build")) return false;
+  if (!mkdir_if_not_exists("build")) return 1;
 
   Procs p = build_compiler();
 
@@ -74,7 +74,7 @@ int build_main(int nargs, char **args) {
   )));
   // clang-format on
 
-  if (!nob_procs_wait(p)) return false;
+  if (!nob_procs_wait(p)) return 1;
   if (!nob_cmd_run_sync(cmd_imm(
           CC,
           COMMON_CFLAGS,
@@ -85,7 +85,7 @@ int build_main(int nargs, char **args) {
           "build/tree_sitter.o",
           "build/parser.o",
           "build/ts_adapt.o"
-      ))) return false;
+      ))) return 1;
 
   Cmd runcmd = {};
   cmd_append(&runcmd, "./build/compiler" EXTENSION);
@@ -95,7 +95,7 @@ int build_main(int nargs, char **args) {
 }
 
 int build_tests(int nargs, char **args) {
-  if (!mkdir_if_not_exists("build")) return false;
+  if (!mkdir_if_not_exists("build")) return 1;
 
   Procs p = build_compiler();
 
@@ -107,7 +107,7 @@ int build_tests(int nargs, char **args) {
   )));
   // clang-format on
 
-  if (!nob_procs_wait(p)) return false;
+  if (!nob_procs_wait(p)) return 1;
 
   Cmd cmd = {};
 #if defined(_WIN32)
@@ -115,7 +115,7 @@ int build_tests(int nargs, char **args) {
 #else
   cmd_append(&cmd, CC, COMMON_CFLAGS, "-o", "build/tests" EXTENSION, "build/tests.o", "build/tree_sitter.o", "build/parser.o", "build/ts_adapt.o", );
 #endif
-  if (!cmd_run_sync(cmd)) return false;
+  if (!cmd_run_sync(cmd)) return 1;
 
   Cmd runcmd = {};
   cmd_append(&runcmd, "./build/tests" EXTENSION);

@@ -138,14 +138,21 @@ static inline void scope_bind errs(superscope *env, scope *s, u32 idx, fptr name
 
 static u32 ss_get_named_failable_noref(superscope *env, scope *s, fptr n) {
   let limit = s->start + msList_len(s->values);
+  bool crossed_function = false;
   while (s) {
     let maps = mList_len(s->named);
     foreach (let i, range(0, maps)) {
       let map = mList_arr(s->named)[maps - 1 - i];
       if_decl (let val, moxmap_get(map, n))
-        if (*val <= limit) return *val;
+        if (*val <= limit) {
+          let t = ss_type(env, scope_find(env, s, *val)->t);
+          if (crossed_function && s->instance.fn && !Type_is_comptime(t))
+            return 0;
+          return *val;
+        }
     }
     limit = s->start;
+    crossed_function |= !!s->instance.fn;
     s = s->parent;
   }
   return 0;
