@@ -323,14 +323,14 @@ static void tcheck_putptr errs(superscope *env, scope *s, ir_putptr pp) {
   asref.isref = true;
   let dv = scope_find(env, s, pp.d);
   Type dt = scope_reg_to_type_stripTag(env, s, pp.d);
-  if (!scope_adopt_any(env, dv, asref) && Type_cmp_ndecor(pointee, dt, tenv) && Type_cmp_ndecor(asref, dt, tenv))
+  if (!scope_adopt_any(env, dv, asref) && Type_cmp_ndecor(asref, dt, tenv))
     return_err("PUTPTR_TYPE");
   try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_putptr, pp)));
 }
 static void tcheck_getptr errs(superscope *env, scope *s, ir_getptr gp) {
   let tenv = ss_typeenv(env);
   Type base = scope_reg_to_type_stripTag(env, s, gp.l);
-  Type_if_deref(tenv, base, &base);
+  base.isref = false;
   Type asp = P$(base, ($.ptr_level++, $));
   Type asr = P$(base, ($.isref = true, $));
 
@@ -398,7 +398,7 @@ static void tcheck_rawop errs(superscope *env, scope *s, ir_rawop op) {
       u32 res = try_err(lower_function_call_values, (env, s, method, ((slice(u32)){2, (u32[2]){op.l, op.r}})));
       scope_set_type(env, scope_find(env, s, op.d), scope_find(env, s, res)->t);
       if (scope_reg_type(env, s, res).isref)
-        msList_push(env->alloc, s->instructions, (ir)tu_of(ir_putptr, {.l = res, .d = op.d}));
+        msList_push(env->alloc, s->instructions, (ir)tu_of(ir_getref, {.l = res, .d = op.d}));
       else
         msList_push(env->alloc, s->instructions, (ir)tu_of(ir_set, {.l = res, .d = op.d}));
       return;
@@ -440,7 +440,7 @@ static void tcheck_set errs(superscope *env, scope *s, ir_set st) {
       let base = scope_reg_to_type_stripTag(env, s, fld.l);
       let members = TypeTree_inner_struct(base.t, tenv);
       if (members.start && type_struct_item(tenv, members, fld.i)->t.isref) {
-        try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_putptr, {.l = st.l, .d = st.d})));
+        try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_getref, {.l = st.l, .d = st.d})));
         return;
       }
     }
@@ -467,7 +467,7 @@ static void tcheck_cast errs(superscope *env, scope *s, ir_cast cv) {
     return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_set, {.l = cv.l, .d = cv.d})));
   }
   if (lt.isref && dt.isref && !Type_cmp_ndecor(lt, dt, tenv))
-    return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_putptr, {.l = cv.l, .d = cv.d})));
+    return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_getref, {.l = cv.l, .d = cv.d})));
   if (Type_ncmp_nptr(Type_stripTag(lt, tenv), Type_stripTag(dt, tenv), tenv))
     return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_set, {.l = cv.l, .d = cv.d})));
 
@@ -573,7 +573,7 @@ static void tcheck_call errs(superscope *env, scope *s, ir_call call) {
   slice_free(env->alloc, vals);
   scope_set_type(env, scope_find(env, s, call.d), scope_find(env, s, res)->t);
   if (scope_reg_type(env, s, res).isref)
-    msList_push(env->alloc, s->instructions, (ir)tu_of(ir_putptr, {.l = res, .d = call.d}));
+    msList_push(env->alloc, s->instructions, (ir)tu_of(ir_getref, {.l = res, .d = call.d}));
   else
     msList_push(env->alloc, s->instructions, (ir)tu_of(ir_set, {.l = res, .d = call.d}));
 }

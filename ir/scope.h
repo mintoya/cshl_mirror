@@ -1,5 +1,7 @@
 #pragma once
 #include "common.h"
+#include "wheels/macros.h"
+#include "wheels/print/print_pre.h"
 #include <wheels/allocators/cballocator.h>
 #include <wheels/smap.h>
 
@@ -109,9 +111,6 @@ u32 scope_last_item(superscope *, scope *s) { return s->start + msList_len(s->va
 //
 //
 
-static inline void scope_emit_inst errs(superscope *env, scope *s, ir i) { msList_push(env->alloc, s->instructions, i); }
-
-static bool Type_ncmp_nptr(Type a, Type b, typeenv e) { return a.ptr_level == b.ptr_level && !TypeTree_cmp(e, a.t, b.t); }
 static inline cmpres Type_cmp_ndecor(Type a, Type b, typeenv e) {
   let x = ~((Type){{}, {.isconst = true, .isvolatile = true, .iscomptime = true}}.decorations);
   return Type_cmp(
@@ -120,6 +119,46 @@ static inline cmpres Type_cmp_ndecor(Type a, Type b, typeenv e) {
       P$(b, ($.decorations &= x, $))
   );
 }
+static inline void scope_emit_inst errs(superscope *env, scope *s, ir i) {
+#if !defined NDEBUG
+  tu_match_void(
+      i,
+      (ir_putptr, pp, {
+        let lt = ss_type(env, scope_find(env, s, pp.l)->t);
+        let dt = ss_type(env, scope_find(env, s, pp.d)->t);
+        lt.isref = false;
+        dt.isref = false;
+        if (!lt.ptr_level) {
+          println("[dbg:1]{Type_full}->{Type_full}", ss_typeF(env, ss_type(env, scope_find(env, s, pp.l)->t)), ss_typeF(env, ss_type(env, scope_find(env, s, pp.d)->t)));
+          assertMessage(false);
+        }
+        lt.ptr_level--;
+        if (Type_cmp_ndecor(lt, dt, ss_typeenv(env))) {
+          println("[dbg:2]{Type_full}->{Type_full}", ss_typeF(env, ss_type(env, scope_find(env, s, pp.l)->t)), ss_typeF(env, ss_type(env, scope_find(env, s, pp.d)->t)));
+          assertMessage(false);
+        }
+      }),
+      (ir_getptr, pp, {
+        let lt = ss_type(env, scope_find(env, s, pp.l)->t);
+        let dt = ss_type(env, scope_find(env, s, pp.d)->t);
+        lt.isref = false;
+        lt.ptr_level++;
+        if (dt.isref) {
+          dt.isref = false;
+          dt.ptr_level++;
+        }
+        if (Type_cmp_ndecor(lt, dt, ss_typeenv(env))) {
+          println("[dbg:3]{Type_full}->{Type_full}", ss_typeF(env, ss_type(env, scope_find(env, s, pp.l)->t)), ss_typeF(env, ss_type(env, scope_find(env, s, pp.d)->t)));
+          assertMessage(false);
+        }
+      }),
+      (default, {}),
+  );
+#endif
+  msList_push(env->alloc, s->instructions, i);
+}
+
+static bool Type_ncmp_nptr(Type a, Type b, typeenv e) { return a.ptr_level == b.ptr_level && !TypeTree_cmp(e, a.t, b.t); }
 static inline bool Type_isnull(Type t) { return tu_is(r_null, t.t); }
 static inline void scope_add_inst errs(superscope *env, scope *s, ir i);
 static inline void scope_add_inst_typecheck errs(superscope *env, scope *s, ir i);

@@ -34,29 +34,26 @@ typedef struct {
   } rsig;
 } *intstate;
 
-typed_value intstate_findreg(intstate is, u32 reg) {
+static value_store *intstate_findslots_value(intstate is, u32 reg) {
   const scope *o = scope_owner(msList_last(is->cs).sp, reg);
   usize i = reg - o->start - 1;
-
-  value_store *vs = {};
-  typeidx ti = o->values[i].t;
-
+  value_store *vs = &o->values[i].v;
   if_decl (let f, mxmap_get(is->vmap, o))
     vs = &(*msList_last(*f))[i];
-  else
-    vs = &o->values[i].v;
-
-  return (typed_value){ti, vs};
+  return vs;
 }
-typed_value intstate_findreg_value(intstate is, u32 reg) {
-  let r = intstate_findreg(is, reg);
-  r.v = *(value_store *)r.v.value;
+static typed_value intstate_value(intstate is, typed_value r) {
   let t = ss_type(is->ss, r.t);
   if (t.isref) {
-    let nt = ss_type_intern(is->ss, P$(t, ($.isref = false, $)));
-    r = (typeof(r)){.t = nt, .v.value = *(void **)r.v.value};
+    r.t = ss_type_intern(is->ss, P$(t, ($.isref = false, $)));
+    r.v.value = *(typeof(r.v.value) **)r.v.value;
   }
   return r;
+}
+typed_value intstate_findreg(intstate is, u32 reg) {
+  let slot = intstate_findslots_value(is, reg);
+  let t = scope_find(is->ss, msList_last(is->cs).sp, reg)->t;
+  return intstate_value(is, (typed_value){.t = t, .v = *slot});
 }
 intstate intstate_new(superscope *ss) {
   return avalue(
@@ -176,13 +173,13 @@ static allocfn intstate_scratch(intstate is) {
   return is->scratch;
 }
 void interpret_ret errs(intstate is, ir_ret r) {
-  let v = intstate_findreg_value(is, r);
+  let v = intstate_findreg(is, r);
   let s = msList_last(is->cs).sp;
   let fn = &is->ss->functions[s->instance.fn - 1];
   usize argc = fn->params.len;
   if (fn->instances[s->instance.index].ret.isref) {
-    v = intstate_findreg(is, r);
-    v.v = *(value_store *)v.v.value;
+    let slot = intstate_findslots_value(is, r);
+    v = (typed_value){.t = scope_find(is->ss, s, r)->t, .v = *slot};
   }
   (*msList_last(is->cs).vals)[msList_len(s->values) + argc] = v.v;
   msList_last(is->cs).rt = v.t;
@@ -204,10 +201,10 @@ static usize intstate_loop_seek(intframe *f, usize at, isize inc, isize depth) {
   assertMessage(false, "should be unreachable");
 }
 void interpret_set errs(intstate is, ir_set c) {
-  let l = intstate_findreg_value(is, c.l);
-  let d = intstate_findreg_value(is, c.d);
+  let l = intstate_findreg(is, c.l);
+  let d = intstate_findreg(is, c.d);
 
-  let slot = (value_store *)intstate_findreg(is, c.d).v.value;
+  let slot = intstate_findslots_value(is, c.d);
   tu_match_void(
       ss_type(is->ss, d.t).t,
       (builtin, _, return_err("SET_BUILTIN")),
@@ -224,48 +221,46 @@ void interpret_set errs(intstate is, ir_set c) {
   );
 }
 void interpret_getptr errs(intstate is, ir_getptr c) {
-  let l = intstate_findreg_value(is, c.l);
+  let l = intstate_findreg(is, c.l);
   let d = intstate_findreg(is, c.d);
 
-  *(void **)((value_store *)d.v.value)->value = l.v.value;
+  *(void **)d.v.value = l.v.value;
+}
+typed_value_full ss_tvf(superscope *ss, typed_value tv) {
+  return (typed_value_full){
+      .env = ss_typeenv(ss),
+      .v = tv,
+  };
 }
 void interpret_putptr errs(intstate is, ir_putptr c) {
   let l = intstate_findreg(is, c.l);
-  let d = intstate_findreg(is, c.d);
-  let lv = *(value_store *)l.v.value;
-  *(void **)((value_store *)d.v.value)->value = *(void **)lv.value;
+  let d = intstate_findslots_value(is, c.d);
+  *(void **)d->value = *(void **)l.v.value;
 }
 void interpret_getref errs(intstate is, ir_getref c) {
-  let l = intstate_findreg_value(is, c.l);
-  let d = intstate_findreg(is, c.d);
+  let l = intstate_findreg(is, c.l);
+  let d = intstate_findslots_value(is, c.d);
 
-  *(void **)((value_store *)d.v.value)->value = l.v.value;
+  *(void **)d->value = l.v.value;
 }
 void interpret_field errs(intstate is, ir_field c) {
   let l = intstate_findreg(is, c.l);
-  l.v = *(value_store *)l.v.value;
-
   let lt = ss_type(is->ss, l.t);
-  if (lt.isref) {
-    lt.isref = false;
-    l.t = ss_type_intern(is->ss, lt);
-    l.v.value = *(void **)l.v.value;
-  }
 
   let e = ss_typeenv(is->ss);
   let strct = TypeTree_inner_struct(lt.t, e);
   if (!strct.start) return_err("FIELD_ACCESS");
 
-  let d = intstate_findreg(is, c.d);
+  let d = intstate_findslots_value(is, c.d);
   let member = type_struct_item(e, strct, c.i);
   void *address = (u8 *)l.v.value + member->offset;
-  if (member->t.isref) ((value_store *)d.v.value)->value = address;
-  else *(void **)((value_store *)d.v.value)->value = address;
+  if (member->t.isref) d->value = address;
+  else *(void **)d->value = address;
 }
 
 void interpret_cast errs(intstate is, ir_cast c) {
-  let d = intstate_findreg(is, c.d);
-  let dt = ss_type(is->ss, d.t);
+  let d = intstate_findslots_value(is, c.d);
+  let dt = ss_type(is->ss, scope_find(is->ss, msList_last(is->cs).sp, c.d)->t);
 
   assertMessage(
       Type_is_integer_like(dt, ss_typeenv(is->ss)),
@@ -275,22 +270,14 @@ void interpret_cast errs(intstate is, ir_cast c) {
   let al = intstate_scratch(is);
 
   let l = intstate_findreg(is, c.l);
-  l.v = *(value_store *)l.v.value;
-
-  let lt = ss_type(is->ss, l.t);
-  if (lt.isref) {
-    lt.isref = false;
-    l.t = ss_type_intern(is->ss, lt);
-    l.v.value = *(void **)l.v.value;
-  }
 
   let bits = int_as_bigint(al, l, ss_typeenv(is->ss));
-  let dv = (value_store *)d.v.value;
+  let dv = d;
 
   if (tu_is(c_int, dt.t))
     dv->c_int = BInt.copy(is->ss->alloc, bits);
   else {
-    typed_value out = {.t = d.t, .v = *dv};
+    typed_value out = intstate_findreg(is, c.d);
     bigint_into_int(is->ss, is->ss->alloc, &out, bits);
   }
 }
@@ -299,22 +286,7 @@ void interpret_rawop errs(intstate is, ir_rawop c) {
   let al = intstate_scratch(is);
 
   let l = intstate_findreg(is, c.l);
-  l.v = *(value_store *)l.v.value;
-  let lt = ss_type(is->ss, l.t);
-  if (lt.isref) {
-    lt.isref = false;
-    l.t = ss_type_intern(is->ss, lt);
-    l.v.value = *(void **)l.v.value;
-  }
-
   let r = intstate_findreg(is, c.r);
-  r.v = *(value_store *)r.v.value;
-  let rt = ss_type(is->ss, r.t);
-  if (rt.isref) {
-    rt.isref = false;
-    r.t = ss_type_intern(is->ss, rt);
-    r.v.value = *(void **)r.v.value;
-  }
 
   let lhs = int_as_bigint(al, l, ss_typeenv(is->ss));
   let rhs = int_as_bigint(al, r, ss_typeenv(is->ss));
@@ -342,14 +314,14 @@ void interpret_rawop errs(intstate is, ir_rawop c) {
       (default, (assertMessage(false, "unsupported_instruction"), (bigint) nullptr)),
   );
 
-  let d = intstate_findreg(is, c.d);
-  let dt = ss_type(is->ss, d.t);
-  let dv = (value_store *)d.v.value;
+  let d = intstate_findslots_value(is, c.d);
+  let dt = ss_type(is->ss, scope_find(is->ss, msList_last(is->cs).sp, c.d)->t);
+  let dv = d;
 
   if (tu_is(c_int, dt.t))
     dv->c_int = BInt.copy(is->ss->alloc, out);
   else {
-    typed_value dst = {.t = d.t, .v = *dv};
+    typed_value dst = intstate_findreg(is, c.d);
     bigint_into_int(is->ss, is->ss->alloc, &dst, out);
   }
 }
@@ -358,26 +330,12 @@ void interpret_array errs(intstate is, ir_array c) {
   let e = ss_typeenv(is->ss);
 
   let l = intstate_findreg(is, c.l);
-  l.v = *(value_store *)l.v.value;
+  let r = intstate_findreg(is, c.r);
 
   let lt = ss_type(is->ss, l.t);
-  if (lt.isref) {
-    lt.isref = false;
-    l.t = ss_type_intern(is->ss, lt);
-    l.v.value = *(void **)l.v.value;
-  }
+  let rt = ss_type(is->ss, r.t);
 
   let arr = TypeTree_inner_array(lt.t, e);
-
-  let r = intstate_findreg(is, c.r);
-  r.v = *(value_store *)r.v.value;
-
-  let rt = ss_type(is->ss, r.t);
-  if (rt.isref) {
-    rt.isref = false;
-    r.t = ss_type_intern(is->ss, rt);
-    r.v.value = *(void **)r.v.value;
-  }
 
   let al = intstate_scratch(is);
   let at = int_as_bigint(al, r, e);
@@ -388,8 +346,8 @@ void interpret_array errs(intstate is, ir_array c) {
       sizeof(usize) / sizeof(bigint_unit) + 1
   );
 
-  let d = intstate_findreg(is, c.d);
-  *(void **)((value_store *)d.v.value)->value =
+  let d = intstate_findslots_value(is, c.d);
+  *(void **)d->value =
       (u8 *)l.v.value +
       *(usize *)at * Type_sizeof(type_at(e, arr.t), e);
 }
@@ -421,12 +379,12 @@ static usize intstate_seek(
 }
 void interpret_farg errs(intstate is, ir_farg c) {
   let f = &msList_last(is->cs);
-  let d = intstate_findreg(is, c.d);
+  let d = intstate_findslots_value(is, c.d);
   let l = &(*f->vals)[msList_len(f->sp->values) + c.l];
-  let dv = (value_store *)d.v.value;
+  let dv = d;
 
   tu_match_void(
-      ss_type(is->ss, d.t).t,
+      ss_type(is->ss, scope_find(is->ss, msList_last(is->cs).sp, c.d)->t).t,
       (c_int, _, dv->c_int = BInt.copy(is->ss->alloc, l->c_int)),
       (builtin, _, return_err("SET_BUILTIN")),
       (c_ast, _, dv->c_ast = l->c_ast),
@@ -434,7 +392,7 @@ void interpret_farg errs(intstate is, ir_farg c) {
       (c_fun, _, dv->c_fun = l->c_fun),
       (c_type, _, dv->c_type = l->c_type),
       (default, {
-        Type dt = ss_type(is->ss, d.t);
+        Type dt = ss_type(is->ss, scope_find(is->ss, msList_last(is->cs).sp, c.d)->t);
         if_decl (let sz, Type_sizeof(dt, ss_typeenv(is->ss)))
           memcpy(dv->value, l->value, sz);
       })
@@ -442,7 +400,7 @@ void interpret_farg errs(intstate is, ir_farg c) {
 }
 void interpret_call errs(intstate is, ir_call c) {
   let fr = intstate_findreg(is, c.l);
-  let fv = ((value_store *)fr.v.value)->c_fun;
+  let fv = fr.v.c_fun;
 
   let fn = &is->ss->functions[fv.fn - 1];
   let inst = &fn->instances[fv.spec];
@@ -452,10 +410,10 @@ void interpret_call errs(intstate is, ir_call c) {
       nargs ? *acreate(is->temp, typed_value[nargs]) : nullptr;
 
   foreach (let i, range(0, nargs)) {
-    let v = intstate_findreg(is, c.r + i);
+    let v = intstate_findslots_value(is, c.r + i);
     args[i] = (typed_value){
-        .t = v.t,
-        .v = *(value_store *)v.v.value, // !
+        .t = scope_find(is->ss, msList_last(is->cs).sp, c.r + i)->t,
+        .v = *v,
     };
   }
 
@@ -482,7 +440,7 @@ static void intstate_inst errs(intstate is, usize at, ir inst) {
       (ir_blocke, _, ),
       (ir_blocks, _, ),
       (ir_ifs, cond, {
-        let v = intstate_findreg_value(is, cond);
+        let v = intstate_findreg(is, cond);
         if (!*(bool *)v.v.value) f->pc = intstate_seek(f, at, 1, 1, ir_ifs_enum, ir_ifd_enum, ir_ife_enum);
       }),
       (ir_ifd /*  */, _, f->pc = intstate_seek(f, at, +1, +1, ir_ifs_enum, 0, ir_ife_enum)),
@@ -514,10 +472,11 @@ static void intstate_run errs(intstate is) {
       is->rsig = intstate_normal;
       let caller = &msList_last(is->cs);
       let call = tu_catchr(ir_call, caller->sp->instructions[caller->pc - 1]);
-      let d = intstate_findreg(is, call.d);
-      let dst = (value_store *)d.v.value;
-      if (Type_is_comptime(ss_type(is->ss, d.t))) *dst = result.v;
-      else if_decl (let sz, Type_sizeof(ss_type(is->ss, d.t), ss_typeenv(is->ss)))
+      let d = intstate_findslots_value(is, call.d);
+      let dst = d;
+      let dt = ss_type(is->ss, scope_find(is->ss, caller->sp, call.d)->t);
+      if (Type_is_comptime(dt)) *dst = result.v;
+      else if_decl (let sz, Type_sizeof(dt, ss_typeenv(is->ss)))
         memcpy(dst->value, result.v.value, sz);
       continue;
     }
@@ -534,14 +493,8 @@ typed_value interpret errs(superscope *ss, scope *s) {
   intstate_pushs(is, s, (slice(typed_value)){}, 0);
   try_err(intstate_run, (is), (typed_value){});
 
-  let r = intstate_pop(is);
+  let r = intstate_value(is, intstate_pop(is));
   let t = ss_type(ss, r.t);
-
-  if (t.isref) {
-    t.isref = false;
-    r.t = ss_type_intern(ss, t);
-    r.v.value = *(void **)r.v.value;
-  }
 
   if (tu_is(c_int, t.t)) {
     if (r.v.c_int)

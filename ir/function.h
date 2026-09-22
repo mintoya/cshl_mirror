@@ -217,7 +217,7 @@ static u32 lower_function_call_args errs(superscope *ss, scope *s, u32 fn, slice
     msList_push(ss->alloc, key, *scope_find(ss, s, leads.ptr[i]));
     let dst = scope_add_value(ss, s, *scope_find(ss, s, leads.ptr[i]));
     if (ss_type(ss, key[i].t).isref)
-      try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_putptr, {.l = leads.ptr[i], .d = dst})), 0);
+      try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_getref, {.l = leads.ptr[i], .d = dst})), 0);
     else
       try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = leads.ptr[i], .d = dst})), 0);
   }
