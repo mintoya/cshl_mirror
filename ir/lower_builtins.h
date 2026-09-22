@@ -473,6 +473,60 @@ static u32 lower_builtin_union errs(superscope *ss, scope *s, astidx args) {
   return scope_add_value(ss, s, Type_asValue(ss, _this));
 }
 
+// @bitstruct{ name ~type:width; ... }
+static u32 lower_builtin_bitstruct errs(superscope *ss, scope *s, astidx args) {
+  builtin_args(ss, args, 1);
+  let struct_node = ast_at(ss, list.start + 0);
+  tu_catch(astBBlock, struct_node, return_err("BITSTRUCT_EXPECTS_BLOCK", 0));
+  let stmts = ast_block_children(ss, list.start);
+
+  let members = (r_bitfield){.start = ss_bitf_reserve(ss, stmts.len)};
+
+  let e = ss_typeenv(ss);
+  foreach (let i, range(0, stmts.len)) {
+    e = ss_typeenv(ss);
+    let stmt_node = ast_at(ss, stmts.start + i);
+    let dcl = tu_catch(astDecl, stmt_node, return_err("BITSTRUCT_MEMBER_NOT_DECL", 0));
+
+    astidx nameidx = ast_child(ss, dcl.name_type_value);
+    astidx typeidx = ast_child(ss, dcl.name_type_value + 1);
+    if (!nameidx) return_err("BITSTRUCT_MEMBER_NO_NAME", 0);
+    if (!typeidx) return_err("BITSTRUCT_MEMBER_NO_WIDTH", 0);
+
+    astidx baseidx = typeidx;
+    astidx widthidx = 0;
+    iflet_tu (let op, astOp, ast_at(ss, typeidx)) {
+      if (op.number_rep == opNumbers.colon) {
+        baseidx = ast_child(ss, op.left_right);
+        widthidx = ast_child(ss, op.left_right + 1);
+      }
+    }
+    if (!baseidx || !widthidx) return_err("BITSTRUCT_MEMBER_NO_WIDTH", 0);
+
+    let name = try_err(id_from_ast, (ss, s, nameidx), 0);
+    Type base = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, baseidx), 0)), 0);
+    if (Type_is_comptime(base) || !Type_is_integer_like(base, e)) return_err("BITSTRUCT_MEMBER_NOT_INTEGER", 0);
+
+    let width_value = try_err(temporary_interpret, (ss, s, widthidx), 0);
+    if (!Type_is_comptime(ss_type(ss, width_value.t)) || !Type_is_integer_like(ss_type(ss, width_value.t), e))
+      return_err("BITSTRUCT_MEMBER_WIDTH_NOT_INT", 0);
+    let width_big = int_as_bigint(ss->alloc, width_value, e);
+    defer { msList_deInit(ss->alloc, width_big); };
+    if (bigint_cmp(width_big, nullptr) <= 0) return_err("BAD_BIT_WIDTH", 0);
+    bigint_expand(ss->alloc, &width_big, sizeof(usize) / sizeof(bigint_unit) + 1);
+    usize width = *(usize *)width_big;
+    if (width > (usize)Type_intLike_bitcount(base, e)) return_err("BITSTRUCT_MEMBER_TOO_WIDE", 0);
+
+    r_bitf_item *ri = type_bitf_item(e, members, i);
+    ri->name = id_srcpos(ss, nameidx, name);
+    ri->t = base;
+    ri->width = (u32)width;
+  }
+
+  let _this = T(tu_of(r_tag, {ss_type_intern(ss, T(tu_of(r_bitfield, members))), unique_type_name(ss)}));
+  return scope_add_value(ss, s, Type_asValue(ss, _this));
+}
+
 static u32 lower_builtin_this errs(superscope *ss, scope *s, astidx args) {
   builtin_no_args(ss, args);
   if (!msList_len(ss->thisstack)) return_err("THIS_OUTSIDE_STRUCT", 0);
@@ -522,6 +576,7 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
       (builtin_rawget, /*  */ try_err(lower_builtin_rawget, (ss, s, args), 0)),
       (builtin_struct, /*  */ try_err(lower_builtin_struct, (ss, s, args), 0)),
       (builtin_union, /*   */ try_err(lower_builtin_union, (ss, s, args), 0)),
+      (builtin_bitstruct, /**/ try_err(lower_builtin_bitstruct, (ss, s, args), 0)),
       (builtin__this, /*   */ try_err(lower_builtin_this, (ss, s, args), 0)),
       (builtin_qot, /*     */ try_err(lower_builtin_qot, (ss, s, args), 0)),
       (builtin_uqot, /*    */ try_err(lower_builtin_uqot, (ss, s, args), 0)),

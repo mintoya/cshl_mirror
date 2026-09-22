@@ -87,6 +87,12 @@ static inline typeidx ss_member_reserve(superscope *ss, usize count) {
     sglist_push(ss->sitems, (r_struct_item){});
   return start;
 }
+static inline typeidx ss_bitf_reserve(superscope *ss, usize count) {
+  typeidx start = (typeidx)ss->bitems.len + 1;
+  foreach (let i, range(0, count + 1))
+    sglist_push(ss->bitems, (r_bitf_item){});
+  return start;
+}
 static inline ast ast_at_list(astlist al, astidx idx) {
   return (!idx || idx > al.len) ? (ast)tu_of(astNull, {}) : sglist_get(al, idx - 1);
 }
@@ -462,6 +468,20 @@ typePrinter(scope_full) {
           USETYPEPRINTER(u32, f.l), PUTS(" ");
           USETYPEPRINTER(u32, f.i), PUTS(" ");
           PUTS(" -> "), USETYPEPRINTER(u32, f.d);
+          PUTS(")");
+        }),
+        (ir_bitget, f, {
+          PUTS("(bitget ");
+          USETYPEPRINTER(u32, f.l), PUTS(" ");
+          USETYPEPRINTER(u32, f.i);
+          PUTS(" -> "), USETYPEPRINTER(u32, f.d);
+          PUTS(")");
+        }),
+        (ir_bitset, f, {
+          PUTS("(bitset ");
+          USETYPEPRINTER(u32, f.l), PUTS(" ");
+          USETYPEPRINTER(u32, f.i), PUTS(" = ");
+          USETYPEPRINTER(u32, f.r);
           PUTS(")");
         }),
         (ir_rawop, op, {

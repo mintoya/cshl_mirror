@@ -286,6 +286,16 @@ test_file_1(struct_operator_overload_self_in_body);
 test_file_1(struct_as_overload);
 test_file_1(dot);
 test_file_1(union_members_share_offset_zero);
+test_file_1(bitstruct_packs_members_by_bit_width);
+test_file_1(bitstruct_bit_total_rounds_up_to_bytes);
+test_file_1(bitstruct_layout_ignores_base_type_size);
+test_file_1(bitstruct_members_read_back_what_was_written);
+test_file_1(bitstruct_writes_leave_neighbors_alone);
+test_file_1(bitstruct_members_span_byte_boundaries);
+test_file_1(bitstruct_signed_member_sign_extends);
+test_file_1(bitstruct_packs_least_significant_bit_first);
+test_file_1(bitstruct_member_update_reads_the_old_bits);
+test_file_1(bitstruct_member_read_is_a_copy);
 test_file_1(as_without_overload_is_a_cast);
 test_file_1(struct_closure_capture);
 test_file_1(overload_call_yields_the_result_after_arg_coercion);
@@ -485,6 +495,91 @@ test_fn(lower_error_union_member_initializer) {
   );
   test_assert(e.err_code);
   test_streq(e.err_code, "UNION_MEMBER_INITIALIZER");
+}
+
+// a bitstruct member is a name, a base type and a bit width, so a member that only names a
+// type has nothing to lay out
+test_fn(lower_error_bitstruct_member_without_width) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s32 ~~ @sint(32);\n"
+          "B ~type~ @bitstruct{ a ~s32; };\n"
+      )
+  );
+  test_assert(e.err_code);
+  test_streq(e.err_code, "BITSTRUCT_MEMBER_NO_WIDTH");
+}
+
+// a bitfield is a run of bits of one integer, so a member that is not an integer has no bits
+// to take
+test_fn(lower_error_bitstruct_member_not_integer) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "B ~type~ @bitstruct{ a ~@void():3; };\n"
+      )
+  );
+  test_assert(e.err_code);
+  test_streq(e.err_code, "BITSTRUCT_MEMBER_NOT_INTEGER");
+}
+
+// a width of zero would name a member with no bits at all
+// (the width is spelled the same way a method call is, so it is taken apart here)
+test_fn(lower_error_bitstruct_member_zero_width) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s32 ~~ @sint(32);\n"
+          "B ~type~ @bitstruct{ a ~s32:0; };\n"
+      )
+  );
+  test_assert(e.err_code);
+  test_streq(e.err_code, "BAD_BIT_WIDTH");
+}
+
+// the base type is what a member is read as, so it has to be wide enough to hold the bits
+test_fn(lower_error_bitstruct_member_wider_than_base_type) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s32 ~~ @sint(32);\n"
+          "B ~type~ @bitstruct{ a ~s32:33; };\n"
+      )
+  );
+  test_assert(e.err_code);
+  test_streq(e.err_code, "BITSTRUCT_MEMBER_TOO_WIDE");
+}
+
+// a member of a bitstruct is not addressable: its bits are part of a run, so there is no byte
+// address to hand out for it
+test_fn(lower_error_bitfield_member_not_addressable) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "u8 ~~ @uint(8);\n"
+          "B ~type~ @bitstruct{ a ~u8:3; };\n"
+          "x ~B;\n"
+          "@where x.a;\n"
+      )
+  );
+  test_assert(e.err_code);
+  test_streq(e.err_code, "BITFIELD_NOT_ADDRESSABLE");
 }
 
 test_fn(lower_error_op_on_struct_without_overload) {

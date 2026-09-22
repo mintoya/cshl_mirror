@@ -48,6 +48,7 @@ typedef enum : u8 {
                     //
   builtin_struct,   // @struct{} struct of declarations
   builtin_union,    // @union{} union of declarations, all members share offset 0
+  builtin_bitstruct, // @bitstruct{} bitfield of declarations, each one with a bit width
   builtin__this,    // @this() inside of struct, this is the result type
                     //
   builtin_qot,      // @qot(arg) ast of arg
@@ -467,6 +468,7 @@ typePrinter(builtin_id) {
       (builtin_sizeof, /*  */ PUTS("sizeof")),
       (builtin_struct, /*  */ PUTS("struct")),
       (builtin_union, /*   */ PUTS("union")),
+      (builtin_bitstruct, /**/ PUTS("bitstruct")),
       (builtin_return, /*  */ PUTS("return")),
       (builtin_typeof, /*  */ PUTS("typeof")),
       (builtin_alignof, /* */ PUTS("alignof")),

@@ -250,6 +250,16 @@ static fptr value_to_fptr(superscope *ss, typed_value v) {
     );
   return nullFptr;
 }
+static bool bitstruct_member_index(typeenv e, Type base, fptr name, u32 *idx) {
+  let bf = TypeTree_inner_bitfield(base.t, e);
+  if (!bf.start) return false;
+  foreach (let k, range(0, type_bitf_len(e, bf)))
+    if (!fptr_cmp(type_name(e, type_bitf_item(e, bf, k)->name), name)) {
+      *idx = (u32)k;
+      return true;
+    }
+  return false;
+}
 static void lower_dot_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d) {
   let tenv = ss_typeenv(ss);
   let lt = scope_reg_to_type_stripTag(ss, s, l);
@@ -274,7 +284,6 @@ static void lower_dot_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d)
     }
   }
   let st = TypeTree_inner_struct(lt.t, tenv);
-  let bf = TypeTree_inner_bitfield(lt.t, tenv);
   u32 idx = 0;
   bool found = false;
   if (st.start) {
@@ -283,15 +292,11 @@ static void lower_dot_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d)
         idx = (u32)k;
         found = true;
       }
-  } else if (bf.start) {
-    foreach (let k, range(0, type_bitf_len(tenv, bf)))
-      if (!found && !fptr_cmp(type_name(tenv, type_bitf_item(tenv, bf, k)->name), name)) {
-        idx = (u32)k;
-        found = true;
-      }
   }
-  if (!found) return_err("NO_MEMBER");
-  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_field, {.l = l, .d = d, .i = idx})));
+  let in_bitfield = !found && bitstruct_member_index(tenv, lt, name, &idx);
+  if (!found && !in_bitfield) return_err("NO_MEMBER");
+  if (in_bitfield) try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_bitget, {.l = l, .d = d, .i = idx})));
+  else try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_field, {.l = l, .d = d, .i = idx})));
   return;
 }
 
@@ -428,6 +433,33 @@ static void tcheck_rawop errs(superscope *env, scope *s, ir_rawop op) {
   scope_set_type(env, scope_find(env, s, op.d), ss_type_intern(env, res));
   try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_rawop, op)));
 }
+// d = the value of the i-th member of the bitstruct at l, read out of the bits it owns
+static void tcheck_bitget errs(superscope *env, scope *s, ir_bitget bg) {
+  let tenv = ss_typeenv(env);
+  Type base = scope_reg_to_type_stripTag(env, s, bg.l);
+  if (base.isref) base.isref = false;
+  let bf = TypeTree_inner_bitfield(base.t, tenv);
+  if (!bf.start || bg.i >= type_bitf_len(tenv, bf)) return_err("NO_SUCH_BITFIELD_MEMBER");
+  Type member = type_bitf_item(tenv, bf, bg.i)->t;
+  let dv = scope_find(env, s, bg.d);
+  if (!scope_adopt_any(env, dv, member) &&
+      Type_cmp_ndecor(member, scope_reg_to_type_stripTag(env, s, bg.d), tenv))
+    return_err("BITGET_TYPE");
+  try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_bitget, bg)));
+}
+// the i-th member of the bitstruct at l = r, written into the bits it owns
+static void tcheck_bitset errs(superscope *env, scope *s, ir_bitset bs) {
+  let tenv = ss_typeenv(env);
+  Type base = scope_reg_to_type_stripTag(env, s, bs.l);
+  if (base.isref) base.isref = false;
+  let bf = TypeTree_inner_bitfield(base.t, tenv);
+  if (!bf.start || bs.i >= type_bitf_len(tenv, bf)) return_err("NO_SUCH_BITFIELD_MEMBER");
+  let member = type_bitf_item(tenv, bf, bs.i)->t;
+  member.isref = false;
+  bs.r = try_err(scope_cast_value, (env, s, bs.r, member));
+  try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_bitset, bs)));
+}
+
 static void tcheck_set errs(superscope *env, scope *s, ir_set st) {
   let tenv = ss_typeenv(env);
   Type dt = scope_reg_type(env, s, st.d);
@@ -648,6 +680,9 @@ static inline void scope_add_inst_typecheck errs(superscope *env, scope *s, ir i
       (ir_array, arr, try_err(tcheck_array, (env, s, arr))),
       // ref to n-th member, exept comptime
       (ir_field, fld, try_err(tcheck_field, (env, s, fld))),
+      // d = n-th member of the bitstruct at l
+      (ir_bitget, bg, try_err(tcheck_bitget, (env, s, bg))),
+      (ir_bitset, bs, try_err(tcheck_bitset, (env, s, bs))),
   );
 }
 

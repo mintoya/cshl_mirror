@@ -263,6 +263,7 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
       {"@this", builtin__this},
       {"@struct", builtin_struct},
       {"@union", builtin_union},
+      {"@bitstruct", builtin_bitstruct},
       {"@at", builtin_at},
       {"@where", builtin_where},
       {"@uqot", builtin_uqot},

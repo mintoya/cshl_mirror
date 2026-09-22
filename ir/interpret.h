@@ -1,4 +1,5 @@
 #pragma once
+#include "../cshl.lib.h" // the bit run helpers the C output uses, so both read and write bits the same way
 #include "common.h"
 #include "scope.h"
 #include "simplify.h"
@@ -258,6 +259,43 @@ void interpret_field errs(intstate is, ir_field c) {
   else *(void **)d->value = address;
 }
 
+static double_offset bitstruct_member_place errs(intstate is, u32 l, u32 i, r_bitf_item *out) {
+  let e = ss_typeenv(is->ss);
+  let lv = intstate_findreg(is, l);
+  let bf = TypeTree_inner_bitfield(ss_type(is->ss, lv.t).t, e);
+  if (!bf.start || i >= type_bitf_len(e, bf)) return_err("NO_SUCH_BITFIELD_MEMBER", (double_offset){});
+  if (out) *out = *type_bitf_item(e, bf, i);
+  usize bit_offset = 0;
+  foreach (let k, range(0, (usize)i))
+    bit_offset += type_bitf_item(e, bf, k)->width;
+  return (double_offset){.ptr = lv.v.value, .bit_offset = (uint32_t)bit_offset};
+}
+void interpret_bitget errs(intstate is, ir_bitget c) {
+  let e = ss_typeenv(is->ss);
+  r_bitf_item member = {};
+  let place = try_err(bitstruct_member_place, (is, c.l, c.i, &member));
+
+  let scratch = intstate_scratch(is);
+  usize bytes = (member.width + 7) / 8;
+  u8 *bits = *acreate(scratch, u8[bytes ? bytes : 1]);
+  cshl_bits_load(place, member.width, bits);
+  let value = BInt.from.bits(scratch, bits, member.width, tu_is(r_sint, Type_stripTag(member.t, e).t));
+
+  typed_value out = intstate_findreg(is, c.d);
+  bigint_into_int(is->ss, is->ss->alloc, &out, value);
+}
+void interpret_bitset errs(intstate is, ir_bitset c) {
+  let e = ss_typeenv(is->ss);
+  r_bitf_item member = {};
+  let place = try_err(bitstruct_member_place, (is, c.l, c.i, &member));
+
+  let scratch = intstate_scratch(is);
+  usize bytes = (member.width + 7) / 8;
+  u8 *bits = *acreate(scratch, u8[bytes ? bytes : 1]);
+  bigint_into_slot(bits, bytes, int_as_bigint(scratch, intstate_findreg(is, c.r), e));
+  cshl_bits_store(place, member.width, bits);
+}
+
 void interpret_cast errs(intstate is, ir_cast c) {
   let d = intstate_findslots_value(is, c.d);
   let dt = ss_type(is->ss, scope_find(is->ss, msList_last(is->cs).sp, c.d)->t);
@@ -452,6 +490,8 @@ static void intstate_inst errs(intstate is, usize at, ir inst) {
       (ir_farg /*  */, c, try_err(interpret_farg, (is, c))),
       (ir_cast /*  */, c, try_err(interpret_cast, (is, c))),
       (ir_field /* */, c, try_err(interpret_field, (is, c))),
+      (ir_bitget /* */, c, try_err(interpret_bitget, (is, c))),
+      (ir_bitset /* */, c, try_err(interpret_bitset, (is, c))),
       (ir_rawop /* */, c, try_err(interpret_rawop, (is, c))),
       (ir_array /* */, c, try_err(interpret_array, (is, c))),
       (ir_getref /**/, c, try_err(interpret_getref, (is, c))),
