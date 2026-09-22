@@ -296,6 +296,8 @@ test_file_1(bitstruct_signed_member_sign_extends);
 test_file_1(bitstruct_packs_least_significant_bit_first);
 test_file_1(bitstruct_member_update_reads_the_old_bits);
 test_file_1(bitstruct_member_read_is_a_copy);
+test_file_1(bitstruct_reference_alias);
+test_file_1(bitstruct_nested_member);
 test_file_1(as_without_overload_is_a_cast);
 test_file_1(struct_closure_capture);
 test_file_1(overload_call_yields_the_result_after_arg_coercion);
@@ -582,6 +584,20 @@ test_fn(lower_error_bitfield_member_not_addressable) {
   test_streq(e.err_code, "BITFIELD_NOT_ADDRESSABLE");
 }
 
+test_fn(lower_error_bitfield_to_normal_reference) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp(
+      "type ~~ @type();\n"
+      "u8 ~~ @uint(8);\n"
+      "B ~type~ @bitstruct { a ~u8:3; };\n"
+      "x ~B;\n"
+      "r ~@refT(u8) = x.a;\n"
+  ));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "BITFIELD_NOT_ADDRESSABLE");
+}
+
 test_fn(lower_error_op_on_struct_without_overload) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -620,7 +636,7 @@ test_fn(simplify_void_instructions) {
   let ss = ss_init(arena, (astidx_full){});
   let s = ss->outermost;
   let v = scope_add_value(ss, s, TV_void(ss));
-  let ref = scope_add_value(ss, s, TV_of(ss, P$(ss_type(ss, ss->t_void), ($.isref = true, $))));
+  let ref = scope_add_value(ss, s, TV_of(ss, P$(ss_type(ss, ss->t_void), ($.ref_kind = ref_ref, $))));
   let ptr = scope_add_value(ss, s, TV_of(ss, P$(ss_type(ss, ss->t_void), ($.ptr_level = 1, $))));
   let source = scope_add_value(ss, s, TV_bigint(ss, BInt.from.i64(arena, 5)));
   msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_set, {.l = v, .d = v}));

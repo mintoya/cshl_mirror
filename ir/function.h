@@ -16,9 +16,9 @@ static cmpres typed_value_cmp_typed(Type ta, value_store av, Type tb, value_stor
   assertMessage(Type_is_comptime(ta) ?: (!av.value && !bv.value), "should have nulled that out");
   if (!Type_is_comptime(ta)) return 0;
   if (av.value == bv.value) return 0;
-  if (ta.isref) { // recurse on comptime known referances
+  if (ta.ref_kind) { // recurse on comptime known referances
     let nt = ta;
-    nt.isref = false;
+    nt.ref_kind = ref_none;
     assertMessage(av.value && bv.value);
     return typed_value_cmp_typed(
         nt,
@@ -216,7 +216,7 @@ static u32 lower_function_call_args errs(superscope *ss, scope *s, u32 fn, slice
   foreach (let i, range(0, nparams)) {
     msList_push(ss->alloc, key, *scope_find(ss, s, leads.ptr[i]));
     let dst = scope_add_value(ss, s, *scope_find(ss, s, leads.ptr[i]));
-    if (ss_type(ss, key[i].t).isref)
+    if (ss_type(ss, key[i].t).ref_kind)
       try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_getref, {.l = leads.ptr[i], .d = dst})), 0);
     else
       try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = leads.ptr[i], .d = dst})), 0);

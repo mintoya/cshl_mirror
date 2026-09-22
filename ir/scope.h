@@ -79,24 +79,24 @@ u32 scope_add_value(superscope *env, scope *s, typed_value v) {
 //
 
 static inline Type Type_ptr errs(Type t) {
-  if (t.isref) return_err("POINTER_TO_REFERENCE", T());
+  if (t.ref_kind) return_err("POINTER_TO_REFERENCE", T());
   if (Type_is_comptime(P$(t, ($.iscomptime = false, $))))
     return_err("POINTER_TO_COMPTIME_ONLY", T());
   t.ptr_level++;
   return t;
 }
 static inline Type Type_arr errs(superscope *ss, Type t, u32 len) {
-  if (t.isref)
+  if (t.ref_kind)
     return_err("ARRAY_OF_REFERENCE", T());
   if (Type_is_comptime(P$(t, ($.iscomptime = false, $))))
     return_err("ARRAY_OF_COMPTIME_ONLY", T());
   return T(tu_of(r_arr, {ss_type_intern(ss, t), len}));
 }
 static inline Type Type_ref errs(Type t) {
-  if (t.isref) return_err("REFERENCE_TO_REFERENCE", T());
+  if (t.ref_kind) return_err("REFERENCE_TO_REFERENCE", T());
   if (Type_is_comptime(P$(t, ($.iscomptime = false, $))))
     return_err("REFERENCE_TO_COMPTIME_ONLY", T());
-  return P$(t, ($.isref = true, $));
+  return P$(t, ($.ref_kind = ref_ref, $));
 }
 static inline Type value_asType errs(superscope *ss, typed_value t) {
   if (!tu_is(c_type, ss_type(ss, t.t).t))
@@ -126,8 +126,8 @@ static inline void scope_emit_inst errs(superscope *env, scope *s, ir i) {
       (ir_putptr, pp, {
         let lt = ss_type(env, scope_find(env, s, pp.l)->t);
         let dt = ss_type(env, scope_find(env, s, pp.d)->t);
-        lt.isref = false;
-        dt.isref = false;
+        lt.ref_kind = ref_none;
+        dt.ref_kind = ref_none;
         if (!lt.ptr_level) {
           println("[dbg:1]{Type_full}->{Type_full}", ss_typeF(env, ss_type(env, scope_find(env, s, pp.l)->t)), ss_typeF(env, ss_type(env, scope_find(env, s, pp.d)->t)));
           assertMessage(false);
@@ -141,10 +141,10 @@ static inline void scope_emit_inst errs(superscope *env, scope *s, ir i) {
       (ir_getptr, pp, {
         let lt = ss_type(env, scope_find(env, s, pp.l)->t);
         let dt = ss_type(env, scope_find(env, s, pp.d)->t);
-        lt.isref = false;
+        lt.ref_kind = ref_none;
         lt.ptr_level++;
-        if (dt.isref) {
-          dt.isref = false;
+        if (dt.ref_kind) {
+          dt.ref_kind = ref_none;
           dt.ptr_level++;
         }
         if (Type_cmp_ndecor(lt, dt, ss_typeenv(env))) {
@@ -201,7 +201,7 @@ static inline u32 ss_get_named errs(superscope *env, scope *s, fptr n) {
   if (!val) return_err("UNBOUND_ID", 0);
   let vo = scope_find(env, s, val);
   let vt = ss_type(env, vo->t);
-  if (vt.isref) return val;
+  if (vt.ref_kind) return val;
   if (Type_is_comptime(vt)) return scope_add_value(env, s, *vo);
   let res = scope_add_value(env, s, TV_of(env, try_err(Type_ref, (vt), 0)));
   try_err(scope_add_inst, (env, s, (ir)tu_of(ir_getref, {.d = res, .l = val})), 0);

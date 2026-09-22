@@ -118,13 +118,22 @@ static inline TypeTree TypeTree_sint(u16 width) {
   return t;
 }
 
+typedef enum { ref_none, ref_ref, ref_dref } reference_kind;
+
+// A packed member needs its bit extent as well as its storage address.
+typedef struct {
+  void *ptr;
+  u8 bit_offset; // within the byte at ptr (0–7)
+  u32 width;
+} dref;
+
 struct Type {
   TypeTree t;
   union {
     u32 decorations;
     struct {
-      u32 ptr_level : 28; // 268 million levels of indirection, unreachable by any real program
-      u32 isref : 1;
+      u32 ptr_level : 27; // 134 million levels of indirection, unreachable by any real program
+      reference_kind ref_kind : 2;
       u32 isconst : 1;
       u32 iscomptime : 1; // meaningless for int,type,ast
       u32 isvolatile : 1;
@@ -306,11 +315,12 @@ static usize TypeTree_sizeof(TypeTree t, typeenv e) {
   );
 }
 static inline usize Type_alignof(Type t, typeenv e) {
-  if (t.isref || t.ptr_level) return alignof(void *);
+  if (t.ref_kind || t.ptr_level) return alignof(void *);
   else return TypeTree_alignof(t.t, e);
 }
 static inline usize Type_sizeof(Type t, typeenv e) {
-  if (t.isref || t.ptr_level) return sizeof(void *);
+  if (t.ref_kind == ref_dref) return sizeof(dref);
+  if (t.ref_kind || t.ptr_level) return sizeof(void *);
   else return TypeTree_sizeof(t.t, e);
 }
 
@@ -479,11 +489,12 @@ typePrinter(builtin_id) {
   );
 }
 void typePrinterWorker(Type in, moxmap(TypeTree, u32) visitedmap, typeenv e, printerfunction_context _ctx) {
-  bool has_env = in.iscomptime || in.ptr_level || in.isref || in.isconst || in.isvolatile;
+  bool has_env = in.iscomptime || in.ptr_level || in.ref_kind || in.isconst || in.isvolatile;
   if (has_env) {
     PUTS("(");
     if (in.ptr_level) PUTS("ptr "), USETYPEPRINTER(u32, in.ptr_level), PUTS(",");
-    if (in.isref) PUTS("ref,");
+    if (in.ref_kind == ref_ref) PUTS("ref,");
+    if (in.ref_kind == ref_dref) PUTS("dref,");
     if (in.isconst) PUTS("const,");
     if (in.isvolatile) PUTS("volatile,");
     if (in.iscomptime) PUTS("comptime,");

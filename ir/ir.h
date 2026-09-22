@@ -11,8 +11,6 @@ tu_def(
     (ir_rawop, /* */ struct { u32 l, r, d, o; }), // d = l (o) r;
     (ir_rawdot, /**/ struct { u32 l, r, d; }),    // d = ref(l.<name in r>),
     (ir_field, /* */ struct { u32 l, d, i; }),    // d = ref(l.i), n-th field
-    (ir_bitget, /**/ struct { u32 l, d, i; }),    // d = l.i, i-th member ,bitstruct at l
-    (ir_bitset, /**/ struct { u32 l, r, i; }),    // l.i = r, i-th member ,bitstruct at l
     (ir_array, /* */ struct { u32 l, d, r; }),    // d = ref(l[r]), r is index of variable not index itself
     (ir_call, /*  */ struct { u32 l, d, r, e; }), // d = l(r ... e)
     (ir_set, /*   */ struct { u32 l, d; }),       // d = l

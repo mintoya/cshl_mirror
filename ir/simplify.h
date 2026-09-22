@@ -31,7 +31,6 @@ void scope_finish(superscope *ss, scope *s) {
         (ir_getptr, op, op.d),
         (ir_putptr, op, op.d),
         (ir_field, op, op.d),
-        (ir_bitget, op, op.d),
         (ir_array, op, op.d),
         (ir_rawop, op, op.d),
         (ir_rawdot, op, op.d),

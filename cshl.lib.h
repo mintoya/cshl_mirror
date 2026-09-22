@@ -5,12 +5,12 @@
 
 #include <stdint.h>
 
-// Where a bitstruct member lives: `ptr` is the storage the members are packed into (the bit run
-// of the whole bitstruct) and `bit_offset` is the index of the member's first bit in that storage.
+// Where a bitstruct member lives: `ptr` addresses its first byte, and
+// `bit_offset` selects its first bit within that byte (0–7).
 // A member is not byte addressable, so this pair is what stands in for the address of one.
 typedef struct {
   char *ptr;
-  uint32_t bit_offset;
+  uint8_t bit_offset;
 } double_offset;
 
 // Bits are numbered from the least significant one of each byte, so bit `k` is bit `k % 8` of

@@ -55,7 +55,7 @@ static inline Type Type_weaker(Type a, Type b, typeenv e) {
   else if (Type_intLike_bitcount(as, e) != Type_intLike_bitcount(bs, e))
     pick = Type_intLike_bitcount(as, e) > Type_intLike_bitcount(bs, e) ? as : bs;
   else pick = tu_is(r_uint, as.t) ? as : bs;
-  pick.isref = false;
+  pick.ref_kind = ref_none;
   pick.iscomptime = false;
   pick.isconst = a.isconst && b.isconst;
   pick.isvolatile = a.isvolatile && b.isvolatile;
@@ -70,7 +70,7 @@ static inline bool scope_adopt_any(superscope *env, typed_value *dv, Type t) {
 }
 static inline bool Type_adopt_any(Type *slot, Type t) {
   if (!tu_is(c_any, slot->t)) return false;
-  t.isref = false;
+  t.ref_kind = ref_none;
   *slot = t;
   return true;
 }
@@ -168,8 +168,8 @@ static inline Type scope_reg_to_type_stripTag(superscope *env, scope *s, u32 idx
 
 static bool Type_if_deref(typeenv e, Type t, Type *out) {
   t = Type_stripTag(t, e);
-  if (t.isref) {
-    t.isref = false;
+  if (t.ref_kind) {
+    t.ref_kind = ref_none;
     *out = t;
     return true;
   }
@@ -263,7 +263,7 @@ static bool bitstruct_member_index(typeenv e, Type base, fptr name, u32 *idx) {
 static void lower_dot_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d) {
   let tenv = ss_typeenv(ss);
   let lt = scope_reg_to_type_stripTag(ss, s, l);
-  if (lt.isref) lt.isref = false;
+  if (lt.ref_kind) lt.ref_kind = ref_none;
   let name = value_to_fptr(ss, *scope_find(ss, s, r));
   if (fptr_isNull(name)) return_err("DOT_NEEDS_NAME");
 
@@ -295,8 +295,7 @@ static void lower_dot_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d)
   }
   let in_bitfield = !found && bitstruct_member_index(tenv, lt, name, &idx);
   if (!found && !in_bitfield) return_err("NO_MEMBER");
-  if (in_bitfield) try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_bitget, {.l = l, .d = d, .i = idx})));
-  else try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_field, {.l = l, .d = d, .i = idx})));
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_field, {.l = l, .d = d, .i = idx})));
   return;
 }
 
@@ -316,8 +315,8 @@ static void tcheck_ifs errs(superscope *env, scope *s, u32 r) {
 static void tcheck_putptr errs(superscope *env, scope *s, ir_putptr pp) {
   let tenv = ss_typeenv(env);
   Type lt = scope_reg_to_type_stripTag(env, s, pp.l);
-  if (lt.isref) {
-    lt.isref = false;
+  if (lt.ref_kind) {
+    lt.ref_kind = ref_none;
     u32 read = scope_add_value(env, s, TV_of(env, lt));
     try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_set, {.l = pp.l, .d = read})));
     pp.l = read;
@@ -325,7 +324,7 @@ static void tcheck_putptr errs(superscope *env, scope *s, ir_putptr pp) {
   Type pointee = {};
   if (!Type_if_deref(tenv, lt, &pointee)) return_err("AT_NOT_REF");
   Type asref = pointee;
-  asref.isref = true;
+  asref.ref_kind = ref_ref;
   let dv = scope_find(env, s, pp.d);
   Type dt = scope_reg_to_type_stripTag(env, s, pp.d);
   if (!scope_adopt_any(env, dv, asref) && Type_cmp_ndecor(asref, dt, tenv))
@@ -333,11 +332,12 @@ static void tcheck_putptr errs(superscope *env, scope *s, ir_putptr pp) {
   try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_putptr, pp)));
 }
 static void tcheck_getptr errs(superscope *env, scope *s, ir_getptr gp) {
+  if (scope_reg_type(env, s, gp.l).ref_kind == ref_dref) return_err("BITFIELD_NOT_ADDRESSABLE");
   let tenv = ss_typeenv(env);
   Type base = scope_reg_to_type_stripTag(env, s, gp.l);
-  base.isref = false;
+  base.ref_kind = ref_none;
   Type asp = P$(base, ($.ptr_level++, $));
-  Type asr = P$(base, ($.isref = true, $));
+  Type asr = P$(base, ($.ref_kind = ref_ref, $));
 
   let dv = scope_find(env, s, gp.d);
   Type dt = scope_reg_to_type_stripTag(env, s, gp.d);
@@ -349,9 +349,9 @@ static void tcheck_getptr errs(superscope *env, scope *s, ir_getptr gp) {
 static void tcheck_getref errs(superscope *env, scope *s, ir_getref gp) {
   let tenv = ss_typeenv(env);
   Type base = scope_reg_to_type_stripTag(env, s, gp.l);
-  if (base.isref) base.isref = false;
+  if (base.ref_kind) base.ref_kind = ref_none;
   Type referred = base;
-  referred.isref = true;
+  referred.ref_kind = scope_reg_type(env, s, gp.l).ref_kind == ref_dref ? ref_dref : ref_ref;
   let dv = scope_find(env, s, gp.d);
   Type dt = scope_reg_to_type_stripTag(env, s, gp.d);
   if (!scope_adopt_any(env, dv, referred) && Type_cmp_ndecor(referred, dt, tenv)) return_err("GETREF_TYPE");
@@ -402,7 +402,7 @@ static void tcheck_rawop errs(superscope *env, scope *s, ir_rawop op) {
       let method = scope_add_value(env, s, *scope_find(env, m.owner, m.idx));
       u32 res = try_err(lower_function_call_values, (env, s, method, ((slice(u32)){2, (u32[2]){op.l, op.r}})));
       scope_set_type(env, scope_find(env, s, op.d), scope_find(env, s, res)->t);
-      if (scope_reg_type(env, s, res).isref)
+      if (scope_reg_type(env, s, res).ref_kind)
         msList_push(env->alloc, s->instructions, (ir)tu_of(ir_getref, {.l = res, .d = op.d}));
       else
         msList_push(env->alloc, s->instructions, (ir)tu_of(ir_set, {.l = res, .d = op.d}));
@@ -433,45 +433,18 @@ static void tcheck_rawop errs(superscope *env, scope *s, ir_rawop op) {
   scope_set_type(env, scope_find(env, s, op.d), ss_type_intern(env, res));
   try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_rawop, op)));
 }
-// d = the value of the i-th member of the bitstruct at l, read out of the bits it owns
-static void tcheck_bitget errs(superscope *env, scope *s, ir_bitget bg) {
-  let tenv = ss_typeenv(env);
-  Type base = scope_reg_to_type_stripTag(env, s, bg.l);
-  if (base.isref) base.isref = false;
-  let bf = TypeTree_inner_bitfield(base.t, tenv);
-  if (!bf.start || bg.i >= type_bitf_len(tenv, bf)) return_err("NO_SUCH_BITFIELD_MEMBER");
-  Type member = type_bitf_item(tenv, bf, bg.i)->t;
-  let dv = scope_find(env, s, bg.d);
-  if (!scope_adopt_any(env, dv, member) &&
-      Type_cmp_ndecor(member, scope_reg_to_type_stripTag(env, s, bg.d), tenv))
-    return_err("BITGET_TYPE");
-  try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_bitget, bg)));
-}
-// the i-th member of the bitstruct at l = r, written into the bits it owns
-static void tcheck_bitset errs(superscope *env, scope *s, ir_bitset bs) {
-  let tenv = ss_typeenv(env);
-  Type base = scope_reg_to_type_stripTag(env, s, bs.l);
-  if (base.isref) base.isref = false;
-  let bf = TypeTree_inner_bitfield(base.t, tenv);
-  if (!bf.start || bs.i >= type_bitf_len(tenv, bf)) return_err("NO_SUCH_BITFIELD_MEMBER");
-  let member = type_bitf_item(tenv, bf, bs.i)->t;
-  member.isref = false;
-  bs.r = try_err(scope_cast_value, (env, s, bs.r, member));
-  try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_bitset, bs)));
-}
-
 static void tcheck_set errs(superscope *env, scope *s, ir_set st) {
   let tenv = ss_typeenv(env);
   Type dt = scope_reg_type(env, s, st.d);
   Type lt = scope_reg_type(env, s, st.l);
   // Assigning a reference member binds its stored reference.
-  if (lt.isref && dt.isref && !Type_cmp_ndecor(lt, dt, tenv)) {
+  if (lt.ref_kind && dt.ref_kind && !Type_cmp_ndecor(lt, dt, tenv)) {
     foreach (let inst, span(s->instructions, msList_len(s->instructions))) {
       if (!tu_is(ir_field, *inst) || inst->ir_field.d != st.d) continue;
       let fld = inst->ir_field;
       let base = scope_reg_to_type_stripTag(env, s, fld.l);
       let members = TypeTree_inner_struct(base.t, tenv);
-      if (members.start && type_struct_item(tenv, members, fld.i)->t.isref) {
+      if (members.start && type_struct_item(tenv, members, fld.i)->t.ref_kind) {
         try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_getref, {.l = st.l, .d = st.d})));
         return;
       }
@@ -479,12 +452,12 @@ static void tcheck_set errs(superscope *env, scope *s, ir_set st) {
   }
   if (!tu_is(c_any, Type_stripTag(lt, tenv).t)) {
     let dv = scope_find(env, s, st.d);
-    if (scope_adopt_any(env, dv, P$(lt, ($.isref = false, $)))) dt = ss_type(env, dv->t);
+    if (scope_adopt_any(env, dv, P$(lt, ($.ref_kind = ref_none, $)))) dt = ss_type(env, dv->t);
   }
   dt = Type_stripTag(dt, tenv);
-  dt.isref = false;
+  dt.ref_kind = ref_none;
   st.l = try_err(scope_cast_value, (env, s, st.l, dt));
-  if (tu_is(c_int, dt.t) && !dt.isref && tu_is(c_int, Type_stripTag(lt, tenv).t) && !lt.isref) {
+  if (tu_is(c_int, dt.t) && !dt.ref_kind && tu_is(c_int, Type_stripTag(lt, tenv).t) && !lt.ref_kind) {
     let src = scope_find(env, s, st.l);
     if (src->v.c_int) scope_find(env, s, st.d)->v.c_int = BInt.copy(env->alloc, src->v.c_int);
   }
@@ -498,7 +471,8 @@ static void tcheck_cast errs(superscope *env, scope *s, ir_cast cv) {
     scope_find(env, s, cv.d)->v = scope_find(env, s, cv.l)->v;
     return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_set, {.l = cv.l, .d = cv.d})));
   }
-  if (lt.isref && dt.isref && !Type_cmp_ndecor(lt, dt, tenv))
+  if (dt.ref_kind == ref_ref && lt.ref_kind == ref_dref) return_err("BITFIELD_NOT_ADDRESSABLE");
+  if (lt.ref_kind && dt.ref_kind && !Type_cmp_ndecor(lt, dt, tenv))
     return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_getref, {.l = cv.l, .d = cv.d})));
   if (Type_ncmp_nptr(Type_stripTag(lt, tenv), Type_stripTag(dt, tenv), tenv))
     return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_set, {.l = cv.l, .d = cv.d})));
@@ -538,7 +512,7 @@ static void tcheck_call errs(superscope *env, scope *s, ir_call call) {
     return;
   }
   Type lts = Type_stripTag(lt, tenv);
-  lts.isref = false;
+  lts.ref_kind = ref_none;
 
   if (TypeTree_is_ast(lts.t)) {
     if (call.e < call.r + 1) return_err("AST_INDEX_ONE_ARG");
@@ -576,7 +550,7 @@ static void tcheck_call errs(superscope *env, scope *s, ir_call call) {
     if (items.len != 1) return_err("ARRAY_INDEX_ONE_ARG");
     u32 idx = try_err(lower, (env, s, items.start));
     let elem = type_at(tenv, inner.t);
-    elem.isref = true;
+    elem.ref_kind = ref_ref;
     let dv = scope_find(env, s, call.d);
     scope_set_type(env, dv, ss_type_intern(env, elem));
     try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_array, {.l = call.l, .d = call.d, .r = idx})));
@@ -604,7 +578,7 @@ static void tcheck_call errs(superscope *env, scope *s, ir_call call) {
   u32 res = try_err(lower_function_call_values, (env, s, method, vals));
   slice_free(env->alloc, vals);
   scope_set_type(env, scope_find(env, s, call.d), scope_find(env, s, res)->t);
-  if (scope_reg_type(env, s, res).isref)
+  if (scope_reg_type(env, s, res).ref_kind)
     msList_push(env->alloc, s->instructions, (ir)tu_of(ir_getref, {.l = res, .d = call.d}));
   else
     msList_push(env->alloc, s->instructions, (ir)tu_of(ir_set, {.l = res, .d = call.d}));
@@ -613,12 +587,12 @@ static void tcheck_call errs(superscope *env, scope *s, ir_call call) {
 static void tcheck_array errs(superscope *env, scope *s, ir_array arr) {
   let tenv = ss_typeenv(env);
   Type base = scope_reg_to_type_stripTag(env, s, arr.l);
-  if (base.isref) base.isref = false;
+  if (base.ref_kind) base.ref_kind = ref_none;
   let inner = TypeTree_inner_array(base.t, tenv);
   if (!inner.t) return_err("ARRAY_OF_NON_ARRAY");
   Type elem = type_at(tenv, inner.t);
   Type asref = elem;
-  asref.isref = true;
+  asref.ref_kind = ref_ref;
   let dv = scope_find(env, s, arr.d);
   Type dt = scope_reg_to_type_stripTag(env, s, arr.d);
   if (!scope_adopt_any(env, dv, asref) && Type_cmp_ndecor(elem, dt, tenv) && Type_cmp_ndecor(asref, dt, tenv))
@@ -630,7 +604,7 @@ static void tcheck_array errs(superscope *env, scope *s, ir_array arr) {
 static void tcheck_field errs(superscope *env, scope *s, ir_field fld) {
   let tenv = ss_typeenv(env);
   Type base = scope_reg_to_type_stripTag(env, s, fld.l);
-  if (base.isref) base.isref = false;
+  if (base.ref_kind) base.ref_kind = ref_none;
   let st = TypeTree_inner_struct(base.t, tenv);
   let bf = TypeTree_inner_bitfield(base.t, tenv);
   Type member = {};
@@ -639,7 +613,7 @@ static void tcheck_field errs(superscope *env, scope *s, ir_field fld) {
   else return_err("NO_SUCH_FIELD");
   if (Type_is_comptime(member)) return_err("NO_STORAGE");
   Type asref = member;
-  asref.isref = true;
+  asref.ref_kind = bf.start ? ref_dref : ref_ref;
   let dv = scope_find(env, s, fld.d);
   Type dt = scope_reg_to_type_stripTag(env, s, fld.d);
   if (!scope_adopt_any(env, dv, asref) && Type_cmp_ndecor(member, dt, tenv) && Type_cmp_ndecor(asref, dt, tenv))
@@ -680,9 +654,6 @@ static inline void scope_add_inst_typecheck errs(superscope *env, scope *s, ir i
       (ir_array, arr, try_err(tcheck_array, (env, s, arr))),
       // ref to n-th member, exept comptime
       (ir_field, fld, try_err(tcheck_field, (env, s, fld))),
-      // d = n-th member of the bitstruct at l
-      (ir_bitget, bg, try_err(tcheck_bitget, (env, s, bg))),
-      (ir_bitset, bs, try_err(tcheck_bitset, (env, s, bs))),
   );
 }
 

@@ -470,20 +470,6 @@ typePrinter(scope_full) {
           PUTS(" -> "), USETYPEPRINTER(u32, f.d);
           PUTS(")");
         }),
-        (ir_bitget, f, {
-          PUTS("(bitget ");
-          USETYPEPRINTER(u32, f.l), PUTS(" ");
-          USETYPEPRINTER(u32, f.i);
-          PUTS(" -> "), USETYPEPRINTER(u32, f.d);
-          PUTS(")");
-        }),
-        (ir_bitset, f, {
-          PUTS("(bitset ");
-          USETYPEPRINTER(u32, f.l), PUTS(" ");
-          USETYPEPRINTER(u32, f.i), PUTS(" = ");
-          USETYPEPRINTER(u32, f.r);
-          PUTS(")");
-        }),
         (ir_rawop, op, {
           PUTS("(rawop ");
           USETYPEPRINTER(u32, op.l), PUTS(" ");

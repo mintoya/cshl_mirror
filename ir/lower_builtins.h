@@ -236,7 +236,7 @@ static u32 lower_builtin_ast_op errs(superscope *ss, scope *s, astidx args) {
   if (!a.v.c_ast || !b.v.c_ast) return_err("AST_OP_UNKNOWN", 0);
   // a spelling is up to 4 bytes packed into a u32, so pack it the same way the parser does
   Type st = ss_type(ss, sym.t);
-  if (!tu_is(r_arr, st.t) || st.ptr_level || st.isref || !st.iscomptime) return_err("AST_OP_SYM_NOT_STRING", 0);
+  if (!tu_is(r_arr, st.t) || st.ptr_level || st.ref_kind || !st.iscomptime) return_err("AST_OP_SYM_NOT_STRING", 0);
   let arr = tu_catch(r_arr, st.t);
   if (tu_catchr(r_sint, type_tree(ss_typeenv(ss), arr.t), return_err("AST_OP_SYM_NOT_STRING", 0)).bits != 8)
     return_err("AST_OP_SYM_NOT_STRING", 0);

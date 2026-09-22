@@ -1,0 +1,11 @@
+type ~~ @type();
+u8 ~~ @uint(8);
+B ~type~ @bitstruct { a ~u8:3; b ~u8:5; };
+x ~B;
+x.a = 5;
+x.b = 17;
+r ~= @ref(x.a);
+r = 6;
+copy ~u8 = r;
+copy = 1;
+(x.a == 6) and (x.b == 17) and (copy == 1);
