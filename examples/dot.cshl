@@ -1,21 +1,33 @@
 type ~~ @type();
+ast ~~ @ast();
+any ~~ @any();
 i32 ~type~ @sint(32);
-{ 
-  Point ~type~ @struct{
-    Self ~type~ @this();
-    x ~i32;
-    y ~i32;
-  };
-  a ~Point;
-  px ~~ a.x;
+fn  ~~ @fn (a ~ast),@inlineast(),{
+  return 
+    @qot @fn(
+      @uqot(a."()".opleft),
+      @uqot(a."()".opright."()".opleft),
+      @uqot(a."()".opright."()".opright),
+    );
 };
-{ 
-  Point ~type~ @struct{
-    Self ~type~ @this();
-    x ~i32;
-    y ~i32;
-    sz ~~ @sizeof(Self);
+Point ~type~ @struct{
+  Self ~type~ @this();
+  x ~i32;
+  y ~i32;
+  @id(".") ~~ fn (this~@refT(Self) ,l~ast)@refT(i32){
+    @cif((l == "x"),(return @ref(@rawget(this, "y"))));
+    @cif((l == "y"),(return @ref(@rawget(this, "x"))));
   };
-  a ~Point;
-  ps ~~ Point.sz; 
+  @id("+") ~~ fn (
+    this~Self,
+    other~Self,
+  )Self{
+    result ~Self;
+    result.x = other.x + this.x;
+    result.y = other.y + this.y;
+    return result;
+  };
 };
+a ~Point;
+a."e" = 5;
+

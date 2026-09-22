@@ -6,7 +6,6 @@ module.exports = grammar({
   ],
   conflicts: $ => [
     [$._expression, $.decl],
-    [$._any_expression, $.op],
     [$.nblock],
   ],
   precedences: $ => [
@@ -19,9 +18,7 @@ module.exports = grammar({
       'bit',
       'cmp',
       'nblock',      
-      'unquote-immediate',
       'call',        // loose call
-      'unquote',
       'pipe',
       'decl',
       'assign'
@@ -49,13 +46,11 @@ module.exports = grammar({
       $.op
     ),
     op: $ => choice(
-      prec.left('block-call', seq(field('left', $._expression), field('right', $._block_immediate))),
+      prec.right('block-call', seq(field('left', $._expression), field('right', choice($._block_immediate, alias($._immediate_block_call, $.op))))),
       
-      prec.left('unquote-immediate', seq(field('left', $._expression), field('operator', "'"), field('right', $._block_immediate))),
 
       prec.right('call', seq(field('left', $._expression), field('right', $._any_expression))), 
 
-      prec.left('unquote', seq(field('left', $._expression), field('operator', "'"), field('right', $._expression))),
       
       
       prec.left('access', seq(field('left', $._expression), field('operator', '.'), field('right', $._expression))),
@@ -101,6 +96,24 @@ module.exports = grammar({
     nblock: $ => prec('nblock', 
       seq($._expression, repeat1($._nblock_continuation))
     ),
+
+    // A tight call can take a whole right-associated block chain as its
+    // operand, but never an arithmetic expression outside those blocks.
+    // Keep both token forms so spacing between later blocks is immaterial.
+    _block_call_tail: $ => prec.right('block-call', choice(
+      $._block_immediate,
+      $._block,
+      alias($._immediate_block_call, $.op),
+      alias($._block_call, $.op)
+    )),
+    _immediate_block_call: $ => prec.right('block-call', seq(
+      field('left', $._block_immediate),
+      field('right', $._block_call_tail)
+    )),
+    _block_call: $ => prec.right('block-call', seq(
+      field('left', $._block),
+      field('right', $._block_call_tail)
+    )),
 
     _block_immediate: $ => choice(
       $._bblock_immediate,

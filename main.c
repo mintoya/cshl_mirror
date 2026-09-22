@@ -1,3 +1,4 @@
+#include <string.h>
 #include <wheels/cmdline_parser.h>
 #include <wheels/macros.h>
 #include <wheels/smap.h>
@@ -7,7 +8,8 @@
 #include "wheels/fptr.h"
 #include <wheels/allocators/arenaAllocator.h>
 #include <wheels/allocators/debugallocator.h>
-//
+
+#include "cout.h"
 #include "ir/interpret.h"
 #include "ir/lower.h"
 
@@ -15,7 +17,6 @@ astidx_full parse_source errs(allocfn out_allocator, fptr input, const char *fil
 
 // { util
 void on_allocation(void *, usize in, usize out, void *, const char *file, uint line) {
-  // println("(alloc) {} -> {},{cstr}:{}", in, out, file, line);
 }
 // }
 cmd_main(
@@ -24,14 +25,12 @@ cmd_main(
     (bool, help /*      */, ("-h", "--help") /*  */, "print help message" /*      */, false),
     (bool, lowerast /*  */, ("-l", "--lower") /* */, "lower the ast" /*           */, false),
     (bool, execute /*   */, ("-r", "--run") /*   */, "interpret lowered ast" /*   */, false),
+    (bool, c_output /*  */, ("-C", "--cout") /*  */, "c output" /*                */, false),
     (bool, echo_ast /*  */, ("--log-ast") /*     */, "log the ast" /*             */, false),
     (bool, echo_file /* */, ("--log-file") /*    */, "echo read file" /*          */, false),
 ) {
   let allocator = debugAllocator(.allocator = stdAlloc, .onalloc = on_allocation);
   defer {
-    // foreach (let allocation, vtable(debugallocator_iterator, allocator)) {
-    //   allocation.trace.size;
-    // }
     println("(log) stats : {dbga_stats}", debugAllocator_stats(allocator));
     debugAllocatorDeInit(allocator);
   };
@@ -45,7 +44,7 @@ cmd_main(
 
   fptr buffer = {};
   defer {
-    if (buffer.len && buffer.ptr)
+    if (buffer.len)
       slice_free(allocator, buffer);
   };
   if (echo_file) {
@@ -61,10 +60,20 @@ cmd_main(
   if (echo_ast)
     print_wfO(sexplike, nullptr, "{astidx_full}\n", ctx);
 
-  if (lowerast || execute) {
+  if (lowerast || execute || c_output) {
     let env = ss_init(allocator, ctx);
     catch_errcall((lower, (env, env->outermost, ctx.idx)), e, (err_panic(e), (u32)0));
-    print_wf(sexplike, "{scope_full}\n", ((scope_full){env->outermost, env}));
+    scope_finish(env, env->outermost);
+    if (lowerast || execute)
+      print_wf(sexplike, "{scope_full}\n", ((scope_full){env->outermost, env}));
+    if (c_output) {
+      let out = fopen(strcat(strcat((char[100]){}, args[1]), ".c"), "w+");
+      assertMessage(out);
+      printerfunction_context pctx = {.put = fileprint, .arb = out, .allocator = allocator};
+      // makeTypes(env, fileprint, pctx);
+      // makeFuncs(env, fileprint, pctx);
+      // makeScope(env, env->outermost, fileprint, pctx);
+    }
     if (execute) {
       let res = catch_errcall((interpret, (env, env->outermost)), e, (err_panic(e), (typed_value){}));
       print_wf(sexplike, "result: {typed_value_full}\n", ((typed_value_full){res, ss_typeenv(env)}));

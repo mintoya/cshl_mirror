@@ -15,17 +15,18 @@
 cmpres fptr_cmp_hash(void *, const void *a, const void *b) { return fptr_cmp(*(fptr *)a, *(fptr *)b); }
 typedef enum : u8 {
   builtin_fn,       // @fn((decl|type...) ,decl|type,body) c_func of this type,
+  builtin_closure,
   builtin_if,       // @if(cnd , then ,)
   builtin_cif,      // @cif same as if, comptime, produces only one branch
-  builtin_while,    // @while(cnd , then) //
+  builtin_loop,     // @loop(body)
   builtin_return,   // return x return
   builtin_break,    // @break()
   builtin_continue, // @continue()
                     //
-                    // then when called with expression, yields an r_func
   builtin__id,      // @id(str) an id which corresponds to this string, **evaluates it**
                     //
   builtin_ast,      // @ast() type of ast
+  builtin_inlineast, // @inlineast() AST result expanded at the call site
   builtin_any,      // @any() type of any
   builtin_void,     // @void() the void type
   builtin_bool,     // @bool() the bool type
@@ -33,6 +34,7 @@ typedef enum : u8 {
   builtin_type,     // @type() the type of a type
   builtin_const,    // @const(T) constant
   builtin_volatile, // @volatile(T) volatile
+  builtin_comptime, // @comptime(T) set the compile-time decoration
   builtin_sint,     // @sint(N) integer with N bits
   builtin_uint,     // @uint(N) unsigned integer with N bits
   builtin_typeof,   // @typeof(V) type of argument
@@ -42,18 +44,16 @@ typedef enum : u8 {
   builtin_sizeof,   // @sizeof(T) comptime size of T in bytes
   builtin_alignof,  // @alignof(T) comptime alignment of T
   builtin_offsetof, // @offsetof(T,member) comptime offset of member in T
+  builtin_rawget,   // @rawget(v,name) member v.name itself, ignoring a overload
                     //
   builtin_struct,   // @struct{} struct of declarations
+  builtin_union,    // @union{} union of declarations, all members share offset 0
   builtin__this,    // @this() inside of struct, this is the result type
                     //
   builtin_qot,      // @qot(arg) ast of arg
   builtin_uqot,     // @unqot(arg) evaluate arg
-  builtin_splice,   // @splice(arg) inside a quote, splice a list ast's children in place
-  builtin_ast_len,  // @ast_len(arg) comptime count of a list ast's children
-  builtin_ast_at,   // @ast_at(arg,i) the i-th child of a list ast
   builtin_ast_op,   // @ast_op(sym,a,b) build the ast of "a sym b", sym a comptime string
   builtin_apply,    // @apply(f,args...) call f with evaluated args (ast params get values)
-                    //
   builtin_ref,      // @ref(value) produces a referance to value
   builtin_reft,     // @reft(value) produces the type of a referance to a value
   builtin_at,       // @at(arg) dereference arg
@@ -70,6 +70,7 @@ typedef struct r_bitf_item r_bitf_item;
 
 sliceDef(Type);
 sliceDef(typeidx);
+sliceDef(u32);
 typedef sglist(Type) typelist;
 
 tu_def( // type
@@ -95,6 +96,7 @@ tu_def( // type
     (c_int /*        */, struct {}),
     (c_type /*       */, struct {}),
     (c_ast /*        */, struct {}),
+    (c_inlineast /*  */, struct {}),
     // something else
     // a run of Type slots, the return type last, terminated by a null
     (c_fun /*        */, struct { typeidx start; }),
@@ -217,6 +219,9 @@ static usize TypeTree_alignof(TypeTree t, typeenv e);
 static usize TypeTree_sizeof(TypeTree t, typeenv e);
 static inline usize Type_alignof(Type t, typeenv e);
 static inline usize Type_sizeof(Type t, typeenv e);
+static inline bool TypeTree_is_ast(TypeTree t) {
+  return tu_is(c_ast, t) || tu_is(c_inlineast, t);
+}
 static inline bool Type_is_comptime(Type t) {
   return t.iscomptime ||
          tu_is(builtin, t.t) ||
@@ -224,7 +229,7 @@ static inline bool Type_is_comptime(Type t) {
          tu_is(c_int, t.t) ||
          tu_is(c_any, t.t) ||
          tu_is(c_type, t.t) ||
-         tu_is(c_ast, t.t);
+         tu_is(c_ast, t.t) || tu_is(c_inlineast, t.t);
 }
 static usize TypeTree_alignof(TypeTree t, typeenv e) {
   return tu_match_exp(
@@ -239,6 +244,7 @@ static usize TypeTree_alignof(TypeTree t, typeenv e) {
       (c_any, _, (usize)1),
       (c_type, _, (usize)1),
       (c_ast, _, (usize)1),
+      (c_inlineast, _, (usize)1),
       // own reason
       (r_void, _, (usize)1),
 
@@ -272,12 +278,11 @@ static usize TypeTree_sizeof(TypeTree t, typeenv e) {
       (builtin, _, (usize)0),
       (c_type, _, (usize)0),
       (c_ast, _, (usize)0),
+      (c_inlineast, _, (usize)0),
       (c_int, _, (usize)0),
       (c_any, _, (usize)0),
       (c_fun, _, (usize)0),
-      //  0 for it's own reason
       (r_void, _, (usize)0),
-      //
       (r_uint, u, lineup(u.bits, CHAR_BIT) / CHAR_BIT),
       (r_bool, _, TypeTree_sizeof(TypeTree_uint(1), e)),
       (r_sint, u, TypeTree_sizeof(TypeTree_uint(u.bits), e)),
@@ -360,6 +365,7 @@ cmpres TypeTree_cmp(typeenv e, TypeTree a, TypeTree b) {
       (c_int, _, return 0),
       (c_any, _, return 0),
       (c_ast, _, return 0),
+      (c_inlineast, _, return 0),
       (c_type, _, return 0),
 
       (r_arr, ai, {
@@ -393,6 +399,7 @@ cmpres TypeTree_cmp(typeenv e, TypeTree a, TypeTree b) {
         }
         return 0;
       }),
+
 
       (r_bitfield, ai, {
         let bi = tu_catch(r_bitfield, b);
@@ -429,6 +436,7 @@ typePrinter(builtin_id) {
   switch_tuple(
       in,
       (builtin_fn, /*      */ PUTS("fn")),
+      (builtin_closure, /* */ PUTS("closure")),
       (builtin_at, /*      */ PUTS("at")),
       (builtin_if, /*      */ PUTS("if")),
       (builtin__id, /*     */ PUTS("id")),
@@ -438,10 +446,8 @@ typePrinter(builtin_id) {
       (builtin_int, /*     */ PUTS("int")),
       (builtin_cif, /*     */ PUTS("cif")),
       (builtin_ast, /*     */ PUTS("ast")),
+      (builtin_inlineast, /**/ PUTS("inlineast")),
       (builtin_uqot, /*    */ PUTS("uqot")),
-      (builtin_splice, /**/ PUTS("splice")),
-      (builtin_ast_len, /**/ PUTS("ast_len")),
-      (builtin_ast_at, /*  */ PUTS("ast_at")),
       (builtin_ast_op, /*  */ PUTS("ast_op")),
       (builtin_apply, /*   */ PUTS("apply")),
       (builtin_reft, /*    */ PUTS("reft")),
@@ -456,14 +462,17 @@ typePrinter(builtin_id) {
       (builtin_ptrof, /*   */ PUTS("ptrof")),
       (builtin_break, /*   */ PUTS("break")),
       (builtin_const, /*   */ PUTS("const")),
-      (builtin_while, /*   */ PUTS("while")),
+      (builtin_comptime, /**/ PUTS("comptime")),
+      (builtin_loop, /*    */ PUTS("loop")),
       (builtin_sizeof, /*  */ PUTS("sizeof")),
       (builtin_struct, /*  */ PUTS("struct")),
+      (builtin_union, /*   */ PUTS("union")),
       (builtin_return, /*  */ PUTS("return")),
       (builtin_typeof, /*  */ PUTS("typeof")),
       (builtin_alignof, /* */ PUTS("alignof")),
       (builtin_continue, /**/ PUTS("continue")),
       (builtin_offsetof, /**/ PUTS("offsetof")),
+      (builtin_rawget, /*   */ PUTS("rawget")),
       (builtin_volatile, /**/ PUTS("volatile")),
   );
 }
@@ -497,13 +506,13 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, typeen
       (c_int, /* */ _, PUTS("int")),
       (c_type, /**/ _, PUTS("type")),
       (c_ast, /* */ _, PUTS("ast")),
+      (c_inlineast, _, PUTS("inlineast")),
       (c_any, /* */ _, PUTS("any")),
       (r_void, /**/ _, PUTS("void")),
       (r_tag, t, PUTS("(id "), USENAMEDPRINTER("slice(c8)", type_name(e, t.name)), PUTS(")")),
       (r_uint, bits, PUTS("u"), USETYPEPRINTER(usize, (usize)bits.bits)),
       (r_sint, bits, PUTS("s"), USETYPEPRINTER(usize, (usize)bits.bits)),
 
-      // Complex, require recursion
       (r_arr, arr, {
         typeTreePrinterWorker_add(in, visitedmap);
         PUTS("(a ["), USETYPEPRINTER(usize, (usize)arr.count), PUTS("],");
@@ -524,6 +533,7 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, typeen
         }
         PUTS(")");
       }),
+
       (r_bitfield, st, {
         typeTreePrinterWorker_add(in, visitedmap);
         PUTS("(bf,");
@@ -573,7 +583,6 @@ typePrinter(Type_full) {
 // test
 
 test_fn(type_bools) {
-  // i dereferance bools as bools later
   typeenv e = {};
   let boolean = T(tu_of(r_bool, {}));
   test_inteq(sizeof(bool), Type_sizeof(boolean, e));

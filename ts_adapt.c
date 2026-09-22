@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <tree-sitter/lib/include/tree_sitter/api.h>
+// TODO: i will write an actual parser but if i ever want to change the way the ast works that would be pulling teeth
 
 extern const TSLanguage *tree_sitter_cshl(void);
 
@@ -35,6 +36,23 @@ static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u3
   static_assert(sizeof(TSPoint) == sizeof(itypeof(err_t, fnd)));
   if (ts_node_is_null(ts_node) || !ts_node_is_named(ts_node) || ts_node_is_error(ts_node) || ts_node_is_missing(ts_node))
     return_err_extras("PARSE_ERROR", printerr_point, (error_location = ts_node_start_point(ts_node), *(void **)&error_location), (ast){});
+
+  if (ts_node_has_error(ts_node)) {
+    TSNode bad = ts_node;
+    while (!ts_node_is_error(bad) && !ts_node_is_missing(bad)) {
+      TSNode next = {};
+      for (u32 i = 0; i < ts_node_child_count(bad); i++) {
+        let child = ts_node_child(bad, i);
+        if (ts_node_has_error(child) || ts_node_is_error(child) || ts_node_is_missing(child)) {
+          next = child;
+          break;
+        }
+      }
+      if (ts_node_is_null(next)) break;
+      bad = next;
+    }
+    return_err_extras("PARSE_ERROR", printerr_point, (error_location = ts_node_start_point(bad), *(void **)&error_location), (ast){});
+  }
 
   let type = ts_node_type(ts_node);
 
@@ -95,8 +113,6 @@ static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u3
   else if (!strcmp(type, "program") || !strcmp(type, "pblock") || !strcmp(type, "bblock") || !strcmp(type, "ablock") || !strcmp(type, "nblock")) {
     u32 count = ts_node_named_child_count(ts_node);
 
-    // convert children first : their own child runs land in the arena before
-    // this node's run, keeping arena[start..terminator] contiguous
     let roots = *acreate(allocator, arrof(ast, count ?: 1));
     u32 rc = 0;
     for (u32 i = 0; i < count; i++) {
@@ -108,7 +124,7 @@ static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u3
     astidx start = (astidx)alist->len + 1;
     for (u32 i = 0; i < rc; i++)
       sglist_push(*alist, roots[i]);
-    sglist_push(*alist, null_ast()); // null-terminator
+    sglist_push(*alist, null_ast());
 
     let pos = register_pos(plist, fileIndex, ts_node);
     return (ast)(!strcmp(type, "program") || !strcmp(type, "bblock") ? (ast)tu_of(astBBlock, {.pos = pos, .start = start})

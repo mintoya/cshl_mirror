@@ -2,6 +2,8 @@
 #include "ir/interpret.h"
 #include "ir/lower.h"
 #include "ir/scope.h"
+#include "wheels/fptr.h"
+#include "wheels/macros.h"
 
 astidx_full parse_source errs(allocfn out_allocator, fptr input, const char *filename);
 
@@ -24,7 +26,27 @@ static interp interpret_source(allocfn arena, fptr src, astidx_full *ctx_out) {
   return (interp){.t = res.t, .v = res.v, .env = ss_typeenv(env)};
 }
 static Type tv_type(interp x) { return type_at(x.env, x.t); }
-static typed_value_full tvf(interp x) { return (typed_value_full){(typed_value){x.t, x.v}, x.env}; }
+
+// a test whose program stands on its own lives in test/<name>.cshl and runs through this macro,
+// which requires the file's last expression to yield a plain, true bool
+#define test_file_1(filename)                             \
+  test_fn(filename) {                                     \
+    let arena = arena_new_ext(allocator, 1 << 16);        \
+    defer { arena_cleanup(arena); };                      \
+    let ct = parse_source(                                \
+        nullptr,                                          \
+        arena,                                            \
+        nullFptr,                                         \
+        "test/" #filename ".cshl"                         \
+    );                                                    \
+    let ctx = ss_init(arena, ct);                         \
+    lower(nullptr, ctx, ctx->outermost, ct.idx);          \
+    let result = interpret(nullptr, ctx, ctx->outermost); \
+    let rt = ss_type(ctx, result.t);                      \
+    test_assert(tu_is(r_bool, rt.t));                     \
+    test_assert(!rt.decorations);                         \
+    test_assert(*(bool *)result.v.value);                 \
+  };
 
 test_fn(interpret_literal_int) {
   let arena = arena_new_ext(allocator, 1 << 16);
@@ -73,75 +95,6 @@ test_fn(interpret_string_value) {
   test_fpeq(((fptr){arr.count, (u8 *)r.v.value}), "yo");
 }
 
-test_fn(interpret_type_fn) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();"
-          "two ~~ @fn((t ~type),type,{"
-          "  return @arr(2, t);"
-          "});"
-          "two(@sint(8));"
-      ),
-      nullptr
-  );
-
-  println("{typed_value_full}", tvf(r));
-  test_assert(tu_is(c_type, tv_type(r).t));
-  let ty = type_at(r.env, r.v.c_type);
-  test_assert(tu_is(r_arr, ty.t));
-  let arr = tu_catch(r_arr, ty.t);
-  test_inteq(arr.count, 2);
-  let elem = type_at(r.env, arr.t);
-  test_inteq(tu_catch(r_sint, elem.t).bits, 8);
-}
-
-test_fn(interpret_zero_arg_call) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "seven ~~ @fn (),@int(),{\n"
-          "  return 7;\n"
-          "};\n"
-          "seven();\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(c_int, tv_type(r).t));
-  test_assert(!BInt.cmp(r.v.c_int, BInt.from.i64(arena, 7)));
-}
-test_fn(interpret_global_comptime_mutation) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "asize ~= 1;\n"
-          "type ~~ @type();\n"
-          "increasing_array~~@fn((t~type),type,\n"
-          "   return @arr { asize = asize + 1;},t );\n"
-          "a ~increasing_array @sint 8;\n"
-          "b ~increasing_array @uint 16;\n"
-          "b;\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_arr, tv_type(r).t));
-  let arr = tu_catchr(r_arr, tv_type(r).t);
-  test_inteq(arr.count, 3);
-  let elem = type_at(r.env, arr.t);
-  test_inteq(tu_catch(r_uint, elem.t).bits, 16);
-}
-
 static interp ast_probe(allocfn arena, fptr dotwork, fptr arg, astidx_full *ctx) {
   let src = snprint(
       arena,
@@ -155,27 +108,7 @@ static interp ast_probe(allocfn arena, fptr dotwork, fptr arg, astidx_full *ctx)
   return interpret_source(arena, fp(src), ctx);
 }
 
-test_fn(interpret_comptime_recursion) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-  let r = interpret_source(
-      arena,
-      fp(
-          "fact ~~ @fn((n ~@int()),@int(),{"
-          "   @cif("
-          "     (n <= 1),"
-          "     (return ( 1 )),"
-          "     (return ( n * fact(n - 1)))"
-          "   );"
-          " });"
-          "fact(5);"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(c_int, tv_type(r).t));
-  test_assert(!BInt.cmp(r.v.c_int, BInt.from.i64(arena, 120)));
-}
+test_file_1(interpret_comptime_recursion);
 /*
 // both branches are lowered, much rader to reconcile
 // not meant to work for a while
@@ -203,96 +136,6 @@ test_fn(interpret_comptime_recursion_low) {
 }
 */
 
-test_fn(interpret_runtime_recursion) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "sum ~~ @fn((n ~@sint(32)),@sint(32),{"
-          "  @if(n <= 0, { zero ~ @sint(32) = 0; return zero; });"
-          "  rest ~ @sint(32) = sum(n - 1);"
-          "  total ~ @sint(32) = n + rest;"
-          "  return total;"
-          "});"
-          "sum(4);"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_sint, tv_type(r).t));
-  test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 32);
-  test_inteq(*(i32 *)r.v.value, 10);
-}
-
-// a const declaration binds the register it declares in place, so `~~ f()` retypes the call's
-// destination register; the callee returns an unqualified value and const says nothing about the
-// value's shape, so the return still has to be accepted
-test_fn(const_declaration_retypes_call_destination) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "s32 ~~ @sint(32);\n"
-          "f ~~ @fn (), s32, { return 7; };\n"
-          "a ~~ f();\n"
-          "a;\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_sint, tv_type(r).t));
-  test_assert(tv_type(r).isconst);
-  test_inteq(*(i32 *)r.v.value, 7);
-}
-
-test_fn(if_cshl) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "ast ~~ @ast();any ~~ @any();"
-          "if  ~~ @fn (a ~ast),ast,{"
-          "  call ~ast~ a.\"()\";"
-          "  cond ~ast~ call.opleft;"
-          "  rest ~ast~ call.opright;"
-          "  @cif((rest.\"()\".opright.\"()\".opleft == \"else\"), {"
-          "    then ~ast~ rest.opleft;"
-          "    else ~ast~ rest.opright.\"()\".opright;"
-          ""
-          "    return @qot @if("
-          "      @uqot(cond),"
-          "      @uqot(then),"
-          "      @uqot(else)"
-          "    );"
-          "  });"
-          "  return @qot @if("
-          "    @uqot(cond),"
-          "    @uqot(rest)"
-          "  );"
-          "};"
-          "cnd ~~ @fn (a ~any,b ~any,c ~(@typeof b)),(@typeof b),{"
-          "  if' (a) (return b) else (return c);"
-          "};"
-          ""
-          "one ~= cnd (1),  1,0;"
-          "one =  cnd (one),3,2;"
-          "one;"
-      ),
-      nullptr
-  );
-
-  println("[if_cshl] r {typed_value_full} {bigint}", tvf(r), r.v.c_int);
-  test_assert(tu_is(c_int, tv_type(r).t));
-  test_assert(!BInt.cmp(r.v.c_int, BInt.from.i64(arena, 3)));
-}
-
 test_fn(bool_bigint_roundtrip) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -312,43 +155,6 @@ test_fn(bool_bigint_roundtrip) {
   test_inteq(*mem, 0);
 }
 
-// a bigint is only as wide as the value in it, so writing one into a wider integer has to extend it
-// to the slot first: the write reads the slot's bytes straight out of the bigint's limbs
-test_fn(wide_integer_write_extends_the_bigint) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "s128 ~~ @sint(128);\n"
-          "big ~s128 = 111;\n"
-          "big;\n"
-      ),
-      nullptr
-  );
-  test_assert(tu_is(r_sint, tv_type(r).t));
-  test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 128);
-  test_inteq(((u64 *)r.v.value)[0], 111);
-  test_inteq(((u64 *)r.v.value)[1], 0);
-
-  // and a negative one is sign extended, not zero extended
-  let n = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "s128 ~~ @sint(128);\n"
-          "neg ~s128 = 0 - 1;\n"
-          "neg;\n"
-      ),
-      nullptr
-  );
-  test_assert(tu_is(r_sint, tv_type(n).t));
-  test_inteq(((u64 *)n.v.value)[0], (u64)-1);
-  test_inteq(((u64 *)n.v.value)[1], (u64)-1);
-}
-
 test_fn(ast_dot_operator_match) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -356,7 +162,7 @@ test_fn(ast_dot_operator_match) {
   astidx_full ctx = {};
   let r = ast_probe(arena, fp("a.\"+\""), fp("1 + 2"), &ctx);
   test_assert(tu_is(c_ast, tv_type(r).t));
-  let node = ast_at(ctx.alist, r.v.c_ast);
+  let node = ast_at_list(ctx.alist, r.v.c_ast);
   test_assert(tu_is(astOp, node));
   test_inteq(tu_catch(astOp, node).number_rep, opNumbers.plus);
 }
@@ -368,7 +174,7 @@ test_fn(ast_dot_operator_mismatch) {
   astidx_full ctx = {};
   let r = ast_probe(arena, fp("a.\"+\""), fp("1 - 2"), &ctx);
   test_assert(tu_is(c_ast, tv_type(r).t));
-  test_assert(tu_is(astEmpty, ast_at(ctx.alist, r.v.c_ast)));
+  test_assert(tu_is(astEmpty, ast_at_list(ctx.alist, r.v.c_ast)));
 }
 
 test_fn(ast_dot_operation_members) {
@@ -378,14 +184,14 @@ test_fn(ast_dot_operation_members) {
   astidx_full lctx = {};
   let l = ast_probe(arena, fp("a.opleft"), fp("1 + 2"), &lctx);
   test_assert(tu_is(c_ast, tv_type(l).t));
-  let lnode = ast_at(lctx.alist, l.v.c_ast);
+  let lnode = ast_at_list(lctx.alist, l.v.c_ast);
   test_assert(tu_is(astNumber, lnode));
   test_fpeq(fp_from_srcpos((srcpos_full){.pidx = tu_catch(astNumber, lnode), .plist = lctx.plist, .flist = lctx.flist}), "1");
 
   astidx_full rctx = {};
   let rr = ast_probe(arena, fp("a.opright"), fp("1 + 2"), &rctx);
   test_assert(tu_is(c_ast, tv_type(rr).t));
-  let rnode = ast_at(rctx.alist, rr.v.c_ast);
+  let rnode = ast_at_list(rctx.alist, rr.v.c_ast);
   test_assert(tu_is(astNumber, rnode));
   test_fpeq(fp_from_srcpos((srcpos_full){.pidx = tu_catch(astNumber, rnode), .plist = rctx.plist, .flist = rctx.flist}), "2");
 }
@@ -397,7 +203,7 @@ test_fn(ast_dot_member_check_on_non_op) {
   astidx_full ctx = {};
   let l = ast_probe(arena, fp("a.opleft"), fp("7"), &ctx);
   test_assert(tu_is(c_ast, tv_type(l).t));
-  test_assert(tu_is(astEmpty, ast_at(ctx.alist, l.v.c_ast)));
+  test_assert(tu_is(astEmpty, ast_at_list(ctx.alist, l.v.c_ast)));
 }
 
 test_fn(ast_dot_kind_check) {
@@ -407,23 +213,21 @@ test_fn(ast_dot_kind_check) {
   astidx_full ictx = {};
   let i = ast_probe(arena, fp("a.id"), fp("foo"), &ictx);
   test_assert(tu_is(c_ast, tv_type(i).t));
-  let inode = ast_at(ictx.alist, i.v.c_ast);
+  let inode = ast_at_list(ictx.alist, i.v.c_ast);
   test_assert(tu_is(astId, inode));
   test_fpeq(fp_from_srcpos((srcpos_full){tu_catch(astId, inode), ictx.plist, ictx.flist}), "foo");
 
   astidx_full octx = {};
   let o = ast_probe(arena, fp("a.op"), fp("1 + 2"), &octx);
   test_assert(tu_is(c_ast, tv_type(o).t));
-  test_assert(tu_is(astOp, ast_at(octx.alist, o.v.c_ast)));
+  test_assert(tu_is(astOp, ast_at_list(octx.alist, o.v.c_ast)));
 
   astidx_full ectx = {};
   let e = ast_probe(arena, fp("a.id"), fp("7"), &ectx);
   test_assert(tu_is(c_ast, tv_type(e).t));
-  test_assert(tu_is(astEmpty, ast_at(ectx.alist, e.v.c_ast)));
+  test_assert(tu_is(astEmpty, ast_at_list(ectx.alist, e.v.c_ast)));
 }
 
-// @ast_op builds any operator out of its spelling, so a macro does not need a builtin per operator
-// and an operand can be another ast it computed
 test_fn(ast_op_builds_operator_from_spelling) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -431,101 +235,12 @@ test_fn(ast_op_builds_operator_from_spelling) {
   astidx_full ctx = {};
   let r = ast_probe(arena, fp("@ast_op(\"+\", a, @qot(7))"), fp("3"), &ctx);
   test_assert(tu_is(c_ast, tv_type(r).t));
-  let node = ast_at(ctx.alist, r.v.c_ast);
+  let node = ast_at_list(ctx.alist, r.v.c_ast);
   test_assert(tu_is(astOp, node));
   let op = tu_catch(astOp, node);
   test_inteq(op.number_rep, opNumbers.plus);
-  test_assert(tu_is(astNumber, ast_at(ctx.alist, op.left_right)));
-  test_assert(tu_is(astNumber, ast_at(ctx.alist, op.left_right + 1)));
-}
-
-test_fn(struct_operator_overload_vector_equality_true) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "i ~~ @sint;\n"
-          "vec2 ~type~ @struct{\n"
-          "  Self ~type~ @this();\n"
-          "  x ~ i 32;\n"
-          "  y ~ i 32;\n"
-          "  @id(\"==\") ~~ @fn (self~Self,other~Self),@bool(),{\n"
-          "    return (self.x == other.x) and (self.y == other.y);\n"
-          "  };\n"
-          "};\n"
-          "a ~vec2; a.x = 1; a.y = 2;\n"
-          "b ~vec2; b.x = 1; b.y = 2;\n"
-          "(a == b);\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_bool, tv_type(r).t));
-  test_inteq(*(u8 *)r.v.value, 1);
-}
-test_fn(struct_cast_ovl) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "i ~~ @sint;\n"
-          "vec2 ~type~ @struct{\n"
-          "  Self ~type~ @this();\n"
-          "  x ~ i 32;\n"
-          "  y ~ i 32;\n"
-          // the return type is the dependent type parameter, and the body branches on it
-          "  @id(\"as\") ~~ @fn (self~Self,to ~type),to,{\n"
-          "    @cif (to == (i 8)),{ return (self.x) + (self.y); };\n"
-          "  };\n"
-          "};\n"
-          "a ~vec2; a.x = 1; a.y = 2;\n"
-          "a as (i 8) == 3 as (i 8);\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_bool, tv_type(r).t));
-  test_inteq(*(u8 *)r.v.value, 1);
-}
-
-test_fn(type_equality_comptime) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "i ~~ @sint;\n"
-          "((i 32) == (i 32)) and ((i 32) == @sint(32)) and ((i 32) != (i 64));\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_bool, tv_type(r).t));
-  test_inteq(*(u8 *)r.v.value, 1);
-}
-
-test_fn(type_equality_comptime_false) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "i ~~ @sint;\n"
-          "((i 32) == (i 64)) or ((i 32) != (i 32));\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_bool, tv_type(r).t));
-  test_inteq(*(u8 *)r.v.value, 0);
+  test_assert(tu_is(astNumber, ast_at_list(ctx.alist, op.left_right)));
+  test_assert(tu_is(astNumber, ast_at_list(ctx.alist, op.left_right + 1)));
 }
 
 test_fn(struct_operator_overload_vector_equality_false) {
@@ -556,552 +271,41 @@ test_fn(struct_operator_overload_vector_equality_false) {
   test_inteq(*(u8 *)r.v.value, 0);
 }
 
-test_fn(struct_operator_overload_self_in_body) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "i ~~ @sint;\n"
-          "vec2 ~type~ @struct{\n"
-          "  Self ~type~ @this();\n"
-          "  x ~ i 32;\n"
-          "  y ~ i 32;\n"
-          "  @id(\"+\") ~~ @fn (self~Self,other~Self),Self,{\n"
-          "    r ~Self;\n"
-          "    r.x = self.x + other.x;\n"
-          "    r.y = self.y + other.y;\n"
-          "    return r;\n"
-          "  };\n"
-          "};\n"
-          "a ~vec2; a.x = 1; a.y = 2;\n"
-          "b ~vec2; b.x = 3; b.y = 4;\n"
-          "c ~vec2~ a + b;\n"
-          "c.x + c.y;\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_sint, tv_type(r).t));
-  test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 32);
-  test_inteq(*(i32 *)r.v.value, 10);
-}
-
-test_fn(struct_as_overload) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "i ~~ @sint;\n"
-          "wrapped ~type~ @struct{\n"
-          "  Self ~type~ @this();\n"
-          "  v ~ i 32;\n"
-          "  @id(\"as\") ~~ @fn (self ~Self, target ~type), @sint(32), {\n"
-          "    return self.v;\n"
-          "  };\n"
-          "};\n"
-          "a ~wrapped; a.v = 7;\n"
-          "b ~i 32~ a as @sint(32);\n"
-          "b;\n"
-      ),
-      nullptr
-  );
-  test_assert(tu_is(r_sint, tv_type(r).t));
-  test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 32);
-  test_inteq(*(i32 *)r.v.value, 7);
-}
-
-// `as` with no overload member is just a cast to the type the right hand side names
-test_fn(as_without_overload_is_a_cast) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "s8 ~~ @sint(8);\n"
-          "s32 ~~ @sint(32);\n"
-          "x ~s8 = 5;\n"
-          "x as s32;\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_sint, tv_type(r).t));
-  test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 32);
-  test_inteq(*(i32 *)r.v.value, 5);
-}
-
-// a function cannot capture the frame it was written in, so a closure carries its captures in a
-// struct and calls itself through a "()" overload
-test_fn(struct_closure_capture) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "s32 ~~ @sint(32);\n"
-          "adder ~type~ @struct{\n"
-          "  Self ~type~ @this();\n"
-          "  captured ~ s32;\n"
-          "  @id(\"()\") ~~ @fn (self ~Self, extra ~s32), s32, {\n"
-          "    base ~s32 = self.captured;\n"
-          "    return base + extra;\n"
-          "  };\n"
-          "};\n"
-          "make ~~ @fn (start ~s32), adder, {\n"
-          "  c ~adder;\n"
-          "  c.captured = start;\n"
-          "  return c;\n"
-          "};\n"
-          "add5 ~adder = make(5);\n"
-          "add5(2);\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_sint, tv_type(r).t));
-  test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 32);
-  test_inteq(*(i32 *)r.v.value, 7);
-}
-
-// a "()" overload called as the last expression has to yield the call result, not a cast that
-// coerced one of its arguments; the call allocates those casts above the result register
-test_fn(overload_call_yields_the_result_after_arg_coercion) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "s8 ~~ @sint(8);\n"
-          "s32 ~~ @sint(32);\n"
-          "box ~type~ @struct{\n"
-          "  Self ~type~ @this();\n"
-          "  v ~s32;\n"
-          "  @id(\"()\") ~~ @fn (self ~Self, x ~s32, y ~s32), s32, {\n"
-          "    return self.v + x + y;\n"
-          "  };\n"
-          "};\n"
-          "make ~~ @fn (), box, { b ~box; b.v = 30; return b; };\n"
-          "b ~box = make();\n"
-          "small ~s8 = 1;\n"
-          "tiny ~s8 = 2;\n"
-          "b(small, tiny);\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_sint, tv_type(r).t));
-  test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 32);
-  test_inteq(*(i32 *)r.v.value, 33);
-}
-
-// an explicit @ref capture stores the address, so the call aliases the source
-test_fn(struct_ref_capture) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "s32 ~~ @sint(32);\n"
-          "ref ~~ @refT;\n"
-          "counter ~s32 = 5;\n"
-          "cell ~type~ @struct{\n"
-          "  Self ~type~ @this();\n"
-          "  r ~ (ref s32);\n"
-          "  @id(\"()\") ~~ @fn (self ~Self, j ~s32), s32, {\n"
-          "    v ~(ref s32) = self.r;\n"
-          "    v = v + j;\n"
-          "    return v;\n"
-          "  };\n"
-          "};\n"
-          "make ~~ @fn (), cell, {\n"
-          "  c ~cell;\n"
-          "  c.r = @ref counter;\n"
-          "  return c;\n"
-          "};\n"
-          "result ~~ @fn (), s32, {\n"
-          "  k ~cell = make();\n"
-          "  k(2);\n"
-          "  return counter;\n"
-          "};\n"
-          "result();\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_sint, tv_type(r).t));
-  test_inteq(*(i32 *)r.v.value, 7);
-}
-
-// a lowered lvalue is a ref, so @where must not address the ref register itself, and @at must give
-// back an alias of the pointee
-test_fn(where_at_alias) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "s32 ~~ @sint(32);\n"
-          "ref ~~ @refT;\n"
-          "counter ~s32 = 5;\n"
-          "run ~~ @fn (), s32, {\n"
-          "  p ~(@ptr s32) = @where counter;\n"
-          "  v ~(ref s32)~ @at p;\n"
-          "  counter = 9;\n"
-          "  return v - 9;\n"
-          "};\n"
-          "run();\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_sint, tv_type(r).t));
-  test_inteq(*(i32 *)r.v.value, 0);
-}
-
-// a closure macro built from the ast list builtins: @ast_len/@ast_at walk the capture
-// list, @apply passes each one by value, @ast_op(".",...) builds `self.name`, and @splice glues
-// the generated members and bindings back into the struct and its "()" body
-test_fn(closure_macro_variadic) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "s32 ~~ @sint(32);\n"
-          "ref ~~ @refT;\n"
-          "ast ~~ @ast();\n"
-          "any ~~ @any();\n"
-          "piece ~~ @fn (mode ~@int(), inst ~ast, v ~ast), ast, {\n"
-          "  @cif((mode == 0), (return @qot (@uqot(v.name) ~ @uqot(v.type))));\n"
-          "  @cif((mode == 1), (return @qot (@uqot(@ast_op(\".\", inst, v.name)) = @uqot(v.value))));\n"
-          "  return @qot (@uqot(v.name) ~@uqot(v.type) = @uqot(@ast_op(\".\", @qot(self), v.name)));\n"
-          "};\n"
-          "pieces ~~ @fn (values ~ast, inst ~ast, mode ~@int(), i ~@int()), ast, {\n"
-          "  @cif(\n"
-          "    (i < @ast_len(values)),\n"
-          "    (return @qot {\n"
-          "      @uqot(@apply(piece, mode, inst, @ast_at(values, i)));\n"
-          "      @splice(@apply(pieces, values, inst, mode, i + 1));\n"
-          "    }),\n"
-          "    (return @qot [])\n"
-          "  );\n"
-          "};\n"
-          "closure ~~ @fn (values ~ast, args ~ast, ret ~ast, body ~ast), any, {\n"
-          "  return @uqot(@qot {\n"
-          "    ClosureType ~type~ @struct {\n"
-          "      Self ~type~ @this();\n"
-          "      @splice(@apply(pieces, values, @qot(inst), 0, 0));\n"
-          "      @id(\"()\") ~~ @fn((self ~Self, @splice(args)), @uqot(ret), {\n"
-          "        @splice(@apply(pieces, values, @qot(inst), 2, 0));\n"
-          "        @splice(body);\n"
-          "      });\n"
-          "    };\n"
-          "    inst ~ClosureType;\n"
-          "    @splice(@apply(pieces, values, @qot(inst), 1, 0));\n"
-          "    @at(@where(inst));\n"
-          "  });\n"
-          "};\n"
-          "counter ~s32 = 0;\n"
-          "add ~~ closure([a ~ (ref s32) = @ref(counter), b ~ s32 = 10], [j ~ s32], s32, {\n"
-          "  a = a + b;\n"
-          "  b = b + j;\n"
-          "  return a + b;\n"
-          "});\n"
-          "result ~~ @fn (), s32, { return add(1); };\n"
-          "result();\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_sint, tv_type(r).t));
-  test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 32);
-  test_inteq(*(i32 *)r.v.value, 21);
-}
-
-test_fn(any_return_adopts_concrete_type) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  // a function declared to return `any` resolves to the concrete type of what it returns,
-  // so callers can use the result as that type instead of an erased `any`
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "s32 ~~ @sint(32);\n"
-          "any ~~ @any();\n"
-          "S ~type~ @struct { a ~s32; };\n"
-          "mk ~~ @fn (), any, { s ~S; s.a = 5; return s; };\n"
-          "use ~~ @fn (), s32, { return mk().a + 2; };\n"
-          "use();\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_sint, tv_type(r).t));
-  test_inteq(*(i32 *)r.v.value, 7);
-}
-
-// integer math lands on the weaker of the two operand types, so a runtime int beats a comptime
-// literal and the wider int wins. coercing the operands allocates temporaries above the result, so
-// this also pins down that the block still yields the result and not one of those casts
-test_fn(math_coerces_to_the_weaker_int) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "s8 ~~ @sint(8);\n"
-          "s32 ~~ @sint(32);\n"
-          "x ~s32 = 4;\n"
-          "y ~s8 = 3;\n"
-          "y + x;\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_sint, tv_type(r).t));
-  test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 32);
-  test_inteq(*(i32 *)r.v.value, 7);
-}
-
-// a comptime literal next to a runtime int must not drag the result back to the comptime int
-// (the `3 + x` case)
-test_fn(comptime_literal_math_adopts_runtime_type) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "s32 ~~ @sint(32);\n"
-          "x ~s32 = 4;\n"
-          "3 + x;\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_sint, tv_type(r).t));
-  test_inteq(*(i32 *)r.v.value, 7);
-}
-
-test_fn(math_unsigned_is_weaker_at_the_same_width) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "s32 ~~ @sint(32);\n"
-          "u32 ~~ @uint(32);\n"
-          "a ~s32 = 5;\n"
-          "b ~u32 = 2;\n"
-          "a + b;\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_uint, tv_type(r).t));
-  test_inteq(*(u32 *)r.v.value, 7);
-}
-
-// two comptime operands have nothing to coerce and still fold to a comptime int
-test_fn(comptime_math_stays_comptime) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(arena, fp("3 + 4;"), nullptr);
-
-  test_assert(tu_is(c_int, tv_type(r).t));
-  test_assert(!BInt.cmp(r.v.c_int, BInt.from.i64(arena, 7)));
-}
-
-test_fn(field_assignment_writes_into_the_struct) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  // a.b = c has to write into the struct, and reading it back has to see that same member, so the
-  // access register is the member rather than a copy of it. a variable on the right is copied into
-  // the member, so s.a is 5 after y changes, not an alias of y
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "s32 ~~ @sint(32);\n"
-          "S ~type~ @struct { a ~s32; b ~s32; };\n"
-          "s ~S;\n"
-          "s.b = 7;\n"
-          "y ~s32 = 5;\n"
-          "s.a = y;\n"
-          "y = 9;\n"
-          "s.a + s.b;\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_sint, tv_type(r).t));
-  test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 32);
-  test_inteq(*(i32 *)r.v.value, 12);
-}
-
-test_fn(field_access_is_addressable) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  // the access is an lvalue inside the struct, so @where on it addresses the member and @at writes
-  // back through that address, the same way it does for a named local
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "s32 ~~ @sint(32);\n"
-          "S ~type~ @struct { a ~s32; b ~s32; };\n"
-          "s ~S;\n"
-          "s.a = 5;\n"
-          "p ~(@ptr s32)~ @where s.a;\n"
-          "@at p = 9;\n"
-          "s.a - 9;\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_sint, tv_type(r).t));
-  test_inteq(*(i32 *)r.v.value, 0);
-}
-
-// x[i] is an lvalue inside the array, so writing it writes the element, and a variable on the
-// right is copied in rather than bound to the access register and thrown away with it
-test_fn(array_assignment_writes_into_the_array) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "s32 ~~ @sint(32);\n"
-          "A ~type~ @arr(3, s32);\n"
-          "x ~A;\n"
-          "y ~s32 = 5;\n"
-          "x[0] = y;\n"
-          "y = 9;\n"
-          "x[2] = x[0] + 2;\n"
-          "x[0] + x[2];\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_sint, tv_type(r).t));
-  test_inteq(tu_catchr(r_sint, tv_type(r).t).bits, 32);
-  test_inteq(*(i32 *)r.v.value, 12);
-}
-
-test_fn(array_access_is_addressable) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "s32 ~~ @sint(32);\n"
-          "A ~type~ @arr(3, s32);\n"
-          "x ~A;\n"
-          "p ~(@ptr s32)~ @where x[1];\n"
-          "@at p = 9;\n"
-          "x[1] - 9;\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_sint, tv_type(r).t));
-  test_inteq(*(i32 *)r.v.value, 0);
-}
-test_fn(sib_fn_call) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-
-          "i ~~ @sint;\n"
-          "outer ~~ @fn (run ~(i 32),in ~(i 32)),(i 32),{\n"
-          " run = run + 1;\n"
-          " odd ~~ @fn (a ~(i 32),o ~(i 32)),(i 32),\n"
-          "   (return outer(a,o * 3 + 1));\n"
-          " even ~~ @fn (a ~(i 32),e ~(i 32)),(i 32),\n"
-          "   (return outer(a,e / 2));\n"
-          " resolve ~~ @fn (r ~(i 32),n ~(i 32)),(i 32),{\n"
-          "   @if((n == 1), (return r - 1));\n"
-          "   @if((n band 1), (return odd(r,n)));\n"
-          "   return even(r,n);\n"
-          " };\n"
-          " return resolve(run,in);\n"
-          "};\n"
-          "\n"
-          "outer(0,1000);\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_sint, tv_type(r).t));
-  test_inteq(*(i32 *)r.v.value, 111);
-}
-
-test_fn(forward_declarations_fill_in) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-
-  let r = interpret_source(
-      arena,
-      fp(
-          "i ~~ @sint;\n"
-          "i32 ~~ i(32);\n"
-          "outer ~~ @fn (n ~i32),i32,{\n"
-          "  isodd ~~ @fn (n ~i32),i32;\n"
-          "  iseven ~~ @fn (n ~i32),i32;\n"
-          "  isodd ~~ @fn (n ~i32),i32,{\n"
-          "    @if((n == 0), (return 0));\n"
-          "    return iseven(n - 1);\n"
-          "  };\n"
-          "  iseven ~~ @fn (n ~i32),i32,{\n"
-          "    @if((n == 0), (return 1));\n"
-          "    return isodd(n - 1);\n"
-          "  };\n"
-          "  return isodd(n);\n"
-          "};\n"
-          "result ~= outer(7);\n"
-          "result;\n"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(r_sint, tv_type(r).t));
-  test_inteq(*(i32 *)r.v.value, 1);
-}
+test_file_1(interpret_type_fn);
+test_file_1(interpret_zero_arg_call);
+test_file_1(interpret_global_comptime_mutation);
+test_file_1(interpret_runtime_recursion);
+test_file_1(const_declaration_retypes_call_destination);
+test_file_1(if_cshl);
+test_file_1(wide_integer_write_extends_the_bigint);
+test_file_1(struct_operator_overload_vector_equality_true);
+test_file_1(struct_cast_ovl);
+test_file_1(type_equality_comptime);
+test_file_1(type_equality_comptime_false);
+test_file_1(struct_operator_overload_self_in_body);
+test_file_1(struct_as_overload);
+test_file_1(dot);
+test_file_1(union_members_share_offset_zero);
+test_file_1(as_without_overload_is_a_cast);
+test_file_1(struct_closure_capture);
+test_file_1(overload_call_yields_the_result_after_arg_coercion);
+test_file_1(struct_ref_capture);
+test_file_1(where_at_alias);
+test_file_1(any_return_adopts_concrete_type);
+test_file_1(math_coerces_to_the_weaker_int);
+test_file_1(comptime_literal_math_adopts_runtime_type);
+test_file_1(math_unsigned_is_weaker_at_the_same_width);
+test_file_1(bxor_toggles_the_bits);
+test_file_1(comptime_math_stays_comptime);
+test_file_1(field_assignment_writes_into_the_struct);
+test_file_1(field_access_is_addressable);
+test_file_1(array_assignment_writes_into_the_array);
+test_file_1(array_access_is_addressable);
+test_file_1(ast_array);
+test_file_1(ast_array_falsy);
+test_file_1(sib_fn);
+test_file_1(referance_types);
+test_file_1(referance_types_i);
 
 //
 // error tests
@@ -1165,22 +369,6 @@ test_fn(lower_error_type_not_value) {
   test_streq(e.err_code, "TYPE_IS_NOT_VALUE");
 }
 
-test_fn(lower_error_splice_outside_quote) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-  let e = lower_source_err(arena, fp("@splice(@qot(1));"));
-  test_assert(e.err_code);
-  test_streq(e.err_code, "SPLICE_OUTSIDE_QUOTE");
-}
-
-test_fn(lower_error_ast_at_range) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-  let e = lower_source_err(arena, fp("ast ~~ @ast();\n@ast_at(@qot([1, 2]), 5);\n"));
-  test_assert(e.err_code);
-  test_streq(e.err_code, "AST_AT_RANGE");
-}
-
 // @at is *l, so it takes a pointer. a referance to an int is not a pointer: reading the value
 // out of it first leaves an int, which has nothing to dereference
 test_fn(lower_error_at_on_int_reference) {
@@ -1199,17 +387,35 @@ test_fn(lower_error_at_on_int_reference) {
   test_streq(e.err_code, "AT_NOT_REF");
 }
 
-test_fn(lower_error_function_cannot_capture_frame) {
+test_fn(function_can_capture_comptime) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  // a @fn roots at the module, so a body can never name a variable of the frame it
-  // was written inside of
-  let e = lower_source_err(
+  let r = interpret_source(
       arena,
       fp(
           "outer ~~ @fn (x ~@int()),@int(),{\n"
           "  hidden ~ @int() = 7;\n"
-          "  inner ~~ @fn (y ~@int()),@int(),{ return hidden; };\n"
+          "  inner ~~ @fn (y ~@int()),@int(),{ return hidden + x + y; };\n"
+          "  return inner(1);\n"
+          "};\n"
+          "outer(2) + outer(3);\n"
+      ),
+      nullptr
+  );
+  test_assert(tu_is(c_int, tv_type(r).t));
+  test_assert(!BInt.cmp(r.v.c_int, BInt.from.i64(arena, 21)));
+}
+
+test_fn(lower_error_function_cannot_capture_frame) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  // Runtime locals belong to the enclosing activation, even with a literal initializer.
+  let e = lower_source_err(
+      arena,
+      fp(
+          "outer ~~ @fn (x ~@sint(32)),@sint(32),{\n"
+          "  hidden ~ @sint(32) = 7;\n"
+          "  inner ~~ @fn (y ~@sint(32)),@sint(32),{ return hidden; };\n"
           "  return inner(1);\n"
           "};\n"
           "outer(1);\n"
@@ -1266,6 +472,21 @@ test_fn(lower_error_order_types) {
   test_streq(e.err_code, "OP_UNSUPPORTED_OPERANDS");
 }
 
+test_fn(lower_error_union_member_initializer) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "s32 ~~ @sint(32);\n"
+          "U ~type~ @union{ a ~s32 = 1; };\n"
+      )
+  );
+  test_assert(e.err_code);
+  test_streq(e.err_code, "UNION_MEMBER_INITIALIZER");
+}
+
 test_fn(lower_error_op_on_struct_without_overload) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -1282,11 +503,164 @@ test_fn(lower_error_op_on_struct_without_overload) {
   test_streq(e.err_code, "OP_UNSUPPORTED_OPERANDS");
 }
 
-test_fn(interpret_error_yield_empty) {
+// Exercise the same heap-backed allocation path as the CLI: an outer arena
+// masks attempts to resize temporary-arena storage with the wrong allocator.
+test_fn(interpret_recursion_heap_allocator) {
+  let heap = debugAllocator(.allocator = stdAlloc);
+  defer { debugAllocatorDeInit(heap); };
+  let ct = catch_errcall(
+      (parse_source, (heap, nullFptr, "test/sib_fn.cshl")),
+      e, (err_panic(e), (astidx_full){})
+  );
+  let ss = ss_init(heap, ct);
+  catch_errcall((lower, (ss, ss->outermost, ct.idx)), e, (err_panic(e), (u32)0));
+  let result = catch_errcall((interpret, (ss, ss->outermost)), e, (err_panic(e), (typed_value){}));
+  test_assert(tu_is(r_bool, ss_type(ss, result.t).t));
+  test_assert(*(bool *)result.v.value);
+}
+
+test_fn(simplify_void_instructions) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let env = ss_init(arena, (astidx_full){});
-  let e = call_err(interpret, (env, env->outermost)).err;
+  let ss = ss_init(arena, (astidx_full){});
+  let s = ss->outermost;
+  let v = scope_add_value(ss, s, TV_void(ss));
+  let ref = scope_add_value(ss, s, TV_of(ss, P$(ss_type(ss, ss->t_void), ($.isref = true, $))));
+  let ptr = scope_add_value(ss, s, TV_of(ss, P$(ss_type(ss, ss->t_void), ($.ptr_level = 1, $))));
+  let source = scope_add_value(ss, s, TV_bigint(ss, BInt.from.i64(arena, 5)));
+  msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_set, {.l = v, .d = v}));
+  msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_getref, {.l = v, .d = ref}));
+  msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_putptr, {.l = ptr, .d = ref}));
+  msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_farg, {.l = 0, .d = v}));
+  msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_getptr, {.l = source, .d = ptr}));
+  msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_call, {.l = source, .d = ref, .r = v, .e = v + 1}));
+  msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_ret, ref));
+  usize values = msList_len(s->values);
+  scope_finish(ss, s);
+  test_inteq(msList_len(s->instructions), 3);
+  test_inteq(msList_len(s->values), values);
+  test_inteq(scope_find(ss, s, ref)->t, ss->t_void);
+  test_inteq(ss_type(ss, scope_find(ss, s, ptr)->t).ptr_level, 1);
+  test_assert(tu_is(ir_getptr, s->instructions[0]));
+  test_inteq(s->instructions[1].ir_call.d, s->start + 1);
+  test_inteq(s->instructions[1].ir_call.r, v);
+  test_inteq(s->instructions[1].ir_call.e, v + 1);
+  test_inteq(s->instructions[2].ir_ret, s->start + 1);
+  scope_finish(ss, s);
+  test_inteq(msList_len(s->instructions), 3);
+}
+
+test_fn(simplify_void_calls_keep_effects_and_returns) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(
+      arena,
+      fp(
+          "counter ~@sint(32) = 0;"
+          "bump ~~ @fn((unused ~@void(), amount ~@sint(32)), @void(), {"
+          "  counter = counter + amount;"
+          "  return();"
+          "  counter = 99;"
+          "});"
+          "bump({;}, 3);"
+          "bump({;}, 4);"
+          "counter == 7;"
+      ),
+      nullptr
+  );
+  test_assert(tu_is(r_bool, tv_type(r).t));
+  test_assert(*(bool *)r.v.value);
+}
+
+test_fn(simplify_preserves_void_scope_result) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(arena, fp("5; {;};"), nullptr);
+  test_assert(tu_is(r_void, tv_type(r).t));
+}
+
+test_fn(comptime_type_decorations) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(
+      arena,
+      fp("@comptime(@const(@sint(32)));"),
+      nullptr
+  );
+  test_assert(tu_is(c_type, tv_type(r).t));
+  let t = type_at(r.env, r.v.c_type);
+  test_assert(t.iscomptime);
+  test_assert(t.isconst);
+  test_assert(tu_is(r_sint, t.t));
+  test_inteq(t.t.r_sint.bits, 32);
+}
+
+test_fn(quote_operator_is_removed) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("macro' (1);"));
   test_assert(e.err_code);
-  test_streq(e.err_code, "YIELD_EMPTY");
+  test_streq(e.err_code, "PARSE_ERROR");
+}
+
+test_fn(inlineast_expands_at_call_site) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(arena, fp(
+      "twice ~~ @fn((a ~@ast()), @inlineast(), {"
+      "  return @qot(@uqot(a) + @uqot(a));"
+      "});"
+      "x ~@sint(32) = 6;"
+      "twice(x + 1) == 14;"
+  ), nullptr);
+  test_assert(tu_is(r_bool, tv_type(r).t));
+  test_assert(*(bool *)r.v.value);
+}
+
+test_fn(inlineast_cached_calls_use_caller_scope) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(arena, fp(
+      "read ~~ @fn((), @inlineast(), { return @qot(local); });"
+      "first ~~ @fn((), @sint(32), { local ~@sint(32) = 3; return read(); });"
+      "second ~~ @fn((), @sint(32), { local ~@sint(32) = 7; return read(); });"
+      "first() + second() == 10;"
+  ), nullptr);
+  test_assert(tu_is(r_bool, tv_type(r).t));
+  test_assert(*(bool *)r.v.value);
+}
+
+test_fn(inlineast_can_return_from_caller) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(arena, fp(
+      "exit ~~ @fn((a ~@ast()), @inlineast(), { return @qot(return @uqot(a)); });"
+      "f ~~ @fn((x ~@sint(32)), @sint(32), { exit(x + 1); return 99; });"
+      "f(8) == 9;"
+  ), nullptr);
+  test_assert(tu_is(r_bool, tv_type(r).t));
+  test_assert(*(bool *)r.v.value);
+}
+
+test_fn(inlineast_apply_and_nested_expansion) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(arena, fp(
+      "identity ~~ @fn((a ~@ast()), @inlineast(), { return a; });"
+      "wrap ~~ @fn((a ~@ast()), @inlineast(), { return @qot(identity(@uqot(a))); });"
+      "@apply(wrap, @qot(2 + 3)) == 5;"
+  ), nullptr);
+  test_assert(tu_is(r_bool, tv_type(r).t));
+  test_assert(*(bool *)r.v.value);
+}
+
+test_fn(ordinary_ast_return_stays_data) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(arena, fp(
+      "quote ~~ @fn((a ~@ast()), @ast(), { return a; });"
+      "quote(undefined_name);"
+  ), nullptr);
+  test_assert(tu_is(c_ast, tv_type(r).t));
+  test_assert(r.v.c_ast);
 }

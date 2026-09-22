@@ -10,7 +10,7 @@ typedef struct {
   fptr filecontent;
   FILE *fileptr;
 } fileItem;
-typedef sglist(fileItem) filelist; // index into this
+typedef sglist(fileItem) filelist;
 typedef struct {
   u32 fidx;
   u32 offset;

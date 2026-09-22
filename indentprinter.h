@@ -11,11 +11,9 @@ void indentout(const char *chars, void *instate, usize len, bool flush) {
   typeof(&state_st) state = instate ? instate : &state_st;
 
   foreach (const char *c, span(chars, len)) {
-    // Ignore spaces, tabs, and separator slashes.
     if (*c == ' ' || *c == '\t' || *c == '/')
       continue;
 
-    // If a break is pending and the next token is not a comma, insert newline + indent.
     if (state->pending_break) {
       if (*c != ',') {
         if (!state->at_line_start) {
@@ -29,13 +27,11 @@ void indentout(const char *chars, void *instate, usize len, bool flush) {
     switch (*c) {
       case '{':
         if (state->at_line_start) {
-          // Start of line: indent, then brace.
           foreach (let i, range(0, state->indent_level))
             fputc(' ', stdout);
           state->at_line_start = false;
           fputc('{', stdout);
         } else {
-          // Already content on line: separate with a space, then brace.
           fputc(' ', stdout);
           fputc('{', stdout);
         }
@@ -44,7 +40,6 @@ void indentout(const char *chars, void *instate, usize len, bool flush) {
         break;
 
       case '}':
-        // Always put closing brace on its own line.
         if (!state->at_line_start) {
           fputc('\n', stdout);
           state->at_line_start = true;
@@ -54,12 +49,11 @@ void indentout(const char *chars, void *instate, usize len, bool flush) {
         foreach (let i, range(0, state->indent_level))
           fputc(' ', stdout);
         fputc('}', stdout);
-        state->at_line_start = false; // we just printed a character
+        state->at_line_start = false;
         state->pending_break = true;
         break;
 
       case ',':
-        // Comma stays on current line; set a pending break for the next token.
         if (state->at_line_start) {
           foreach (let i, range(0, state->indent_level))
             fputc(' ', stdout);
