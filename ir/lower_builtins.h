@@ -3,7 +3,6 @@
 #include "function.h"
 #include "scope.h"
 
-static u32 lower_builtin_closure errs(superscope *ss, scope *s, astidx args) { return_err("UNIMPLEMENTED", 0); }
 static u32 lower_builtin_fn errs(superscope *ss, scope *s, astidx args) {
   builtin_args(ss, args, 2, 3);
   let pnode = ast_at(ss, list.start);
@@ -547,7 +546,6 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
   return switch_exp(
       builtin,
       (builtin_fn, /*      */ try_err(lower_builtin_fn, (ss, s, args), 0)),
-      (builtin_closure, /* */ try_err(lower_builtin_closure, (ss, s, args), 0)),
       (builtin_if, /*      */ try_err(lower_builtin_if, (ss, s, args), 0)),
       (builtin_cif, /*     */ try_err(lower_builtin_cif, (ss, s, args), 0)),
       (builtin_loop, /*    */ try_err(lower_builtin_loop, (ss, s, args), 0)),

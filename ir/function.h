@@ -117,7 +117,9 @@ static u32 function_call_specialize errs(superscope *ss, scope *s, u32 fnreg, u3
   return scope_add_value(ss, s, *P$(scope_find(ss, s, fnreg), ($->v.c_fun.spec = spec_number, $)));
 }
 
-static u32 lower_comptime_call_result errs(superscope *ss, scope *s, scope *spec) {
+static u32 lower_comptime_call_result errs(superscope *ss, scope *s, scope *spec, slice(typed_value) key) {
+  foreach (let arg, span(key.ptr, key.len))
+    if (!Type_is_comptime(ss_type(ss, arg->t))) return_err("COMPTIME_RETURN_RUNTIME_ARGUMENT", 0);
   let result = try_err(interpret, (ss, spec), 0);
   if (tu_is(c_inlineast, ss_type(ss, result.t).t)) {
     if (!result.v.c_ast) return_err("INLINEAST_UNKNOWN", 0);
@@ -136,7 +138,7 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
   if_decl (let inst, moxmap_get(function_item->mp, key)) {
     let instance = &function_item->instances[*inst];
     if (Type_is_comptime(instance->ret)) {
-      return try_err(lower_comptime_call_result, (ss, s, instance->spec), 0);
+      return try_err(lower_comptime_call_result, (ss, s, instance->spec, key), 0);
     }
     u32 callee = try_err(function_call_specialize, (ss, s, fnreg, *inst), 0);
     let result = scope_add_value(ss, s, TV_of(ss, instance->ret));
@@ -186,7 +188,7 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
   ret = ss->functions[fn - 1].instances[spec_number].ret;
 
   if (Type_is_comptime(ret)) {
-    return try_err(lower_comptime_call_result, (ss, s, spec), 0);
+    return try_err(lower_comptime_call_result, (ss, s, spec, key), 0);
   }
   u32 callee = try_err(function_call_specialize, (ss, s, fnreg, spec_number), 0);
   let result = scope_add_value(ss, s, TV_of(ss, ret));

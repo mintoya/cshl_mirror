@@ -259,7 +259,6 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
     builtin_id id;
   } builtins[] = {
       {"@fn", builtin_fn},
-      {"@closure", builtin_closure},
       {"@this", builtin__this},
       {"@struct", builtin_struct},
       {"@union", builtin_union},

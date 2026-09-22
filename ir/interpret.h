@@ -69,7 +69,7 @@ static typed_value intstate_value(intstate is, typed_value r) {
     usize size = Type_sizeof(t, ss_typeenv(is->ss));
     u8 *bits = *acreate(is->reads, u8[size]);
     memset(bits, 0, size);
-    cshl_bits_load((double_offset){ref.ptr, ref.bit_offset}, ref.width, bits);
+    cshl_bits_load(ref, bits);
     if (tu_is(r_sint, Type_stripTag(t, ss_typeenv(is->ss)).t) &&
         (bits[(ref.width - 1) / 8] & (1u << ((ref.width - 1) % 8)))) {
       if (ref.width % 8) bits[ref.width / 8] |= (u8)(0xffu << (ref.width % 8));
@@ -88,7 +88,7 @@ static typed_value intstate_reg(intstate is, u32 reg) {
 }
 static void intstate_store(intstate is, intplace d, typed_value value) {
   if (d.storage.width)
-    cshl_bits_store((double_offset){d.storage.ptr, d.storage.bit_offset}, d.storage.width, value.v.value);
+    cshl_bits_store(d.storage, value.v.value);
   else if_decl (let size, Type_sizeof(ss_type(is->ss, d.value.t), ss_typeenv(is->ss)))
     memcpy(d.storage.ptr, value.v.value, size);
 }

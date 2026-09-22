@@ -1,21 +1,17 @@
 #pragma once
 #include "ast.h"
+#include "cshl.lib.h"
 #include "srcpos.h"
-#include <assert.h>
 #include <limits.h>
 #include <wheels/bigint.h>
 #include <wheels/fptr.h>
 #include <wheels/hxmap.h>
-#include <wheels/macros.h>
-#include <wheels/mylist.h>
-#include <wheels/mytypes.h>
 #include <wheels/oxmap.h>
-#include <wheels/print/print_pre.h>
 #include <wheels/sList.h>
+
 cmpres fptr_cmp_hash(void *, const void *a, const void *b) { return fptr_cmp(*(fptr *)a, *(fptr *)b); }
 typedef enum : u8 {
-  builtin_fn, // @fn((decl|type...) ,decl|type,body) c_func of this type,
-  builtin_closure,
+  builtin_fn,        // @fn((decl|type...) ,decl|type,body) c_func of this type,
   builtin_if,        // @if(cnd , then ,)
   builtin_cif,       // @cif same as if, comptime, produces only one branch
   builtin_loop,      // @loop(body)
@@ -124,11 +120,7 @@ typedef enum : u8 {
   ref_dref = 2
 } reference_kind;
 // A packed member needs its bit extent as well as its storage address.
-typedef struct {
-  void *ptr;
-  u8 bit_offset; // : 4  // puting that there should change nothing
-  u32 width;
-} dref;
+typedef double_offset dref;
 
 struct Type {
   TypeTree t;
@@ -449,7 +441,6 @@ typePrinter(builtin_id) {
   switch_tuple(
       in,
       (builtin_fn, /*      */ PUTS("fn")),
-      (builtin_closure, /* */ PUTS("closure")),
       (builtin_at, /*      */ PUTS("at")),
       (builtin_if, /*      */ PUTS("if")),
       (builtin__id, /*     */ PUTS("id")),

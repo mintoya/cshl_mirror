@@ -2,6 +2,7 @@
 #include "ir/interpret.h"
 #include "ir/lower.h"
 #include "ir/scope.h"
+#include "wheels/allocators/debugallocator.h"
 #include "wheels/fptr.h"
 #include "wheels/macros.h"
 
@@ -532,8 +533,6 @@ test_fn(lower_error_bitstruct_member_not_integer) {
   test_streq(e.err_code, "BITSTRUCT_MEMBER_NOT_INTEGER");
 }
 
-// a width of zero would name a member with no bits at all
-// (the width is spelled the same way a method call is, so it is taken apart here)
 test_fn(lower_error_bitstruct_member_zero_width) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -548,8 +547,6 @@ test_fn(lower_error_bitstruct_member_zero_width) {
   test_assert(e.err_code);
   test_streq(e.err_code, "BAD_BIT_WIDTH");
 }
-
-// the base type is what a member is read as, so it has to be wide enough to hold the bits
 test_fn(lower_error_bitstruct_member_wider_than_base_type) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -565,8 +562,6 @@ test_fn(lower_error_bitstruct_member_wider_than_base_type) {
   test_streq(e.err_code, "BITSTRUCT_MEMBER_TOO_WIDE");
 }
 
-// a member of a bitstruct is not addressable: its bits are part of a run, so there is no byte
-// address to hand out for it
 test_fn(lower_error_bitfield_member_not_addressable) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -587,13 +582,11 @@ test_fn(lower_error_bitfield_member_not_addressable) {
 test_fn(lower_error_bitfield_to_normal_reference) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let e = lower_source_err(arena, fp(
-      "type ~~ @type();\n"
-      "u8 ~~ @uint(8);\n"
-      "B ~type~ @bitstruct { a ~u8:3; };\n"
-      "x ~B;\n"
-      "r ~@refT(u8) = x.a;\n"
-  ));
+  let e = lower_source_err(arena, fp("type ~~ @type();\n"
+                                     "u8 ~~ @uint(8);\n"
+                                     "B ~type~ @bitstruct { a ~u8:3; };\n"
+                                     "x ~B;\n"
+                                     "r ~@refT(u8) = x.a;\n"));
   test_assert(e.err_code);
   test_streq(e.err_code, "BITFIELD_NOT_ADDRESSABLE");
 }
@@ -621,7 +614,8 @@ test_fn(interpret_recursion_heap_allocator) {
   defer { debugAllocatorDeInit(heap); };
   let ct = catch_errcall(
       (parse_source, (heap, nullFptr, "test/sib_fn.cshl")),
-      e, (err_panic(e), (astidx_full){})
+      e,
+      (err_panic(e), (astidx_full){})
   );
   let ss = ss_init(heap, ct);
   catch_errcall((lower, (ss, ss->outermost, ct.idx)), e, (err_panic(e), (u32)0));
@@ -714,16 +708,33 @@ test_fn(quote_operator_is_removed) {
   test_streq(e.err_code, "PARSE_ERROR");
 }
 
+test_fn(lower_error_comptime_return_runtime_argument) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  fptr sources[] = {
+      fp("f ~~ @fn((n ~@sint(32)), @ast(), { return @qot(x); }); f(1);"),
+      fp("f ~~ @fn((n ~@sint(32)), @any(), { return @qot(x); }); f(1);"),
+      fp("f ~~ @fn((n ~@sint(32)), @inlineast(), { return @qot(1); }); f(1);"),
+      fp("f ~~ @fn((n ~@sint(32)), @type(), { return @sint(8); }); f(1);"),
+      fp("T ~~ @struct { x ~@sint(32); }; x ~T;"
+         "f ~~ @fn((self ~@refT(T)), @any(), { return @qot(self.x); }); f(x);"),
+  };
+  foreach (let src, span(sources, countof(sources))) {
+    let e = lower_source_err(arena, *src);
+    test_assert(e.err_code);
+    test_streq(e.err_code, "COMPTIME_RETURN_RUNTIME_ARGUMENT");
+  }
+}
+
 test_fn(inlineast_expands_at_call_site) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let r = interpret_source(arena, fp(
-      "twice ~~ @fn((a ~@ast()), @inlineast(), {"
-      "  return @qot(@uqot(a) + @uqot(a));"
-      "});"
-      "x ~@sint(32) = 6;"
-      "twice(x + 1) == 14;"
-  ), nullptr);
+  let r = interpret_source(arena, fp("twice ~~ @fn((a ~@ast()), @inlineast(), {"
+                                     "  return @qot(@uqot(a) + @uqot(a));"
+                                     "});"
+                                     "x ~@sint(32) = 6;"
+                                     "twice(x + 1) == 14;"),
+                           nullptr);
   test_assert(tu_is(r_bool, tv_type(r).t));
   test_assert(*(bool *)r.v.value);
 }
@@ -731,12 +742,11 @@ test_fn(inlineast_expands_at_call_site) {
 test_fn(inlineast_cached_calls_use_caller_scope) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let r = interpret_source(arena, fp(
-      "read ~~ @fn((), @inlineast(), { return @qot(local); });"
-      "first ~~ @fn((), @sint(32), { local ~@sint(32) = 3; return read(); });"
-      "second ~~ @fn((), @sint(32), { local ~@sint(32) = 7; return read(); });"
-      "first() + second() == 10;"
-  ), nullptr);
+  let r = interpret_source(arena, fp("read ~~ @fn((), @inlineast(), { return @qot(local); });"
+                                     "first ~~ @fn((), @sint(32), { local ~@sint(32) = 3; return read(); });"
+                                     "second ~~ @fn((), @sint(32), { local ~@sint(32) = 7; return read(); });"
+                                     "first() + second() == 10;"),
+                           nullptr);
   test_assert(tu_is(r_bool, tv_type(r).t));
   test_assert(*(bool *)r.v.value);
 }
@@ -744,11 +754,10 @@ test_fn(inlineast_cached_calls_use_caller_scope) {
 test_fn(inlineast_can_return_from_caller) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let r = interpret_source(arena, fp(
-      "exit ~~ @fn((a ~@ast()), @inlineast(), { return @qot(return @uqot(a)); });"
-      "f ~~ @fn((x ~@sint(32)), @sint(32), { exit(x + 1); return 99; });"
-      "f(8) == 9;"
-  ), nullptr);
+  let r = interpret_source(arena, fp("exit ~~ @fn((a ~@ast()), @inlineast(), { return @qot(return @uqot(a)); });"
+                                     "f ~~ @fn((x ~@sint(32)), @sint(32), { exit(x + 1); return 99; });"
+                                     "f(8) == 9;"),
+                           nullptr);
   test_assert(tu_is(r_bool, tv_type(r).t));
   test_assert(*(bool *)r.v.value);
 }
@@ -756,11 +765,10 @@ test_fn(inlineast_can_return_from_caller) {
 test_fn(inlineast_apply_and_nested_expansion) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let r = interpret_source(arena, fp(
-      "identity ~~ @fn((a ~@ast()), @inlineast(), { return a; });"
-      "wrap ~~ @fn((a ~@ast()), @inlineast(), { return @qot(identity(@uqot(a))); });"
-      "@apply(wrap, @qot(2 + 3)) == 5;"
-  ), nullptr);
+  let r = interpret_source(arena, fp("identity ~~ @fn((a ~@ast()), @inlineast(), { return a; });"
+                                     "wrap ~~ @fn((a ~@ast()), @inlineast(), { return @qot(identity(@uqot(a))); });"
+                                     "@apply(wrap, @qot(2 + 3)) == 5;"),
+                           nullptr);
   test_assert(tu_is(r_bool, tv_type(r).t));
   test_assert(*(bool *)r.v.value);
 }
@@ -768,10 +776,9 @@ test_fn(inlineast_apply_and_nested_expansion) {
 test_fn(ordinary_ast_return_stays_data) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let r = interpret_source(arena, fp(
-      "quote ~~ @fn((a ~@ast()), @ast(), { return a; });"
-      "quote(undefined_name);"
-  ), nullptr);
+  let r = interpret_source(arena, fp("quote ~~ @fn((a ~@ast()), @ast(), { return a; });"
+                                     "quote(undefined_name);"),
+                           nullptr);
   test_assert(tu_is(c_ast, tv_type(r).t));
   test_assert(r.v.c_ast);
 }
@@ -779,12 +786,12 @@ test_fn(ordinary_ast_return_stays_data) {
 test_fn(interpret_packed_reads_bounded_memory) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let ctx = parse_source(nullptr, arena, fp(
-      "B ~~ @bitstruct { a ~@sint(32):5; b ~@sint(32):7; };"
-      "x ~B; x.a = 7; x.b = 9; i ~@sint(32) = 0;"
-      "@loop({ @if(i >= 10000, { break(); });"
-      "x.a = x.b - 2; i = i + 1; });"
-      "(x.a == 7) and (x.b == 9);"), nullptr);
+  let ctx = parse_source(nullptr, arena, fp("B ~~ @bitstruct { a ~@sint(32):5; b ~@sint(32):7; };"
+                                            "x ~B; x.a = 7; x.b = 9; i ~@sint(32) = 0;"
+                                            "@loop({ @if(i >= 10000, { break(); });"
+                                            "x.a = x.b - 2; i = i + 1; });"
+                                            "(x.a == 7) and (x.b == 9);"),
+                         nullptr);
   let ss = ss_init(arena, ctx);
   lower(nullptr, ss, ss->outermost, ctx.idx);
   scope_finish(ss, ss->outermost);
@@ -806,10 +813,10 @@ test_fn(interpret_packed_reads_bounded_memory) {
 test_fn(interpret_packed_return_survives_next_instruction) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let result = interpret_source(arena, fp(
-      "B ~~ @bitstruct { a ~@sint(32):5; };"
-      "f ~~ @fn((n ~@sint(32)), @sint(32), {"
-      "x ~B; x.a = n; return x.a; });"
-      "(f(0 - 3) + f(7)) == 4;"), nullptr);
+  let result = interpret_source(arena, fp("B ~~ @bitstruct { a ~@sint(32):5; };"
+                                          "f ~~ @fn((n ~@sint(32)), @sint(32), {"
+                                          "x ~B; x.a = n; return x.a; });"
+                                          "(f(0 - 3) + f(7)) == 4;"),
+                                nullptr);
   test_assert(*(bool *)result.v.value);
 }
