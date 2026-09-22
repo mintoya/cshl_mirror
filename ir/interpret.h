@@ -29,6 +29,7 @@ typedef struct {
   superscope *ss;
   allocfn temp;
   allocfn scratch;
+  allocfn reads; // Materialized operands live until the next instruction.
   enum {
     intstate_normal,
     intstate_return,
@@ -43,21 +44,53 @@ static value_store *intstate_findslots_value(intstate is, u32 reg) {
     vs = &(*msList_last(*f))[i];
   return vs;
 }
-static typed_value intstate_value(intstate is, typed_value r) {
+typedef struct {
+  typed_value value;
+  dref storage;
+} intplace;
+
+static intplace intstate_place(intstate is, typed_value r) {
   let t = ss_type(is->ss, r.t);
-  if (t.ref_kind) {
+  dref storage = {.ptr = r.v.value};
+  if (t.ref_kind == ref_dref) storage = *(dref *)r.v.value;
+  else if (t.ref_kind) storage.ptr = *(void **)r.v.value;
+  if (t.ref_kind)
     r.t = ss_type_intern(is->ss, P$(t, ($.ref_kind = ref_none, $)));
-    if (t.ref_kind == ref_dref) {
-      let ref = *(dref *)r.v.value;
-      let bits = *acreate(is->temp, u8[(ref.width + 7) / 8]);
-      cshl_bits_load((double_offset){ref.ptr, ref.bit_offset}, ref.width, bits);
-      let value = BInt.from.bits(is->temp, bits, ref.width,
-          tu_is(r_sint, Type_stripTag(t, ss_typeenv(is->ss)).t));
-      r.v.value = *acreate(is->temp, u8[Type_sizeof(ss_type(is->ss, r.t), ss_typeenv(is->ss))]);
-      bigint_into_int(is->ss, is->temp, &r, value);
-    } else r.v.value = *(typeof(r.v.value) **)r.v.value;
+  r.v.value = storage.ptr;
+  return (intplace){r, storage};
+}
+
+static typed_value intstate_value(intstate is, typed_value r) {
+  let p = intstate_place(is, r);
+  r = p.value;
+  if (p.storage.width) {
+    let ref = p.storage;
+    let t = ss_type(is->ss, r.t);
+    usize size = Type_sizeof(t, ss_typeenv(is->ss));
+    u8 *bits = *acreate(is->reads, u8[size]);
+    memset(bits, 0, size);
+    cshl_bits_load((double_offset){ref.ptr, ref.bit_offset}, ref.width, bits);
+    if (tu_is(r_sint, Type_stripTag(t, ss_typeenv(is->ss)).t) &&
+        (bits[(ref.width - 1) / 8] & (1u << ((ref.width - 1) % 8)))) {
+      if (ref.width % 8) bits[ref.width / 8] |= (u8)(0xffu << (ref.width % 8));
+      usize bytes = (ref.width + 7) / 8;
+      memset(bits + bytes, 0xff, size - bytes);
+    }
+    r.v.value = bits;
   }
   return r;
+}
+static typed_value intstate_reg(intstate is, u32 reg) {
+  return (typed_value){
+      .t = scope_find(is->ss, msList_last(is->cs).sp, reg)->t,
+      .v = *intstate_findslots_value(is, reg),
+  };
+}
+static void intstate_store(intstate is, intplace d, typed_value value) {
+  if (d.storage.width)
+    cshl_bits_store((double_offset){d.storage.ptr, d.storage.bit_offset}, d.storage.width, value.v.value);
+  else if_decl (let size, Type_sizeof(ss_type(is->ss, d.value.t), ss_typeenv(is->ss)))
+    memcpy(d.storage.ptr, value.v.value, size);
 }
 typed_value intstate_findreg(intstate is, u32 reg) {
   let slot = intstate_findslots_value(is, reg);
@@ -72,6 +105,7 @@ intstate intstate_new(superscope *ss) {
           .cs = msList_init(ss->alloc, intframe),
           .ss = ss,
           .temp = arena_new_ext(ss->alloc, 1024),
+          .reads = arena_new_ext(ss->alloc, 1024),
       })
   );
 }
@@ -190,7 +224,11 @@ void interpret_ret errs(intstate is, ir_ret r) {
     let slot = intstate_findslots_value(is, r);
     v = (typed_value){.t = scope_find(is->ss, s, r)->t, .v = *slot};
   }
-  (*msList_last(is->cs).vals)[msList_len(s->values) + argc] = v.v;
+  let dst = &(*msList_last(is->cs).vals)[msList_len(s->values) + argc];
+  let t = ss_type(is->ss, v.t);
+  if (Type_is_comptime(t)) *dst = v.v;
+  else if_decl (let size, Type_sizeof(t, ss_typeenv(is->ss)))
+    memcpy(dst->value, v.v.value, size);
   msList_last(is->cs).rt = v.t;
   is->rsig = intstate_return;
 }
@@ -211,17 +249,8 @@ static usize intstate_loop_seek(intframe *f, usize at, isize inc, isize depth) {
 }
 void interpret_set errs(intstate is, ir_set c) {
   let l = intstate_findreg(is, c.l);
-  let dt = scope_reg_type(is->ss, (scope *)msList_last(is->cs).sp, c.d);
-  if (dt.ref_kind == ref_dref) {
-    let ref = *(dref *)intstate_findslots_value(is, c.d)->value;
-    let scratch = intstate_scratch(is);
-    usize bytes = (ref.width + 7) / 8;
-    let bits = *acreate(scratch, u8[bytes]);
-    bigint_into_slot(bits, bytes, int_as_bigint(scratch, l, ss_typeenv(is->ss)));
-    cshl_bits_store((double_offset){ref.ptr, ref.bit_offset}, ref.width, bits);
-    return;
-  }
-  let d = intstate_findreg(is, c.d);
+  let place = intstate_place(is, intstate_reg(is, c.d));
+  let d = place.value;
 
   let slot = intstate_findslots_value(is, c.d);
   tu_match_void(
@@ -233,9 +262,7 @@ void interpret_set errs(intstate is, ir_set c) {
       (c_fun, _, slot->c_fun = l.v.c_fun),
       (c_type, _, slot->c_type = l.v.c_type),
       (default, {
-        Type dt = ss_type(is->ss, d.t);
-        if_decl (let sz, Type_sizeof(dt, ss_typeenv(is->ss)))
-          memcpy(d.v.value, l.v.value, sz);
+        intstate_store(is, place, l);
       })
   );
 }
@@ -257,14 +284,11 @@ void interpret_putptr errs(intstate is, ir_putptr c) {
   *(void **)d->value = *(void **)l.v.value;
 }
 void interpret_getref errs(intstate is, ir_getref c) {
-  if (scope_reg_type(is->ss, (scope *)msList_last(is->cs).sp, c.l).ref_kind == ref_dref) {
-    *(dref *)intstate_findslots_value(is, c.d)->value = *(dref *)intstate_findslots_value(is, c.l)->value;
-    return;
-  }
-  let l = intstate_findreg(is, c.l);
+  let l = intstate_reg(is, c.l);
+  let t = ss_type(is->ss, l.t);
   let d = intstate_findslots_value(is, c.d);
-
-  *(void **)d->value = l.v.value;
+  if (t.ref_kind) memcpy(d->value, l.v.value, Type_sizeof(t, ss_typeenv(is->ss)));
+  else *(void **)d->value = l.v.value;
 }
 void interpret_field errs(intstate is, ir_field c) {
   let l = intstate_findreg(is, c.l);
@@ -511,6 +535,7 @@ static void intstate_run errs(intstate is) {
         memcpy(dst->value, result.v.value, sz);
       continue;
     }
+    arena_clear(is->reads);
     usize at = f->pc++;
     ir inst = f->sp->instructions[at];
     try_err(intstate_inst, (is, at, inst));
@@ -541,6 +566,7 @@ typed_value interpret errs(superscope *ss, scope *s) {
   mxmap_deinit(is->vmap);
   msList_deInit(ss->alloc, is->cs);
   arena_cleanup(is->temp);
+  arena_cleanup(is->reads);
   if (is->scratch)
     arena_cleanup(is->scratch);
 

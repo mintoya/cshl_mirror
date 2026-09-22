@@ -775,3 +775,41 @@ test_fn(ordinary_ast_return_stays_data) {
   test_assert(tu_is(c_ast, tv_type(r).t));
   test_assert(r.v.c_ast);
 }
+
+test_fn(interpret_packed_reads_bounded_memory) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let ctx = parse_source(nullptr, arena, fp(
+      "B ~~ @bitstruct { a ~@sint(32):5; b ~@sint(32):7; };"
+      "x ~B; x.a = 7; x.b = 9; i ~@sint(32) = 0;"
+      "@loop({ @if(i >= 10000, { break(); });"
+      "x.a = x.b - 2; i = i + 1; });"
+      "(x.a == 7) and (x.b == 9);"), nullptr);
+  let ss = ss_init(arena, ctx);
+  lower(nullptr, ss, ss->outermost, ctx.idx);
+  scope_finish(ss, ss->outermost);
+  let is = intstate_new(ss);
+  intstate_pushs(is, ss->outermost, (slice(typed_value)){}, 0);
+  usize initial = arena_totalMem(is->temp);
+  intstate_run(nullptr, is);
+  test_inteq(arena_totalMem(is->temp), initial);
+  test_assert(arena_totalMem(is->reads) <= 4096);
+  let result = intstate_value(is, intstate_pop(is));
+  test_assert(*(bool *)result.v.value);
+  mxmap_deinit(is->vmap);
+  msList_deInit(ss->alloc, is->cs);
+  arena_cleanup(is->reads);
+  arena_cleanup(is->temp);
+  if (is->scratch) arena_cleanup(is->scratch);
+}
+
+test_fn(interpret_packed_return_survives_next_instruction) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let result = interpret_source(arena, fp(
+      "B ~~ @bitstruct { a ~@sint(32):5; };"
+      "f ~~ @fn((n ~@sint(32)), @sint(32), {"
+      "x ~B; x.a = n; return x.a; });"
+      "(f(0 - 3) + f(7)) == 4;"), nullptr);
+  test_assert(*(bool *)result.v.value);
+}

@@ -14,51 +14,51 @@
 #include <wheels/sList.h>
 cmpres fptr_cmp_hash(void *, const void *a, const void *b) { return fptr_cmp(*(fptr *)a, *(fptr *)b); }
 typedef enum : u8 {
-  builtin_fn,       // @fn((decl|type...) ,decl|type,body) c_func of this type,
+  builtin_fn, // @fn((decl|type...) ,decl|type,body) c_func of this type,
   builtin_closure,
-  builtin_if,       // @if(cnd , then ,)
-  builtin_cif,      // @cif same as if, comptime, produces only one branch
-  builtin_loop,     // @loop(body)
-  builtin_return,   // return x return
-  builtin_break,    // @break()
-  builtin_continue, // @continue()
-                    //
-  builtin__id,      // @id(str) an id which corresponds to this string, **evaluates it**
-                    //
-  builtin_ast,      // @ast() type of ast
+  builtin_if,        // @if(cnd , then ,)
+  builtin_cif,       // @cif same as if, comptime, produces only one branch
+  builtin_loop,      // @loop(body)
+  builtin_return,    // return x return
+  builtin_break,     // @break()
+  builtin_continue,  // @continue()
+                     //
+  builtin__id,       // @id(str) an id which corresponds to this string, **evaluates it**
+                     //
+  builtin_ast,       // @ast() type of ast
   builtin_inlineast, // @inlineast() AST result expanded at the call site
-  builtin_any,      // @any() type of any
-  builtin_void,     // @void() the void type
-  builtin_bool,     // @bool() the bool type
-  builtin_int,      // @int() compile time bigint
-  builtin_type,     // @type() the type of a type
-  builtin_const,    // @const(T) constant
-  builtin_volatile, // @volatile(T) volatile
-  builtin_comptime, // @comptime(T) set the compile-time decoration
-  builtin_sint,     // @sint(N) integer with N bits
-  builtin_uint,     // @uint(N) unsigned integer with N bits
-  builtin_typeof,   // @typeof(V) type of argument
-  builtin_arrof,    // @arrof(N,t) array of N t's
-  builtin_ptrof,    // @ptrof(t) pionter to t
-                    //
-  builtin_sizeof,   // @sizeof(T) comptime size of T in bytes
-  builtin_alignof,  // @alignof(T) comptime alignment of T
-  builtin_offsetof, // @offsetof(T,member) comptime offset of member in T
-  builtin_rawget,   // @rawget(v,name) member v.name itself, ignoring a overload
-                    //
-  builtin_struct,   // @struct{} struct of declarations
-  builtin_union,    // @union{} union of declarations, all members share offset 0
+  builtin_any,       // @any() type of any
+  builtin_void,      // @void() the void type
+  builtin_bool,      // @bool() the bool type
+  builtin_int,       // @int() compile time bigint
+  builtin_type,      // @type() the type of a type
+  builtin_const,     // @const(T) constant
+  builtin_volatile,  // @volatile(T) volatile
+  builtin_comptime,  // @comptime(T) set the compile-time decoration
+  builtin_sint,      // @sint(N) integer with N bits
+  builtin_uint,      // @uint(N) unsigned integer with N bits
+  builtin_typeof,    // @typeof(V) type of argument
+  builtin_arrof,     // @arrof(N,t) array of N t's
+  builtin_ptrof,     // @ptrof(t) pionter to t
+                     //
+  builtin_sizeof,    // @sizeof(T) comptime size of T in bytes
+  builtin_alignof,   // @alignof(T) comptime alignment of T
+  builtin_offsetof,  // @offsetof(T,member) comptime offset of member in T
+  builtin_rawget,    // @rawget(v,name) member v.name itself, ignoring a overload
+                     //
+  builtin_struct,    // @struct{} struct of declarations
+  builtin_union,     // @union{} union of declarations, all members share offset 0
   builtin_bitstruct, // @bitstruct{} bitfield of declarations, each one with a bit width
-  builtin__this,    // @this() inside of struct, this is the result type
-                    //
-  builtin_qot,      // @qot(arg) ast of arg
-  builtin_uqot,     // @unqot(arg) evaluate arg
-  builtin_ast_op,   // @ast_op(sym,a,b) build the ast of "a sym b", sym a comptime string
-  builtin_apply,    // @apply(f,args...) call f with evaluated args (ast params get values)
-  builtin_ref,      // @ref(value) produces a referance to value
-  builtin_reft,     // @reft(value) produces the type of a referance to a value
-  builtin_at,       // @at(arg) dereference arg
-  builtin_where,    // @where(arg) referance to arg
+  builtin__this,     // @this() inside of struct, this is the result type
+                     //
+  builtin_qot,       // @qot(arg) ast of arg
+  builtin_uqot,      // @unqot(arg) evaluate arg
+  builtin_ast_op,    // @ast_op(sym,a,b) build the ast of "a sym b", sym a comptime string
+  builtin_apply,     // @apply(f,args...) call f with evaluated args (ast params get values)
+  builtin_ref,       // @ref(value) produces a referance to value
+  builtin_reft,      // @reft(value) produces the type of a referance to a value
+  builtin_at,        // @at(arg) dereference arg
+  builtin_where,     // @where(arg) referance to arg
 } builtin_id;
 //{type
 // one based index into a typelist, 0 means null. same as astidx but for types
@@ -118,12 +118,15 @@ static inline TypeTree TypeTree_sint(u16 width) {
   return t;
 }
 
-typedef enum { ref_none, ref_ref, ref_dref } reference_kind;
-
+typedef enum : u8 {
+  ref_none = 0,
+  ref_ref = 1,
+  ref_dref = 2
+} reference_kind;
 // A packed member needs its bit extent as well as its storage address.
 typedef struct {
   void *ptr;
-  u8 bit_offset; // within the byte at ptr (0–7)
+  u8 bit_offset; // : 4  // puting that there should change nothing
   u32 width;
 } dref;
 
@@ -410,7 +413,6 @@ cmpres TypeTree_cmp(typeenv e, TypeTree a, TypeTree b) {
         }
         return 0;
       }),
-
 
       (r_bitfield, ai, {
         let bi = tu_catch(r_bitfield, b);
