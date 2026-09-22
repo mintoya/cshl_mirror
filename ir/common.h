@@ -174,7 +174,6 @@ typedef enum enum_op {
   enop_neq,
   enop_pipe,
   enop_set,
-  enop_iexpand,
   enop_as,
 } enum_op;
 typedef enum enum_boolean_op {
@@ -214,7 +213,6 @@ typePrinter(enum_op) {
       (enop_neq, PUTS("neq")),
       (enop_pipe, PUTS("pipe")),
       (enop_set, PUTS("set")),
-      (enop_iexpand, PUTS("iexpand")),
       (enop_as, PUTS("as")),
       (default, PUTS("unknown!!!"))
   );
@@ -246,7 +244,6 @@ static inline enum_op op_as_enum(u32 opn) {
   if (opn == opNumbers.neq) return enop_neq;
   if (opn == opNumbers.pipe) return enop_pipe;
   if (opn == opNumbers.set) return enop_set;
-  if (opn == opNumbers.iexpand) return enop_iexpand;
   if (opn == opNumbers.as) return enop_as;
   assertMessage(false, "Unknown operator %x", opn);
 }
@@ -276,7 +273,6 @@ static inline u32 enum_as_op(enum_op en) {
       (enop_neq, opNumbers.neq),
       (enop_pipe, opNumbers.pipe),
       (enop_set, opNumbers.set),
-      (enop_iexpand, opNumbers.iexpand),
       (enop_as, opNumbers.as),
       (default, assertMessage(false, "Unknown operator %u", en); (u32)0)
   );
@@ -372,7 +368,7 @@ static inline astidx_full ss_ast_full(superscope *ss, astidx idx) {
 static inline fptr id_from_ast errs(superscope *ss, scope *s, astidx name) {
   iflet_tu (let id, astId, ast_at(ss, name)) return ast_text(ss, id);
   let tv = try_err(temporary_interpret, (ss, s, name), nullFptr);
-  if (!tu_is(c_ast, ss_type(ss, tv.t).t) || !tv.v.c_ast) return_err("ID_REQUIRES_ASTID", nullFptr);
+  if (!TypeTree_is_ast(ss_type(ss, tv.t).t) || !tv.v.c_ast) return_err("ID_REQUIRES_ASTID", nullFptr);
   let inner = ast_at(ss, tv.v.c_ast);
   if (!tu_is(astId, inner)) return_err("ID_REQUIRES_ASTID", nullFptr);
   return ast_text(ss, tu_catch(astId, inner));
@@ -397,6 +393,15 @@ typePrinter(typed_value_full) {
         }
       }),
       (c_ast, _, {
+        if (in.v.v.c_ast) {
+          PUTS("(ast ");
+          USETYPEPRINTER(u32, in.v.v.c_ast);
+          PUTS(")");
+        } else {
+          PUTS("??");
+        }
+      }),
+      (c_inlineast, _, {
         if (in.v.v.c_ast) {
           PUTS("(ast ");
           USETYPEPRINTER(u32, in.v.v.c_ast);

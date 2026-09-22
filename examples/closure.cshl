@@ -6,7 +6,7 @@ s32 ~~ @sint(32);
 capture ~~ @fn (mode ~@int(), inst ~ast, c ~ast), ast, {
   @cif((mode == 0), (return @qot (@uqot(c.name) ~ @uqot(c.type))));
   @cif((mode == 1), (return @qot (@uqot(@ast_op(".", inst, c.name)) = @uqot(c.value))));
-  return @qot (@uqot(c.name) ~ @uqot(c.type) = @uqot(@ast_op(".", @qot(self), c.name)));
+  return @qot( @uqot(c.name) ~ @uqot(c.type) = @uqot(@ast_op(".", @qot(self), c.name)));
 };
 
 captures ~~ @fn (caps ~ast, inst ~ast, mode ~@int(), i ~@int()), ast, {

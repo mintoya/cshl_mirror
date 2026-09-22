@@ -8,11 +8,13 @@ cc nob.c -o nob
 # CSHL
 ---
 meant to be a c-like language with
-- first class types
-- first class functions
-- first class ast
-- operator overloading
-- raii?
+- [x] first class types
+- [x] first class functions
+- [x] first class ast
+- [x] operator overloading
+- [ ] raii-ish stuff?
+
+
 ## grammer
 - empty  : `;`
 - id     : identifier, c rules but can contain `!?$#`
@@ -31,3 +33,21 @@ meant to be a c-like language with
 - pblock :  `( ... )`, optional terminator, comma-separated
 - bblock :  `{ ... }`, semicolon separated, non-optional terminator
 - ablock :  `[ ... ]`, same as pblock
+
+
+## Macros
+
+Functions returning `@inlineast()` evaluate at compile time and expand their
+returned AST in the caller's scope. Call them with ordinary function syntax:
+
+```cshl
+twice ~~ @fn((a ~@ast()), @inlineast(), {
+  return @qot(@uqot(a) + @uqot(a));
+});
+x ~@sint(32) = 6;
+twice(x + 1); // expands to (x + 1) + (x + 1)
+```
+also sadly, if a macro wantss to call another macro with an ast as a variable, it has t odo this ubly stuff
+```cshl
+@uqot @qot fn_that_takes_ast(@uqot(ast_variable),...);
+```

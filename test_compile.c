@@ -518,3 +518,149 @@ test_fn(interpret_recursion_heap_allocator) {
   test_assert(tu_is(r_bool, ss_type(ss, result.t).t));
   test_assert(*(bool *)result.v.value);
 }
+
+test_fn(simplify_void_instructions) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let ss = ss_init(arena, (astidx_full){});
+  let s = ss->outermost;
+  let v = scope_add_value(ss, s, TV_void(ss));
+  let ref = scope_add_value(ss, s, TV_of(ss, P$(ss_type(ss, ss->t_void), ($.isref = true, $))));
+  let ptr = scope_add_value(ss, s, TV_of(ss, P$(ss_type(ss, ss->t_void), ($.ptr_level = 1, $))));
+  let source = scope_add_value(ss, s, TV_bigint(ss, BInt.from.i64(arena, 5)));
+  msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_set, {.l = v, .d = v}));
+  msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_getref, {.l = v, .d = ref}));
+  msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_putptr, {.l = ptr, .d = ref}));
+  msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_farg, {.l = 0, .d = v}));
+  msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_getptr, {.l = source, .d = ptr}));
+  msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_call, {.l = source, .d = ref, .r = v, .e = v + 1}));
+  msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_ret, ref));
+  usize values = msList_len(s->values);
+  scope_finish(ss, s);
+  test_inteq(msList_len(s->instructions), 3);
+  test_inteq(msList_len(s->values), values);
+  test_inteq(scope_find(ss, s, ref)->t, ss->t_void);
+  test_inteq(ss_type(ss, scope_find(ss, s, ptr)->t).ptr_level, 1);
+  test_assert(tu_is(ir_getptr, s->instructions[0]));
+  test_inteq(s->instructions[1].ir_call.d, s->start + 1);
+  test_inteq(s->instructions[1].ir_call.r, v);
+  test_inteq(s->instructions[1].ir_call.e, v + 1);
+  test_inteq(s->instructions[2].ir_ret, s->start + 1);
+  scope_finish(ss, s);
+  test_inteq(msList_len(s->instructions), 3);
+}
+
+test_fn(simplify_void_calls_keep_effects_and_returns) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(
+      arena,
+      fp(
+          "counter ~@sint(32) = 0;"
+          "bump ~~ @fn((unused ~@void(), amount ~@sint(32)), @void(), {"
+          "  counter = counter + amount;"
+          "  return();"
+          "  counter = 99;"
+          "});"
+          "bump({;}, 3);"
+          "bump({;}, 4);"
+          "counter == 7;"
+      ),
+      nullptr
+  );
+  test_assert(tu_is(r_bool, tv_type(r).t));
+  test_assert(*(bool *)r.v.value);
+}
+
+test_fn(simplify_preserves_void_scope_result) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(arena, fp("5; {;};"), nullptr);
+  test_assert(tu_is(r_void, tv_type(r).t));
+}
+
+test_fn(comptime_type_decorations) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(
+      arena,
+      fp("@comptime(@const(@sint(32)));"),
+      nullptr
+  );
+  test_assert(tu_is(c_type, tv_type(r).t));
+  let t = type_at(r.env, r.v.c_type);
+  test_assert(t.iscomptime);
+  test_assert(t.isconst);
+  test_assert(tu_is(r_sint, t.t));
+  test_inteq(t.t.r_sint.bits, 32);
+}
+
+test_fn(quote_operator_is_removed) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("macro' (1);"));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "PARSE_ERROR");
+}
+
+test_fn(inlineast_expands_at_call_site) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(arena, fp(
+      "twice ~~ @fn((a ~@ast()), @inlineast(), {"
+      "  return @qot(@uqot(a) + @uqot(a));"
+      "});"
+      "x ~@sint(32) = 6;"
+      "twice(x + 1) == 14;"
+  ), nullptr);
+  test_assert(tu_is(r_bool, tv_type(r).t));
+  test_assert(*(bool *)r.v.value);
+}
+
+test_fn(inlineast_cached_calls_use_caller_scope) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(arena, fp(
+      "read ~~ @fn((), @inlineast(), { return @qot(local); });"
+      "first ~~ @fn((), @sint(32), { local ~@sint(32) = 3; return read(); });"
+      "second ~~ @fn((), @sint(32), { local ~@sint(32) = 7; return read(); });"
+      "first() + second() == 10;"
+  ), nullptr);
+  test_assert(tu_is(r_bool, tv_type(r).t));
+  test_assert(*(bool *)r.v.value);
+}
+
+test_fn(inlineast_can_return_from_caller) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(arena, fp(
+      "exit ~~ @fn((a ~@ast()), @inlineast(), { return @qot(return @uqot(a)); });"
+      "f ~~ @fn((x ~@sint(32)), @sint(32), { exit(x + 1); return 99; });"
+      "f(8) == 9;"
+  ), nullptr);
+  test_assert(tu_is(r_bool, tv_type(r).t));
+  test_assert(*(bool *)r.v.value);
+}
+
+test_fn(inlineast_apply_and_nested_expansion) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(arena, fp(
+      "identity ~~ @fn((a ~@ast()), @inlineast(), { return a; });"
+      "wrap ~~ @fn((a ~@ast()), @inlineast(), { return @qot(identity(@uqot(a))); });"
+      "@apply(wrap, @qot(2 + 3)) == 5;"
+  ), nullptr);
+  test_assert(tu_is(r_bool, tv_type(r).t));
+  test_assert(*(bool *)r.v.value);
+}
+
+test_fn(ordinary_ast_return_stays_data) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(arena, fp(
+      "quote ~~ @fn((a ~@ast()), @ast(), { return a; });"
+      "quote(undefined_name);"
+  ), nullptr);
+  test_assert(tu_is(c_ast, tv_type(r).t));
+  test_assert(r.v.c_ast);
+}

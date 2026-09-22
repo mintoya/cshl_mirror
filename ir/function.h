@@ -37,6 +37,7 @@ static cmpres typed_value_cmp_typed(Type ta, value_store av, Type tb, value_stor
       (c_type, _, icmp(av.c_type, bv.c_type)),
       // asts have no size, so memcmp below would call every ast equal
       (c_ast, _, icmp(av.c_ast, bv.c_ast)),
+      (c_inlineast, _, icmp(av.c_ast, bv.c_ast)),
       (default, ({
          assertMessage(!Type_is_comptime(ta));
          cmp_memcmp(av.value, bv.value, Type_sizeof(ta, e));
@@ -116,6 +117,15 @@ static u32 function_call_specialize errs(superscope *ss, scope *s, u32 fnreg, u3
   return scope_add_value(ss, s, *P$(scope_find(ss, s, fnreg), ($->v.c_fun.spec = spec_number, $)));
 }
 
+static u32 lower_comptime_call_result errs(superscope *ss, scope *s, scope *spec) {
+  let result = try_err(interpret, (ss, spec), 0);
+  if (tu_is(c_inlineast, ss_type(ss, result.t).t)) {
+    if (!result.v.c_ast) return_err("INLINEAST_UNKNOWN", 0);
+    return try_err(lower, (ss, s, result.v.c_ast), 0);
+  }
+  return scope_add_value(ss, s, result);
+}
+
 static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg, u32 fn, slice(typed_value) key, u32 rpos, u32 nargs) {
   // `ss->functions` grows while bodies are lowered, and a push moves it: an entry may only be
   // read through a pointer taken after the last call that could have registered a function, so
@@ -126,8 +136,7 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
   if_decl (let inst, moxmap_get(function_item->mp, key)) {
     let instance = &function_item->instances[*inst];
     if (Type_is_comptime(instance->ret)) {
-      let result = try_err(interpret, (ss, instance->spec), 0);
-      return scope_add_value(ss, s, result);
+      return try_err(lower_comptime_call_result, (ss, s, instance->spec), 0);
     }
     u32 callee = try_err(function_call_specialize, (ss, s, fnreg, *inst), 0);
     let result = scope_add_value(ss, s, TV_of(ss, instance->ret));
@@ -170,12 +179,14 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
 
   let body = function_item->body;
   try_err(lower, (ss, spec, body), 0);
-  // scope_finish(ss, spec);
+  ret = ss->functions[fn - 1].instances[spec_number].ret;
+  let fallback = scope_add_value(ss, spec, tu_is(c_any, ret.t) ? TV_void(ss) : TV_of(ss, ret));
+  try_err(scope_add_inst, (ss, spec, (ir)tu_of(ir_ret, fallback)), 0);
+  scope_finish(ss, spec);
   ret = ss->functions[fn - 1].instances[spec_number].ret;
 
   if (Type_is_comptime(ret)) {
-    let result = try_err(interpret, (ss, spec), 0);
-    return scope_add_value(ss, s, result);
+    return try_err(lower_comptime_call_result, (ss, s, spec), 0);
   }
   u32 callee = try_err(function_call_specialize, (ss, s, fnreg, spec_number), 0);
   let result = scope_add_value(ss, s, TV_of(ss, ret));
@@ -236,7 +247,7 @@ u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astidx args,
     let want = type_at(env, type_run_at(env, generic_signature.start, idx));
     // a comptime argument has to be a value here, not an instruction that would make one later,
     // since the specialization it is part of is picked by that value
-    regs.ptr[idx++] = tu_is(c_ast, want.t) ? scope_add_value(ss, s, TV_ast(ss, a))
+    regs.ptr[idx++] = TypeTree_is_ast(want.t) ? scope_add_value(ss, s, TV_ast(ss, a))
                       : Type_is_comptime(want)
                           ? scope_add_value(ss, s, try_err(temporary_interpret, (ss, s, a), 0))
                           : try_err(lower, (ss, s, a), 0);

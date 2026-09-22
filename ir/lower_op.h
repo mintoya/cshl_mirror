@@ -60,19 +60,6 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
         return result;
       }),
       (enop_colon, assertMessage(false, "unreachable")),
-      (enop_iexpand, ({
-         // a'b ...
-         // ->
-         // @uqot a @qot b ...
-         let argument = scope_find(ss, s, try_err(lower_builtin_qot, (ss, s, right), 0));
-         if (Type_cmp(ss_typeenv(ss), ss_type(ss, ss->t_ast), ss_type(ss, argument->t)))
-           return_err("EXPECTED_AST", 0);
-         let result = scope_find(ss, s, try_err(lower_call, (ss, s, left, argument->v.c_ast), 0));
-         if (Type_cmp(ss_typeenv(ss), ss_type(ss, ss->t_ast), ss_type(ss, result->t)))
-           return_err("EXPECTED_AST", 0);
-         if (!result->v.c_ast) return_err("EXPECTED_AST", 0);
-         return try_err(lower, (ss, s, result->v.c_ast), 0);
-       })),
       (default),
   );
   // mask out so that copy constructor stuff can be applied later

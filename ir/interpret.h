@@ -1,6 +1,7 @@
 #pragma once
 #include "common.h"
 #include "scope.h"
+#include "simplify.h"
 #include "wheels/sList.h"
 extern ptrstype(outputFunction) sexplike;
 sliceDef(typed_value);
@@ -212,6 +213,7 @@ void interpret_set errs(intstate is, ir_set c) {
       (builtin, _, return_err("SET_BUILTIN")),
       (c_int, _, slot->c_int = BInt.copy(is->ss->alloc, l.v.c_int)),
       (c_ast, _, slot->c_ast = l.v.c_ast),
+      (c_inlineast, _, slot->c_ast = l.v.c_ast),
       (c_fun, _, slot->c_fun = l.v.c_fun),
       (c_type, _, slot->c_type = l.v.c_type),
       (default, {
@@ -428,6 +430,7 @@ void interpret_farg errs(intstate is, ir_farg c) {
       (c_int, _, dv->c_int = BInt.copy(is->ss->alloc, l->c_int)),
       (builtin, _, return_err("SET_BUILTIN")),
       (c_ast, _, dv->c_ast = l->c_ast),
+      (c_inlineast, _, dv->c_ast = l->c_ast),
       (c_fun, _, dv->c_fun = l->c_fun),
       (c_type, _, dv->c_type = l->c_type),
       (default, {
@@ -525,6 +528,7 @@ static void intstate_run errs(intstate is) {
 }
 
 typed_value interpret errs(superscope *ss, scope *s) {
+  scope_finish(ss, s);
   let is = intstate_new(ss);
 
   intstate_pushs(is, s, (slice(typed_value)){}, 0);
@@ -542,7 +546,7 @@ typed_value interpret errs(superscope *ss, scope *s) {
   if (tu_is(c_int, t.t)) {
     if (r.v.c_int)
       r.v.c_int = BInt.copy(ss->alloc, r.v.c_int);
-  } else if (!tu_is(c_ast, t.t) && !tu_is(c_fun, t.t) && !tu_is(c_type, t.t) && !tu_is(builtin, t.t)) {
+  } else if (!TypeTree_is_ast(t.t) && !tu_is(c_fun, t.t) && !tu_is(c_type, t.t) && !tu_is(builtin, t.t)) {
     if_decl (let sz, Type_sizeof(t, ss_typeenv(ss))) {
       let mem = *acreate(ss->alloc, u8[sz]);
       memcpy(mem, r.v.value, sz);

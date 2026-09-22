@@ -2,7 +2,7 @@ type ~~ @type();
 ast ~~ @ast();
 any ~~ @any();
 i32 ~type~ @sint(32);
-fn  ~~ @fn (a ~ast),ast,{
+fn  ~~ @fn (a ~ast),@inlineast(),{
   return 
     @qot @fn(
       @uqot(a."()".opleft),
@@ -14,11 +14,11 @@ Point ~type~ @struct{
   Self ~type~ @this();
   x ~i32;
   y ~i32;
-  @id(".") ~~ fn' (this~@refT(Self) ,l~ast)@refT(i32){
+  @id(".") ~~ fn (this~@refT(Self) ,l~ast)@refT(i32){
     @cif((l == "x"),(return @ref(@rawget(this, "y"))));
     @cif((l == "y"),(return @ref(@rawget(this, "x"))));
   };
-  @id("+") ~~ fn' (
+  @id("+") ~~ fn (
     this~Self,
     other~Self,
   )Self{

@@ -26,6 +26,7 @@ typedef enum : u8 {
   builtin__id,      // @id(str) an id which corresponds to this string, **evaluates it**
                     //
   builtin_ast,      // @ast() type of ast
+  builtin_inlineast, // @inlineast() AST result expanded at the call site
   builtin_any,      // @any() type of any
   builtin_void,     // @void() the void type
   builtin_bool,     // @bool() the bool type
@@ -33,6 +34,7 @@ typedef enum : u8 {
   builtin_type,     // @type() the type of a type
   builtin_const,    // @const(T) constant
   builtin_volatile, // @volatile(T) volatile
+  builtin_comptime, // @comptime(T) set the compile-time decoration
   builtin_sint,     // @sint(N) integer with N bits
   builtin_uint,     // @uint(N) unsigned integer with N bits
   builtin_typeof,   // @typeof(V) type of argument
@@ -94,6 +96,7 @@ tu_def( // type
     (c_int /*        */, struct {}),
     (c_type /*       */, struct {}),
     (c_ast /*        */, struct {}),
+    (c_inlineast /*  */, struct {}),
     // something else
     // a run of Type slots, the return type last, terminated by a null
     (c_fun /*        */, struct { typeidx start; }),
@@ -216,6 +219,9 @@ static usize TypeTree_alignof(TypeTree t, typeenv e);
 static usize TypeTree_sizeof(TypeTree t, typeenv e);
 static inline usize Type_alignof(Type t, typeenv e);
 static inline usize Type_sizeof(Type t, typeenv e);
+static inline bool TypeTree_is_ast(TypeTree t) {
+  return tu_is(c_ast, t) || tu_is(c_inlineast, t);
+}
 static inline bool Type_is_comptime(Type t) {
   return t.iscomptime ||
          tu_is(builtin, t.t) ||
@@ -223,7 +229,7 @@ static inline bool Type_is_comptime(Type t) {
          tu_is(c_int, t.t) ||
          tu_is(c_any, t.t) ||
          tu_is(c_type, t.t) ||
-         tu_is(c_ast, t.t);
+         tu_is(c_ast, t.t) || tu_is(c_inlineast, t.t);
 }
 static usize TypeTree_alignof(TypeTree t, typeenv e) {
   return tu_match_exp(
@@ -238,6 +244,7 @@ static usize TypeTree_alignof(TypeTree t, typeenv e) {
       (c_any, _, (usize)1),
       (c_type, _, (usize)1),
       (c_ast, _, (usize)1),
+      (c_inlineast, _, (usize)1),
       // own reason
       (r_void, _, (usize)1),
 
@@ -271,6 +278,7 @@ static usize TypeTree_sizeof(TypeTree t, typeenv e) {
       (builtin, _, (usize)0),
       (c_type, _, (usize)0),
       (c_ast, _, (usize)0),
+      (c_inlineast, _, (usize)0),
       (c_int, _, (usize)0),
       (c_any, _, (usize)0),
       (c_fun, _, (usize)0),
@@ -357,6 +365,7 @@ cmpres TypeTree_cmp(typeenv e, TypeTree a, TypeTree b) {
       (c_int, _, return 0),
       (c_any, _, return 0),
       (c_ast, _, return 0),
+      (c_inlineast, _, return 0),
       (c_type, _, return 0),
 
       (r_arr, ai, {
@@ -437,6 +446,7 @@ typePrinter(builtin_id) {
       (builtin_int, /*     */ PUTS("int")),
       (builtin_cif, /*     */ PUTS("cif")),
       (builtin_ast, /*     */ PUTS("ast")),
+      (builtin_inlineast, /**/ PUTS("inlineast")),
       (builtin_uqot, /*    */ PUTS("uqot")),
       (builtin_ast_op, /*  */ PUTS("ast_op")),
       (builtin_apply, /*   */ PUTS("apply")),
@@ -452,6 +462,7 @@ typePrinter(builtin_id) {
       (builtin_ptrof, /*   */ PUTS("ptrof")),
       (builtin_break, /*   */ PUTS("break")),
       (builtin_const, /*   */ PUTS("const")),
+      (builtin_comptime, /**/ PUTS("comptime")),
       (builtin_loop, /*    */ PUTS("loop")),
       (builtin_sizeof, /*  */ PUTS("sizeof")),
       (builtin_struct, /*  */ PUTS("struct")),
@@ -495,6 +506,7 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, typeen
       (c_int, /* */ _, PUTS("int")),
       (c_type, /**/ _, PUTS("type")),
       (c_ast, /* */ _, PUTS("ast")),
+      (c_inlineast, _, PUTS("inlineast")),
       (c_any, /* */ _, PUTS("any")),
       (r_void, /**/ _, PUTS("void")),
       (r_tag, t, PUTS("(id "), USENAMEDPRINTER("slice(c8)", type_name(e, t.name)), PUTS(")")),

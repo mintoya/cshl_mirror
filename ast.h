@@ -48,7 +48,6 @@ static struct {
       neq,
       pipe,
       colon,
-      iexpand,
       as,
       set;
 } opNumbers = {};
@@ -80,7 +79,6 @@ static struct {
   opNumbers.neq = /*    */ ((opS){"!="}).n;
   opNumbers.pipe = /*   */ ((opS){"|>"}).n;
   opNumbers.set = /*    */ ((opS){"="}).n;
-  opNumbers.iexpand = /**/ ((opS){"'"}).n;
   opNumbers.as = /*      */ ((opS){"as"}).n;
 }
 

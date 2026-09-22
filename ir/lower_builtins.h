@@ -110,7 +110,7 @@ static astidx qot_walk_block errs(superscope *ss, scope *s, astidx node, u8 tag,
         let list = builtin_arg_list(ss, ast_child(ss, op.left_right + 1));
         if (list.len != 1) return_err("WRONG_ARG_COUNT", 0);
         let tv = try_err(temporary_interpret, (ss, s, list.start + 0), 0);
-        if (!tu_is(c_ast, ss_type(ss, tv.t).t)) return_err("SPLICE_TYPE_ERROR", 0);
+        if (!TypeTree_is_ast(ss_type(ss, tv.t).t)) return_err("SPLICE_TYPE_ERROR", 0);
         if (!tv.v.c_ast) return_err("SPLICE_UNKNOWN", 0);
         let ext = ast_list_span(ss, tv.v.c_ast);
         foreach (let j, range(0, ext.len))
@@ -152,7 +152,7 @@ static astidx qot_walk errs(superscope *ss, scope *s, astidx node) {
         let list = builtin_arg_list(ss, right);
         if (list.len != 1) return_err("WRONG_ARG_COUNT", 0);
         let tv = try_err(temporary_interpret, (ss, s, list.start + 0), 0);
-        if (!tu_is(c_ast, ss_type(ss, tv.t).t)) return_err("UNQUOTE_TYPE_ERROR", 0);
+        if (!TypeTree_is_ast(ss_type(ss, tv.t).t)) return_err("UNQUOTE_TYPE_ERROR", 0);
         if (!tv.v.c_ast) return_err("UNQUOTE_UNKNOWN", 0);
         return tv.v.c_ast;
       }
@@ -221,7 +221,7 @@ static u32 lower_builtin_qot errs(superscope *ss, scope *s, astidx args) {
 static u32 lower_builtin_uqot errs(superscope *ss, scope *s, astidx args) {
   builtin_args(ss, args, 1);
   let tv = try_err(temporary_interpret, (ss, s, list.start + 0), 0);
-  if (!tu_is(c_ast, ss_type(ss, tv.t).t)) return_err("UNQUOTE_TYPE_ERROR", 0);
+  if (!TypeTree_is_ast(ss_type(ss, tv.t).t)) return_err("UNQUOTE_TYPE_ERROR", 0);
   if (!tv.v.c_ast) return_err("UNQUOTE_UNKNOWN", 0);
   return try_err(lower, (ss, s, tv.v.c_ast), 0);
 }
@@ -232,7 +232,7 @@ static u32 lower_builtin_ast_op errs(superscope *ss, scope *s, astidx args) {
   let sym = try_err(temporary_interpret, (ss, s, list.start + 0), 0);
   let a = try_err(temporary_interpret, (ss, s, list.start + 1), 0);
   let b = try_err(temporary_interpret, (ss, s, list.start + 2), 0);
-  if (!tu_is(c_ast, ss_type(ss, a.t).t) || !tu_is(c_ast, ss_type(ss, b.t).t)) return_err("AST_OP_TYPE_ERROR", 0);
+  if (!TypeTree_is_ast(ss_type(ss, a.t).t) || !TypeTree_is_ast(ss_type(ss, b.t).t)) return_err("AST_OP_TYPE_ERROR", 0);
   if (!a.v.c_ast || !b.v.c_ast) return_err("AST_OP_UNKNOWN", 0);
   // a spelling is up to 4 bytes packed into a u32, so pack it the same way the parser does
   Type st = ss_type(ss, sym.t);
@@ -291,6 +291,12 @@ static u32 lower_builtin_decor errs(superscope *ss, scope *s, astidx args, bool 
   Type inner = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 0), 0)), 0);
   inner.isconst |= is_const;
   inner.isvolatile |= is_volatile;
+  return scope_add_value(ss, s, Type_asValue(ss, inner));
+}
+static u32 lower_builtin_comptime errs(superscope *ss, scope *s, astidx args) {
+  builtin_args(ss, args, 1);
+  Type inner = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start), 0)), 0);
+  inner.iscomptime = true;
   return scope_add_value(ss, s, Type_asValue(ss, inner));
 }
 static u32 lower_builtin_intty errs(superscope *ss, scope *s, astidx args, bool is_signed) {
@@ -496,12 +502,14 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
       (builtin_continue, /**/ try_err(lower_builtin_continue, (ss, s, args), 0)),
       (builtin__id, /*     */ try_err(lower_builtin_id, (ss, s, args), 0)),
       (builtin_ast, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_ast, {}))), 0)),
+      (builtin_inlineast, /**/ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_inlineast, {}))), 0)),
       (builtin_any, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_any, {}))), 0)),
       (builtin_bool, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, ss_bool_type(ss)), 0)),
       (builtin_void, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(r_void, {}))), 0)),
       (builtin_int, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_int, {}))), 0)),
       (builtin_type, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_type, {}))), 0)),
       (builtin_const, /*   */ try_err(lower_builtin_decor, (ss, s, args, true, false), 0)),
+      (builtin_comptime, /**/ try_err(lower_builtin_comptime, (ss, s, args), 0)),
       (builtin_volatile, /**/ try_err(lower_builtin_decor, (ss, s, args, false, true), 0)),
       (builtin_sint, /*    */ try_err(lower_builtin_intty, (ss, s, args, true), 0)),
       (builtin_uint, /*    */ try_err(lower_builtin_intty, (ss, s, args, false), 0)),

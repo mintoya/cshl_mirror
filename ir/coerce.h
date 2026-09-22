@@ -80,7 +80,6 @@ static inline typed_value Type_asValue(superscope *s, Type t) { return TV_type(s
 static inline bigint int_as_bigint(allocfn allocator, typed_value t, typeenv e) {
   let tt = type_at(e, t.t);
   assertMessage(!tt.ptr_level);
-  // a reference operand's data pointer is resolved by the caller, so the ref flag is immaterial here
   assertMessage(t.v.value, "tried to convert unknown value");
   return tu_match_exp(
       tt.t,
@@ -184,7 +183,7 @@ static bool Type_if_deref(typeenv e, Type t, Type *out) {
 
 static void lower_ast_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d) {
   let rv = scope_find(ss, s, r);
-  if (!tu_is(c_ast, ss_type(ss, rv->t).t) || !rv->v.c_ast) return_err("DOT_NEEDS_AST");
+  if (!TypeTree_is_ast(ss_type(ss, rv->t).t) || !rv->v.c_ast) return_err("DOT_NEEDS_AST");
   astidx self = scope_find(ss, s, l)->v.c_ast;
   astidx res = 0;
   let name_node = ast_at(ss, rv->v.c_ast);
@@ -241,7 +240,7 @@ static fptr value_to_fptr(superscope *ss, typed_value v) {
     let len = tu_catch(r_arr, type.t).count;
     assertMessage(v.v.value || !len, "null pointer with a length");
     return (fptr){len, (u8 *)v.v.value};
-  } else if (tu_is(c_ast, type.t) && v.v.c_ast)
+  } else if (TypeTree_is_ast(type.t) && v.v.c_ast)
     return tu_match_exp(
         ast_at(ss, v.v.c_ast),
         (astId, id, ast_text(ss, id)),
@@ -265,7 +264,7 @@ static void lower_dot_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d)
     *scope_find(ss, s, d) = *scope_find(ss, m.owner, m.idx);
     return;
   }
-  if (tu_is(c_ast, lt.t)) return (void)try_err(lower_ast_member, (ss, s, l, r, d));
+  if (TypeTree_is_ast(lt.t)) return (void)try_err(lower_ast_member, (ss, s, l, r, d));
 
   if (lt.ptr_level <= 1) {
     let m = ss_tag_named(ss, lt.t, name);
@@ -361,7 +360,7 @@ static void tcheck_rawop errs(superscope *env, scope *s, ir_rawop op) {
   Type lt = scope_reg_type(env, s, op.l);
   Type rt = scope_reg_type(env, s, op.r);
 
-  if ((op.o == opNumbers.eq || op.o == opNumbers.neq) && tu_is(c_ast, lt.t)) {
+  if ((op.o == opNumbers.eq || op.o == opNumbers.neq) && TypeTree_is_ast(lt.t)) {
     let self = scope_find(env, s, op.l)->v.c_ast;
     let other = scope_find(env, s, op.r);
     bool res = false;
@@ -378,7 +377,7 @@ static void tcheck_rawop errs(superscope *env, scope *s, ir_rawop op) {
         if (tu_is(astString, ast_at(env, self))) word = string_escape(env->alloc, word);
         res = fptr_eq(word, ((fptr){arr.count, (u8 *)other->v.value}));
       }
-    } else if (tu_is(c_ast, ss_type(env, other->t).t)) res = self == other->v.c_ast;
+    } else if (TypeTree_is_ast(ss_type(env, other->t).t)) res = self == other->v.c_ast;
     if (op.o == opNumbers.neq) res = !res;
     *scope_find(env, s, op.d) = TV_bool(env, res);
     return;
@@ -463,12 +462,16 @@ static void tcheck_cast errs(superscope *env, scope *s, ir_cast cv) {
   let tenv = ss_typeenv(env);
   Type lt = scope_reg_type(env, s, cv.l);
   Type dt = scope_reg_type(env, s, cv.d);
+  if (TypeTree_is_ast(lt.t) && TypeTree_is_ast(dt.t)) {
+    scope_find(env, s, cv.d)->v = scope_find(env, s, cv.l)->v;
+    return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_set, {.l = cv.l, .d = cv.d})));
+  }
   if (lt.isref && dt.isref && !Type_cmp_ndecor(lt, dt, tenv))
     return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_putptr, {.l = cv.l, .d = cv.d})));
   if (Type_ncmp_nptr(Type_stripTag(lt, tenv), Type_stripTag(dt, tenv), tenv))
     return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_set, {.l = cv.l, .d = cv.d})));
 
-  if (tu_is(c_ast, Type_stripTag(lt, tenv).t) && tu_is(r_bool, dt.t)) {
+  if (TypeTree_is_ast(Type_stripTag(lt, tenv).t) && tu_is(r_bool, dt.t)) {
     bool truthy = P$(scope_find(env, s, cv.l), $->v.c_ast && !tu_is(astEmpty, ast_at(env, $->v.c_ast)));
     let src = scope_add_value(env, s, TV_bool(env, truthy));
     return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_set, {.l = src, .d = cv.d})));
@@ -505,7 +508,7 @@ static void tcheck_call errs(superscope *env, scope *s, ir_call call) {
   Type lts = Type_stripTag(lt, tenv);
   lts.isref = false;
 
-  if (tu_is(c_ast, lts.t)) {
+  if (TypeTree_is_ast(lts.t)) {
     if (call.e < call.r + 1) return_err("AST_INDEX_ONE_ARG");
     let av = scope_find(env, s, call.l);
     if (!av->v.c_ast) return_err("AST_INDEX_UNKNOWN");
@@ -514,7 +517,7 @@ static void tcheck_call errs(superscope *env, scope *s, ir_call call) {
       println("given: {astidx_full}", ss_ast_full(env, av->v.c_ast)),
           return_err("AST_INDEX_NOT_LIST");
     let arv = scope_find(env, s, s->start + 1 + call.r);
-    if (!tu_is(c_ast, ss_type(env, arv->t).t) || !arv->v.c_ast || !tu_is(astABlock, ast_at(env, arv->v.c_ast)))
+    if (!TypeTree_is_ast(ss_type(env, arv->t).t) || !arv->v.c_ast || !tu_is(astABlock, ast_at(env, arv->v.c_ast)))
       return_err("AST_INDEX_NEEDS_ABLOCK");
     let items = ast_block_children(env, arv->v.c_ast);
     if (items.len != 1) return_err("AST_INDEX_ONE_ARG");
@@ -534,7 +537,7 @@ static void tcheck_call errs(superscope *env, scope *s, ir_call call) {
   if (inner.t) {
     if (call.e < call.r + 1) return_err("ARRAY_INDEX_ONE_ARG");
     let arv = scope_find(env, s, s->start + 1 + call.r);
-    if (!tu_is(c_ast, ss_type(env, arv->t).t) || !arv->v.c_ast) return_err("ARRAY_NEEDS_ABLOCK");
+    if (!TypeTree_is_ast(ss_type(env, arv->t).t) || !arv->v.c_ast) return_err("ARRAY_NEEDS_ABLOCK");
     let an = ast_at(env, arv->v.c_ast);
     (void)tu_catch(astABlock, an, return_err("ARRAY_NEEDS_ABLOCK"));
     let items = ast_block_children(env, arv->v.c_ast);
@@ -559,9 +562,9 @@ static void tcheck_call errs(superscope *env, scope *s, ir_call call) {
   vals.ptr[0] = call.l;
   foreach (let j, range(0, nargs)) {
     u32 arg = s->start + 1 + call.r + (u32)j;
-    if (!tu_is(c_ast, type_at(tenv, type_run_at(tenv, mf.start, j + 1)).t)) {
+    if (!TypeTree_is_ast(type_at(tenv, type_run_at(tenv, mf.start, j + 1)).t)) {
       let av = scope_find(env, s, arg);
-      if (tu_is(c_ast, ss_type(env, av->t).t) && av->v.c_ast) arg = try_err(lower, (env, s, av->v.c_ast));
+      if (TypeTree_is_ast(ss_type(env, av->t).t) && av->v.c_ast) arg = try_err(lower, (env, s, av->v.c_ast));
     }
     vals.ptr[j + 1] = arg;
   }
@@ -611,6 +614,10 @@ static void tcheck_field errs(superscope *env, scope *s, ir_field fld) {
     return_err("FIELD_TYPE");
   try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_field, fld)));
 }
+
+//
+// something something clang switch stack exaustion
+//
 
 static inline void scope_add_inst_typecheck errs(superscope *env, scope *s, ir i) {
   tu_match_void(
