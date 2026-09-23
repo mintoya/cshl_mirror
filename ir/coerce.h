@@ -157,6 +157,17 @@ static u32 scope_cast_value errs(superscope *ss, scope *s, u32 left, Type to) {
   let e = ss_typeenv(ss);
   let ot = ss_type(ss, scope_find(ss, s, left)->t);
   if (!scope_cast_would_change(ot, to, e)) return left;
+  // A comptime destination has no runtime slot, so the converted value has to exist now:
+  // consumers such as function specialization keys read .v directly instead of running
+  // the scope. Emitting the cast into the caller would hide it behind an instruction that
+  // only the interpreter would ever execute.
+  if (Type_is_comptime(to) && Type_is_comptime(ot)) {
+    let work = scope_inferior(ss, s);
+    let input = scope_add_value(ss, work, *scope_find(ss, s, left));
+    let out = scope_add_value(ss, work, TV_of(ss, to));
+    try_err(scope_add_inst, (ss, work, (ir)tu_of(ir_cast, {.l = input, .d = out})), 0);
+    return scope_add_value(ss, s, try_err(interpret, (ss, work), 0));
+  }
   let d = scope_add_value(ss, s, TV_of(ss, to));
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_cast, {.l = left, .d = d})), 0);
   return d;
@@ -282,7 +293,9 @@ static void lower_dot_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d)
   if (TypeTree_is_ast(lt.t)) return (void)try_err(lower_ast_member, (ss, s, l, r, d));
 
   if (lt.ptr_level <= 1) {
-    let m = ss_tag_named(ss, lt.t, name);
+    // the tag is what carries the namespace, so look it up before stripping: a comptime
+    // member such as a method has no storage and must be copied rather than addressed
+    let m = ss_tag_named(ss, scope_reg_type(ss, s, l).t, name);
     if (m.owner) {
       *scope_find(ss, s, d) = *scope_find(ss, m.owner, m.idx);
       return;

@@ -93,10 +93,6 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
   return scope_add_value(ss, s, TV_with(ss, T(tu_of(c_fun, signature)), VS(.c_fun = {.fn = fn})));
 }
 
-// a definition completes the bodyless declaration of the same name: that declaration already handed
-// its function index and its register out to every name that landed on it, so the body goes into
-// that entry and callers keep the register they were given. the register carries the signature their
-// arguments get coerced against, so only a definition spelling that signature may complete it
 bool function_complete_declaration errs(superscope *ss, scope *s, u32 declared, u32 definition_register) {
   let declared_value = scope_find(ss, s, declared);
   let definition_value = scope_find(ss, s, definition_register);
@@ -129,9 +125,6 @@ static u32 lower_comptime_call_result errs(superscope *ss, scope *s, scope *spec
 }
 
 static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg, u32 fn, slice(typed_value) key, u32 rpos, u32 nargs) {
-  // `ss->functions` grows while bodies are lowered, and a push moves it: an entry may only be
-  // read through a pointer taken after the last call that could have registered a function, so
-  // the pointer is re-derived from the index after each of them
   if (!ss->functions[fn - 1].body) return_err("FUNCTION_NOT_DEFINED", 0);
   let function_item = &ss->functions[fn - 1];
 
@@ -243,8 +236,25 @@ u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astidx args,
   defer {
     if (nparams) slice_free(ss->alloc, regs);
   };
+  // A receiver parameter may ask for an AST. The receiver has already been lowered, so exposing that
+  // AST directly would re-evaluate it in the expansion; name the one evaluation and hand over an id
+  // node instead. Ids may be arbitrary bytes, so the name gets a naming scope of its own rather than
+  // the caller's: it can collide with nothing and leaks into nothing.
+  bool receiver_named = false;
   usize idx = 0;
-  if (lead) regs.ptr[idx++] = lead;
+  if (lead) {
+    let want0 = Type_at(env, type_run_at(env, generic_signature.start, 0));
+    let have = ss_type(ss, scope_find(ss, s, lead)->t);
+    if (TypeTree_is_ast(want0.t) && !TypeTree_is_ast(have.t)) {
+      static usize receiver_count = 0;
+      scope_push_named(ss, s);
+      receiver_named = true;
+      let name = snprint(ss->alloc, "$recv{usize}", receiver_count++);
+      name.len--;
+      try_err(scope_bind, (ss, s, scope_add_value(ss, s, *scope_find(ss, s, lead)), fp(name)), 0);
+      regs.ptr[idx++] = scope_add_value(ss, s, TV_ast(ss, ast_make_id(ss, fp(name))));
+    } else regs.ptr[idx++] = lead;
+  }
   foreach (let a, span(alist.start, alist.len)) {
     let want = Type_at(env, type_run_at(env, generic_signature.start, idx));
     // a comptime argument has to be a value here, not an instruction that would make one later,
@@ -254,7 +264,9 @@ u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astidx args,
                           ? scope_add_value(ss, s, try_err(temporary_interpret, (ss, s, a), 0))
                           : try_err(lower, (ss, s, a), 0);
   }
-  return try_err(lower_function_call_args, (ss, s, fn, regs), 0);
+  let res = try_err(lower_function_call_args, (ss, s, fn, regs), 0);
+  if (receiver_named) scope_pop_named(s);
+  return res;
 }
 u32 lower_function_call errs(superscope *ss, scope *s, u32 fn, u32 ofirst, astidx args) {
   return try_err(lower_function_call_with, (ss, s, fn, args, ofirst), 0);

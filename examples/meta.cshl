@@ -1,0 +1,76 @@
+type ~~ @type();
+bool ~~ @bool();
+void ~~ @void();
+ast ~~ @ast();
+any ~~ @any();
+int ~~ @int();
+i32 ~type~ @sint(32);
+fn  ~~ @fn (a ~ast),@inlineast(),{
+  return 
+    @qot @fn(
+      @uqot(a."()".opleft),
+      @uqot(a."()".opright."()".opleft),
+      @uqot(a."()".opright."()".opright),
+    );
+};
+if  ~~ @fn (a ~ast),@inlineast(),{
+  call ~ast~ a."()";
+  cond ~ast~ call.opleft;
+  rest ~ast~ call.opright;
+
+  @cif((rest."()".opright."()".opleft == "else"), {
+    then ~ast~ rest.opleft;
+    else ~ast~ rest.opright."()".opright;
+
+    return @qot @if(
+      @uqot(cond),
+      @uqot(then),
+      @uqot(else)
+    );
+  });
+
+  return @qot @if(
+    @uqot(cond),
+    @uqot(rest)
+  );
+};
+while  ~~ @fn (a ~ast),@inlineast(),{
+  cond ~ast~ a."()".opleft;
+  rest ~ast~ a."()".opright;
+  return @qot{
+    @loop{
+      @if(@uqot(cond) , @uqot(rest),break());
+    };
+  };
+};
+arr ~~ fn (i~int) any {
+  fn (T~type) type {
+    return @arrof(T,i);
+  } |> return _;
+};
+
+
+! ~~ fn (T~type) type {
+  return @struct{
+    Self~type~@this();
+    has_err ~bool;
+    data ~ @union{
+      err_text ~(@ptr @sint 8);
+      result ~T;
+    };
+    try ~~ fn (self ~ast) (@inlineast()) {
+      return @qot{
+        this ~~ @uqot(self);
+        if this.has_err {
+          return this;
+        };
+        this.data.result;
+      };
+    };
+  };
+};
+
+main ~~ fn () (! void) {
+};
+
+main():try();

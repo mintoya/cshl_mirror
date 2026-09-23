@@ -272,12 +272,6 @@ void interpret_getptr errs(intstate is, ir_getptr c) {
 
   *(void **)d.v.value = l.v.value;
 }
-typed_value_full ss_tvf(superscope *ss, typed_value tv) {
-  return (typed_value_full){
-      .env = ss_typeenv(ss),
-      .v = tv,
-  };
-}
 void interpret_putptr errs(intstate is, ir_putptr c) {
   let l = intstate_findreg(is, c.l);
   let d = intstate_findslots_value(is, c.d);

@@ -306,7 +306,7 @@ static u32 lower_builtin_arrof errs(superscope *ss, scope *s, astidx args) {
   let count_tv = int_as_bigint(ss->alloc, try_err(temporary_interpret, (ss, s, list.start + 0), 0), ss_typeenv(ss));
   defer { msList_deInit(ss->alloc, count_tv); };
   bigint_expand(ss->alloc, &count_tv, sizeof(usize) / sizeof(bigint_unit) + 1);
-  // an array is inlined where it sits, so a count that does not fit the field is unrepresentable
+
   usize count = *(usize *)count_tv;
   if (count > (usize) ~(u32)0) return_err("ARRAY_TOO_LARGE", 0);
   Type elem = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 1), 0)), 0);

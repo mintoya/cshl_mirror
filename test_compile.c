@@ -273,6 +273,7 @@ test_fn(struct_operator_overload_vector_equality_false) {
 }
 
 test_file_1(interpret_type_fn);
+test_file_1(interpret_curried_array_type);
 test_file_1(interpret_zero_arg_call);
 test_file_1(interpret_global_comptime_mutation);
 test_file_1(interpret_runtime_recursion);

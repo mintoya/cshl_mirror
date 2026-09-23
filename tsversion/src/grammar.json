@@ -758,7 +758,7 @@
             "value": "{"
           },
           {
-            "type": "REPEAT1",
+            "type": "REPEAT",
             "content": {
               "type": "SYMBOL",
               "name": "_statement"
@@ -1006,7 +1006,7 @@
           }
         },
         {
-          "type": "REPEAT1",
+          "type": "REPEAT",
           "content": {
             "type": "SYMBOL",
             "name": "_statement"

@@ -54,6 +54,10 @@ struct superscope {
   typeidx t_void, t_any, t_int, t_bool, t_ast, t_type;
   u32 foldempty;
 };
+typedef struct {
+  scope *s;
+  superscope *ss;
+} scope_full;
 static inline typeenv ss_typeenv(superscope *ss) {
   return (typeenv){
       .tlist = ss->tlist,
@@ -142,10 +146,22 @@ u32 lower errs /*                      */ (superscope *ss, scope *s, astidx a);
 typed_value interpret errs /*          */ (superscope *ss, scope *s);
 static u32 lower_function_call_values errs(superscope *ss, scope *s, u32 fn, slice(u32) vals);
 
+typed_value_full ss_tvf(superscope *ss, typed_value tv) {
+  return (typed_value_full){
+      .env = ss_typeenv(ss),
+      .v = tv,
+  };
+}
 typed_value temporary_interpret errs(superscope *ss, scope *s, astidx a) {
   let work = scope_inferior(ss, s);
+  // let afull = ((astidx_full){a, ss->asts, ss->plist, ss->flist});
+  // let sfulll = ((scope_full){s, ss});
+  // println("[LOG:TMP] {astidx_full}", );
   try_err(lower, (ss, work, a), (typed_value){});
-  return try_err(interpret, (ss, work), (typed_value){});
+  // println("[LOG:TMP] {scope_full}", );
+  let res = try_err(interpret, (ss, work), (typed_value){});
+  // println("[LOG:TMP] {typed_value_full}", ss_tvf(ss, res));
+  return res;
 }
 
 typedef enum enum_op {
@@ -437,10 +453,6 @@ typePrinter(typed_value_full) {
   PUTS(")");
 }
 TYPEPRINTERDCL(scope_full);
-typedef struct {
-  scope *s;
-  superscope *ss;
-} scope_full;
 typePrinter(scope_full) {
   let sc = *in.s;
   PUTS("(scope,");
