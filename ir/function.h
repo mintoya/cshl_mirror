@@ -236,23 +236,20 @@ u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astidx args,
   defer {
     if (nparams) slice_free(ss->alloc, regs);
   };
-  // A receiver parameter may ask for an AST. The receiver has already been lowered, so exposing that
-  // AST directly would re-evaluate it in the expansion; name the one evaluation and hand over an id
-  // node instead. Ids may be arbitrary bytes, so the name gets a naming scope of its own rather than
-  // the caller's: it can collide with nothing and leaks into nothing.
+  // A receiver parameter may ask for an AST. The receiver has already been lowered, so exposing its
+  // AST would re-evaluate it in the expansion; hand over an id bound to that one evaluation instead.
+  // `_` is spoken for by pipes, so this gets its own name, in a naming scope of its own, so it can
+  // neither collide with the caller's names nor leak past the call.
   bool receiver_named = false;
   usize idx = 0;
   if (lead) {
     let want0 = Type_at(env, type_run_at(env, generic_signature.start, 0));
     let have = ss_type(ss, scope_find(ss, s, lead)->t);
     if (TypeTree_is_ast(want0.t) && !TypeTree_is_ast(have.t)) {
-      static usize receiver_count = 0;
       scope_push_named(ss, s);
       receiver_named = true;
-      let name = snprint(ss->alloc, "$recv{usize}", receiver_count++);
-      name.len--;
-      try_err(scope_bind, (ss, s, scope_add_value(ss, s, *scope_find(ss, s, lead)), fp(name)), 0);
-      regs.ptr[idx++] = scope_add_value(ss, s, TV_ast(ss, ast_make_id(ss, fp(name))));
+      try_err(scope_bind, (ss, s, scope_add_value(ss, s, *scope_find(ss, s, lead)), fp("#_")), 0);
+      regs.ptr[idx++] = scope_add_value(ss, s, TV_ast(ss, ast_make_id(ss, fp("#_"))));
     } else regs.ptr[idx++] = lead;
   }
   foreach (let a, span(alist.start, alist.len)) {
