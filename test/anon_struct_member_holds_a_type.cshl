@@ -1,0 +1,8 @@
+type ~~ @type();
+s32 ~~ @sint(32);
+
+// any value can be a member, including a type. Numbering counts positions, so the element after
+// the named one is still `1`.
+d ~= [T = @sint(16), 3];
+
+(d.T == @sint(16)) and (d.1 == 3);

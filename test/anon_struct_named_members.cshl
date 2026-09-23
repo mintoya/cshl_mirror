@@ -1,0 +1,12 @@
+type ~~ @type();
+s32 ~~ @sint(32);
+
+// `name = value` names a member, `name ~type = value` also fixes its type
+p ~= [x ~s32 = 3, y ~s32 = 4];
+p.x = 10;
+v ~s32 = 5;
+p.y = v;
+v = 9;
+
+// the members are storage of their own, so both the write and the copy stick
+(p.x == 10) and (p.y == 5);

@@ -313,6 +313,9 @@ test_file_1(math_unsigned_is_weaker_at_the_same_width);
 test_file_1(bxor_toggles_the_bits);
 test_file_1(comptime_math_stays_comptime);
 test_file_1(field_assignment_writes_into_the_struct);
+test_file_1(anon_struct_named_members);
+test_file_1(anon_struct_numbered_members);
+test_file_1(anon_struct_member_holds_a_type);
 test_file_1(struct_assignment_calls_the_eq_overload);
 test_file_1(field_access_is_addressable);
 test_file_1(array_assignment_writes_into_the_array);
@@ -450,14 +453,6 @@ test_fn(lower_error_id_requires_astid) {
   );
   test_assert(e.err_code);
   test_streq(e.err_code, "ID_REQUIRES_ASTID");
-}
-
-test_fn(lower_error_lone_ab) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-  let e = lower_source_err(arena, fp("[1, 2];"));
-  test_assert(e.err_code);
-  test_streq(e.err_code, "LONE_AB");
 }
 
 test_fn(lower_error_compare_type_with_number) {
