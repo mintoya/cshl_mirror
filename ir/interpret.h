@@ -404,7 +404,7 @@ void interpret_array errs(intstate is, ir_array c) {
   let d = intstate_findslots_value(is, c.d);
   *(void **)d->value =
       (u8 *)l.v.value +
-      *(usize *)at * Type_sizeof(type_at(e, arr.t), e);
+      *(usize *)at * Type_sizeof(Type_at(e, arr.t), e);
 }
 static usize intstate_seek(
     intframe *f,

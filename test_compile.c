@@ -26,7 +26,7 @@ static interp interpret_source(allocfn arena, fptr src, astidx_full *ctx_out) {
   }
   return (interp){.t = res.t, .v = res.v, .env = ss_typeenv(env)};
 }
-static Type tv_type(interp x) { return type_at(x.env, x.t); }
+static Type tv_type(interp x) { return Type_at(x.env, x.t); }
 
 // a test whose program stands on its own lives in test/<name>.cshl and runs through this macro,
 // which requires the file's last expression to yield a plain, true bool
@@ -91,7 +91,7 @@ test_fn(interpret_string_value) {
 
   test_assert(tu_catchr(r_arr, tv_type(r).t, test_assert(false)).t);
   let arr = tu_catchr(r_arr, tv_type(r).t);
-  let elem = type_at(r.env, arr.t);
+  let elem = Type_at(r.env, arr.t);
   test_inteq(tu_catch(r_sint, elem.t).bits, 8);
   test_fpeq(((fptr){arr.count, (u8 *)r.v.value}), "yo");
 }
@@ -693,7 +693,7 @@ test_fn(comptime_type_decorations) {
       nullptr
   );
   test_assert(tu_is(c_type, tv_type(r).t));
-  let t = type_at(r.env, r.v.c_type);
+  let t = Type_at(r.env, r.v.c_type);
   test_assert(t.iscomptime);
   test_assert(t.isconst);
   test_assert(tu_is(r_sint, t.t));

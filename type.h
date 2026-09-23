@@ -1,13 +1,10 @@
 #pragma once
 #include "ast.h"
 #include "cshl.lib.h"
-#include "srcpos.h"
 #include <limits.h>
 #include <wheels/bigint.h>
-#include <wheels/fptr.h>
 #include <wheels/hxmap.h>
 #include <wheels/oxmap.h>
-#include <wheels/sList.h>
 
 cmpres fptr_cmp_hash(void *, const void *a, const void *b) { return fptr_cmp(*(fptr *)a, *(fptr *)b); }
 typedef enum : u8 {
@@ -119,7 +116,6 @@ typedef enum : u8 {
   ref_ref = 1,
   ref_dref = 2
 } reference_kind;
-// A packed member needs its bit extent as well as its storage address.
 typedef double_offset dref;
 
 struct Type {
@@ -127,7 +123,7 @@ struct Type {
   union {
     u32 decorations;
     struct {
-      u32 ptr_level : 27; // 134 million levels of indirection, unreachable by any real program
+      u32 ptr_level : 27; // 134217728, a tag can make a higher pointer if needed for some weird reason
       reference_kind ref_kind : 2;
       u32 isconst : 1;
       u32 iscomptime : 1; // meaningless for int,type,ast
@@ -139,8 +135,7 @@ static_assert(sizeof(Type));
 typedef union {
   void *value;
   struct c_fun_struct {
-    u32 fn;
-    u32 spec;
+    u32 fn, spec;
   } c_fun; // function index in list + 1
   bigint c_int;
   astidx c_ast;   // index into the ast arena, 0 = null
@@ -174,18 +169,18 @@ typedef struct typeenv {
   filelist flist;
 } typeenv;
 
-static inline Type type_at(typeenv e, typeidx idx) {
+static inline Type Type_at(typeenv e, typeidx idx) {
   if (idx > e.tlist.len) return (Type){};
   return sglist_get(e.tlist, idx - 1);
 }
-static inline TypeTree type_tree(typeenv e, typeidx idx) { return type_at(e, idx).t; }
+static inline TypeTree type_tree(typeenv e, typeidx idx) { return Type_at(e, idx).t; }
 static inline fptr type_name(typeenv e, srcpos p) {
   return fp_from_srcpos((srcpos_full){.pidx = p, .plist = e.plist, .flist = e.flist});
 }
 static inline u32 type_run_len(typeenv e, typeidx start) {
   if (!start) return 0;
   u32 n = 0;
-  while (!tu_is(r_null, type_at(e, start + n).t))
+  while (!tu_is(r_null, Type_at(e, start + n).t))
     n++;
   return n;
 }
@@ -310,6 +305,7 @@ static usize TypeTree_sizeof(TypeTree t, typeenv e) {
   );
 }
 static inline usize Type_alignof(Type t, typeenv e) {
+  if (t.ref_kind == ref_dref) return alignof(dref);
   if (t.ref_kind || t.ptr_level) return alignof(void *);
   else return TypeTree_alignof(t.t, e);
 }
@@ -386,7 +382,7 @@ cmpres TypeTree_cmp(typeenv e, TypeTree a, TypeTree b) {
         if_decl (let cmp, icmp(an, bn)) return cmp;
 
         foreach (let i, range(0, an))
-          if_decl (let cmp, Type_cmp(e, type_at(e, type_run_at(e, ai.start, i)), type_at(e, type_run_at(e, bi.start, i))))
+          if_decl (let cmp, Type_cmp(e, Type_at(e, type_run_at(e, ai.start, i)), Type_at(e, type_run_at(e, bi.start, i))))
             return cmp;
         return 0;
       }),
@@ -557,7 +553,7 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, typeen
         PUTS("(fn (");
         foreach (let i, range(0, type_run_len(e, fn.start))) {
           if (i) PUTS(" ");
-          typePrinterWorker(type_at(e, type_run_at(e, fn.start, i)), visitedmap, e, _ctx);
+          typePrinterWorker(Type_at(e, type_run_at(e, fn.start, i)), visitedmap, e, _ctx);
         }
         PUTS("))");
       }),
@@ -632,7 +628,7 @@ test_fn(type_linked_list) {
     .offset = offsetof(struct analog, next),
   });
   sglist_push(sitems, (r_struct_item){
-    .t = type_at((typeenv){.tlist = tlist, .sitems = sitems, .bitems = bitems}, elementIdx),
+    .t = Type_at((typeenv){.tlist = tlist, .sitems = sitems, .bitems = bitems}, elementIdx),
     .alignment = alignof(itypeof(struct analog, element)),
     .offset = offsetof(struct analog, element),
   });

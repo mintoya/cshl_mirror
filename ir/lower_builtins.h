@@ -1,13 +1,13 @@
 #pragma once
 #include "common.h"
 #include "function.h"
-#include "scope.h"
 
+// static fptr interpret_string(superscope *ss, scope *s, u32 idx) {}
 static u32 lower_builtin_fn errs(superscope *ss, scope *s, astidx args) {
-  builtin_args(ss, args, 2, 3);
+  builtin_args(ss, args, 3);
   let pnode = ast_at(ss, list.start);
   tu_catch(astPBlock, pnode, return_err("EXPECTED_PBLOCK_FNARGS", 0));
-  return try_err(lower_function, (ss, s, list.start, list.start + 1, list.len == 3 ? list.start + 2 : 0), 0);
+  return try_err(lower_function, (ss, s, list.start, list.start + 1, list.start + 2), 0);
 }
 static u32 lower_builtin_cif errs(superscope *ss, scope *s, astidx args) {
   builtin_args(ss, args, 2, 3);
@@ -21,26 +21,24 @@ static u32 lower_builtin_cif errs(superscope *ss, scope *s, astidx args) {
   if (!!*(bool *)value.v.value) try_err(lower, (ss, s, list.start + 1), 0);
   else if (list.len == 3) try_err(lower, (ss, s, list.start + 2), 0);
 
-  return scope_add_value(ss, s, TV_of(ss, T(tu_of(r_void, {}))));
+  return s->start + 1;
 }
 static u32 lower_builtin_if errs(superscope *ss, scope *s, astidx args) {
   builtin_args(ss, args, 2, 3);
   u32 cnd = try_err(lower_condition, (ss, s, list.start + 0), 0);
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_ifs, cnd)), 0);
   try_err(lower, (ss, s, list.start + 1), 0);
-  if (list.len == 3) {
-    try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_ifd, {})), 0);
-    try_err(lower, (ss, s, list.start + 2), 0);
-  }
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_ifd, {})), 0);
+  if (list.len == 3) try_err(lower, (ss, s, list.start + 2), 0);
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_ife, {})), 0);
-  return scope_add_value(ss, s, TV_of(ss, T(tu_of(r_void, {}))));
+  return s->start + 1;
 }
 static u32 lower_builtin_loop errs(superscope *ss, scope *s, astidx args) {
   builtin_args(ss, args, 1);
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_loops, {})), 0);
   try_err(lower, (ss, s, list.start + 0), 0);
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_loope, {})), 0);
-  return scope_add_value(ss, s, TV_of(ss, T(tu_of(r_void, {}))));
+  return s->start + 1;
 }
 static u32 lower_builtin_at errs(superscope *ss, scope *s, astidx args) {
   builtin_args(ss, args, 1);
@@ -66,7 +64,7 @@ static u32 lower_builtin_ref errs(superscope *ss, scope *s, astidx args) {
 
 static u32 lower_builtin_return errs(superscope *ss, scope *s, astidx args) {
   builtin_args(ss, args, 0, 1);
-  let val = list.len ? try_err(lower, (ss, s, list.start + 0), 0) : scope_add_value(ss, s, TV_void(ss));
+  let val = list.len ? try_err(lower, (ss, s, list.start + 0), 0) : s->start + 1;
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_ret, val)), 0);
   return scope_add_value(ss, s, TV_void(ss));
 }
@@ -80,9 +78,8 @@ static u32 lower_builtin_id errs(superscope *ss, scope *s, astidx args) {
   return scope_add_value(ss, s, TV_ast(ss, ast_make_id(ss, copy)));
 }
 
-// the children of a list ast: a block, or a lone node treated as a one element list
 static astidx_span ast_list_span(superscope *ss, astidx a) {
-  if (!a) return (astidx_span){0, 0};
+  if (!a) return (astidx_span){};
   return tu_match_exp(
       ast_at(ss, a),
       (astABlock, _, ast_block_children(ss, a)),
@@ -224,8 +221,6 @@ static u32 lower_builtin_uqot errs(superscope *ss, scope *s, astidx args) {
   if (!tv.v.c_ast) return_err("UNQUOTE_UNKNOWN", 0);
   return try_err(lower, (ss, s, tv.v.c_ast), 0);
 }
-// build the ast of "a <sym> b", where sym is a comptime string naming the operator, so a macro
-// can synthesize any operation ("+", ".") and not just the ones with a builtin of their own
 static u32 lower_builtin_ast_op errs(superscope *ss, scope *s, astidx args) {
   builtin_args(ss, args, 3);
   let sym = try_err(temporary_interpret, (ss, s, list.start + 0), 0);
@@ -246,15 +241,13 @@ static u32 lower_builtin_ast_op errs(superscope *ss, scope *s, astidx args) {
     char s[sizeof(u32)];
   } spelling = {};
   memcpy(spelling.s, sym.v.value, arr.count);
-  op_as_enum(spelling.n); // not an operator, so this is a mistake in the macro
   astidx off = (astidx)ss->asts.len + 1;
   sglist_push(ss->asts, ast_at(ss, a.v.c_ast));
   sglist_push(ss->asts, ast_at(ss, b.v.c_ast));
   sglist_push(ss->asts, (ast)tu_of(astOp, {.left_right = off, .number_rep = spelling.n}));
   return scope_add_value(ss, s, TV_ast(ss, (astidx)ss->asts.len));
 }
-// call with evaluated arguments, so an ast parameter receives an ast value rather than
-// the syntax it was written as
+// TODO
 static u32 lower_builtin_apply errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss, args);
   if (list.len < 1) return_err("WRONG_ARG_COUNT", 0);
@@ -266,10 +259,7 @@ static u32 lower_builtin_apply errs(superscope *ss, scope *s, astidx args) {
   usize n = list.len - 1;
   let vals = n ? slice_alloc(ss->alloc, u32, n) : (slice(u32)){};
   foreach (let i, range(0, n)) {
-    let want = type_at(env, type_run_at(env, sig.start, i));
-    // apply hands over values, so a comptime argument has to be evaluated here: a lowered one would
-    // be a register whose value is only known at run time, and the specialization it names is picked
-    // by that value
+    let want = Type_at(env, type_run_at(env, sig.start, i));
     vals.ptr[i] = Type_is_comptime(want) ? scope_add_value(ss, s, try_err(temporary_interpret, (ss, s, list.start + 1 + i), 0))
                                          : try_err(lower, (ss, s, list.start + 1 + i), 0);
   }
@@ -285,17 +275,12 @@ static u32 lower_builtin_bare_type errs(superscope *ss, scope *s, astidx args, T
   builtin_args(ss, args, 0);
   return scope_add_value(ss, s, Type_asValue(ss, t));
 }
-static u32 lower_builtin_decor errs(superscope *ss, scope *s, astidx args, bool is_const, bool is_volatile) {
+static u32 lower_builtin_decor errs(superscope *ss, scope *s, astidx args, bool is_const, bool is_volatile, bool is_comptime) {
   builtin_args(ss, args, 1);
   Type inner = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 0), 0)), 0);
   inner.isconst |= is_const;
   inner.isvolatile |= is_volatile;
-  return scope_add_value(ss, s, Type_asValue(ss, inner));
-}
-static u32 lower_builtin_comptime errs(superscope *ss, scope *s, astidx args) {
-  builtin_args(ss, args, 1);
-  Type inner = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start), 0)), 0);
-  inner.iscomptime = true;
+  inner.iscomptime |= is_comptime;
   return scope_add_value(ss, s, Type_asValue(ss, inner));
 }
 static u32 lower_builtin_intty errs(superscope *ss, scope *s, astidx args, bool is_signed) {
@@ -351,7 +336,6 @@ static u32 lower_builtin_offsetof errs(superscope *ss, scope *s, astidx args) {
   if (!st.start) return_err("OFFSETOF_NOT_STRUCT", 0);
   foreach (let i, range(0, type_struct_len(e, st))) {
     let item = type_struct_item(e, st, i);
-    // member names are positions, so they only match when they spell the same thing
     if (!fptr_cmp(type_name(e, item->name), name))
       return scope_add_value(ss, s, TV_bigint(ss, BInt.from.i64(ss->alloc, item->offset)));
   }
@@ -360,10 +344,10 @@ static u32 lower_builtin_offsetof errs(superscope *ss, scope *s, astidx args) {
 
 static u32 lower_builtin_rawget errs(superscope *ss, scope *s, astidx args) {
   builtin_args(ss, args, 2);
-  let recv = try_err(lower, (ss, s, list.start + 0), 0);
-  let name = try_err(lower, (ss, s, list.start + 1), 0);
+  let l = try_err(lower, (ss, s, list.start + 0), 0);
+  let r = try_err(lower, (ss, s, list.start + 1), 0);
   let d = scope_add_value(ss, s, TV_any(ss));
-  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_rawdot, {.l = recv, .r = name, .d = d})), 0);
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_rawdot, {.l = l, .r = r, .d = d})), 0);
   return d;
 }
 
@@ -431,8 +415,6 @@ static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
 
   e = ss_typeenv(ss);
   void sexplike(const char *data, void *userdata, usize len, bool flush);
-  // print_wf(sexplike, "[LOG] created struct : {Type_full}\n", ((Type_full){type_at(e, _this.t.r_tag.t), e}));
-  // print_wf(sexplike, "[LOG] it's scope {scope_full}\n", ((scope_full){working_scope, ss}));
   return scope_add_value(ss, s, Type_asValue(ss, _this));
 }
 static u32 lower_builtin_union errs(superscope *ss, scope *s, astidx args) {
@@ -442,7 +424,6 @@ static u32 lower_builtin_union errs(superscope *ss, scope *s, astidx args) {
   let stmts = ast_block_children(ss, list.start);
 
   let members = (r_struct){.start = ss_member_reserve(ss, stmts.len)};
-  let _this = T(tu_of(r_tag, {ss_type_intern(ss, T(tu_of(r_struct, members))), unique_type_name(ss)}));
 
   foreach (let i, range(0, stmts.len)) {
     let stmt_node = ast_at(ss, stmts.start + i);
@@ -467,12 +448,9 @@ static u32 lower_builtin_union errs(superscope *ss, scope *s, astidx args) {
   }
 
   let e = ss_typeenv(ss);
-  void sexplike(const char *data, void *userdata, usize len, bool flush);
-  // print_wf(sexplike, "[LOG] created union : {Type_full}\n", ((Type_full){type_at(e, _this.t.r_tag.t), e}));
-  return scope_add_value(ss, s, Type_asValue(ss, _this));
+  return scope_add_value(ss, s, Type_asValue(ss, T(tu_of(r_struct, members))));
 }
 
-// @bitstruct{ name ~type:width; ... }
 static u32 lower_builtin_bitstruct errs(superscope *ss, scope *s, astidx args) {
   builtin_args(ss, args, 1);
   let struct_node = ast_at(ss, list.start + 0);
@@ -489,8 +467,10 @@ static u32 lower_builtin_bitstruct errs(superscope *ss, scope *s, astidx args) {
 
     astidx nameidx = ast_child(ss, dcl.name_type_value);
     astidx typeidx = ast_child(ss, dcl.name_type_value + 1);
+    astidx valueidx = ast_child(ss, dcl.name_type_value + 2);
     if (!nameidx) return_err("BITSTRUCT_MEMBER_NO_NAME", 0);
     if (!typeidx) return_err("BITSTRUCT_MEMBER_NO_WIDTH", 0);
+    if (valueidx) return_err("BITSTRUCT_MEMBER_VALUE", 0);
 
     astidx baseidx = typeidx;
     astidx widthidx = 0;
@@ -504,28 +484,23 @@ static u32 lower_builtin_bitstruct errs(superscope *ss, scope *s, astidx args) {
 
     let name = try_err(id_from_ast, (ss, s, nameidx), 0);
     Type base = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, baseidx), 0)), 0);
-    if (Type_is_comptime(base) || !Type_is_integer_like(base, e)) return_err("BITSTRUCT_MEMBER_NOT_INTEGER", 0);
+    if (Type_is_comptime(base)) return_err("BITSTRUCT_COMPTIME_MEMBER", 0);
 
     let width_value = try_err(temporary_interpret, (ss, s, widthidx), 0);
-    if (!Type_is_comptime(ss_type(ss, width_value.t)) || !Type_is_integer_like(ss_type(ss, width_value.t), e))
-      return_err("BITSTRUCT_MEMBER_WIDTH_NOT_INT", 0);
-    let width_big = int_as_bigint(ss->alloc, width_value, e);
-    defer { msList_deInit(ss->alloc, width_big); };
+    if (!Type_is_comptime(ss_type(ss, width_value.t)) || width_value.t != ss->t_int) return_err("BITSTRUCT_WIDTH_NOT_INT", 0);
+    let const width_big = width_value.v.c_int;
     if (bigint_cmp(width_big, nullptr) <= 0) return_err("BAD_BIT_WIDTH", 0);
-    bigint_expand(ss->alloc, &width_big, sizeof(usize) / sizeof(bigint_unit) + 1);
-    usize width = *(usize *)width_big;
-    if (width > (usize)Type_intLike_bitcount(base, e)) return_err("BITSTRUCT_MEMBER_TOO_WIDE", 0);
+    usize width = 0;
+    bigint_into_slot((void *)&width, sizeof(width), width_big);
+    if (width > (usize)Type_intLike_bitcount(base, e)) return_err("BITSTRUCT_MEMBER_WIDER_THAN_ITSELF", 0);
 
     r_bitf_item *ri = type_bitf_item(e, members, i);
     ri->name = id_srcpos(ss, nameidx, name);
     ri->t = base;
     ri->width = (u32)width;
   }
-
-  let _this = T(tu_of(r_tag, {ss_type_intern(ss, T(tu_of(r_bitfield, members))), unique_type_name(ss)}));
-  return scope_add_value(ss, s, Type_asValue(ss, _this));
+  return scope_add_value(ss, s, Type_asValue(ss, T(tu_of(r_bitfield, members))));
 }
-
 static u32 lower_builtin_this errs(superscope *ss, scope *s, astidx args) {
   builtin_no_args(ss, args);
   if (!msList_len(ss->thisstack)) return_err("THIS_OUTSIDE_STRUCT", 0);
@@ -560,9 +535,9 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
       (builtin_void, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(r_void, {}))), 0)),
       (builtin_int, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_int, {}))), 0)),
       (builtin_type, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_type, {}))), 0)),
-      (builtin_const, /*   */ try_err(lower_builtin_decor, (ss, s, args, true, false), 0)),
-      (builtin_comptime, /**/ try_err(lower_builtin_comptime, (ss, s, args), 0)),
-      (builtin_volatile, /**/ try_err(lower_builtin_decor, (ss, s, args, false, true), 0)),
+      (builtin_const, /*   */ try_err(lower_builtin_decor, (ss, s, args, 1, 0, 0), 0)),
+      (builtin_volatile, /**/ try_err(lower_builtin_decor, (ss, s, args, 0, 1, 0), 0)),
+      (builtin_comptime, /**/ try_err(lower_builtin_decor, (ss, s, args, 0, 0, 1), 0)),
       (builtin_sint, /*    */ try_err(lower_builtin_intty, (ss, s, args, true), 0)),
       (builtin_uint, /*    */ try_err(lower_builtin_intty, (ss, s, args, false), 0)),
       (builtin_typeof, /*  */ try_err(lower_builtin_typeof, (ss, s, args), 0)),

@@ -46,7 +46,7 @@ static cmpres typed_value_cmp_typed(Type ta, value_store av, Type tb, value_stor
 }
 cmpres typed_value_cmp(typeenv e, typed_value a, typed_value b) {
   if (a.t == b.t && !memcmp(&a.v, &b.v, sizeof(a.v))) return 0;
-  return typed_value_cmp_typed(type_at(e, a.t), a.v, type_at(e, b.t), b.v, e);
+  return typed_value_cmp_typed(Type_at(e, a.t), a.v, Type_at(e, b.t), b.v, e);
 }
 cmpres slice_typed_value_cmp_hash(void *env, const void *a, const void *b) {
   let av = *(slice(typed_value) *)a;
@@ -210,7 +210,7 @@ static u32 lower_function_call_args errs(superscope *ss, scope *s, u32 fn, slice
     if (nparams) slice_free(ss->alloc, leads);
   };
   foreach (let i, range(0, nparams))
-    leads.ptr[i] = try_err(scope_cast_value, (ss, s, aargs.ptr[i], type_at(env, type_run_at(env, generic_signature.start, i))), 0);
+    leads.ptr[i] = try_err(scope_cast_value, (ss, s, aargs.ptr[i], Type_at(env, type_run_at(env, generic_signature.start, i))), 0);
 
   let key = msList_init(ss->alloc, typed_value);
   defer { msList_deInit(ss->alloc, key); };
@@ -246,7 +246,7 @@ u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astidx args,
   usize idx = 0;
   if (lead) regs.ptr[idx++] = lead;
   foreach (let a, span(alist.start, alist.len)) {
-    let want = type_at(env, type_run_at(env, generic_signature.start, idx));
+    let want = Type_at(env, type_run_at(env, generic_signature.start, idx));
     // a comptime argument has to be a value here, not an instruction that would make one later,
     // since the specialization it is part of is picked by that value
     regs.ptr[idx++] = TypeTree_is_ast(want.t) ? scope_add_value(ss, s, TV_ast(ss, a))

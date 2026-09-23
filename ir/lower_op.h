@@ -31,11 +31,8 @@ tu_def(
     (astStrLit, srcpos),
     (astNumLit, srcpos),
 );
-static inline fptr astLit_str(superscope *ss, astLit l) {
-  return tu_match_exp(l, (astIdLit, l, ast_text(ss, l)), (astStrLit, l, ast_text(ss, l)), (astNumLit, l, ast_text(ss, l)));
-}
 
-u32 lower_dot errs(superscope *ss, scope *s, u32 left, astidx right, astLit lit) {
+u32 lower_dot errs(superscope *ss, scope *s, u32 left, astidx right) {
   let r = scope_add_value(ss, s, TV_ast(ss, right));
   let d = scope_add_value(ss, s, TV_any(ss));
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_rawop, {.l = left, .r = r, .d = d, .o = opNumbers.dot})), 0);
@@ -60,11 +57,6 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
         return result;
       }),
       (enop_colon, assertMessage(false, "unreachable")),
-      (default),
-  );
-  // mask out so that copy constructor stuff can be applied later
-  switch_tuple(
-      op_as_enum(opNumber),
       (enop_set, {
         let src = try_err(lower, (ss, s, right), 0);
         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = left, .l = src})), 0);
@@ -81,21 +73,12 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
          d;
        })),
       (enop_call, try_err(lower_call, (ss, s, left, right), 0)),
-      (enop_dot, ({
-         P$(tu_match_exp(
-                ast_at(ss, right),
-                (astId, id, (astLit)tu_of(astIdLit, id)),
-                (astString, str, (astLit)tu_of(astStrLit, str)),
-                (astNumber, num, (astLit)tu_of(astNumLit, num)),
-                (default, (assertMessage(false, "non-overloaded dot only works on literals"), (astLit){}))
-            ),
-            try_err(lower_dot, (ss, s, left, right, $), 0));
-       })),
+      (enop_dot, try_err(lower_dot, (ss, s, left, right), 0)),
       (default, ({
          assertMessage(enum_op_is_math(op_as_enum(opNumber)), "unhandled operator");
          try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), opNumber), 0);
        })),
   );
-  if (!res) return_err("LOWER_FAILED", 0);
+  assertMessage(res, "should be non-zero");
   return res;
 }

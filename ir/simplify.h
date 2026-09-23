@@ -1,6 +1,7 @@
 #pragma once
 #include "common.h"
 #include "scope.h"
+//TODO: just do this in the c writer isntead
 
 static bool scope_void_type(superscope *ss, typeidx type) {
   let t = Type_stripTag(ss_type(ss, type), ss_typeenv(ss));
@@ -11,15 +12,12 @@ static bool scope_void_register(superscope *ss, scope *s, u32 reg) {
   return scope_void_type(ss, scope_find(ss, s, reg)->t);
 }
 
-// Called once a scope has finished lowering. Register slots stay in place:
-// child scopes use their numbers, calls use contiguous argument ranges, and
-// the interpreter uses the last slot as the result of a non-function scope.
 void scope_finish(superscope *ss, scope *s) {
   // TODO: remove comptime math?
   foreach (let value, span(s->values, msList_len(s->values)))
     if (scope_void_type(ss, value->t)) *value = TV_void(ss);
-
-  u32 voidreg = s->start + 1; // scope_inferior reserves this void slot
+  // write everything to the one void register
+  u32 voidreg = s->start + 1; // reserved
   usize count = 0;
   foreach (let instruction, span(s->instructions, msList_len(s->instructions))) {
     ir inst = *instruction;

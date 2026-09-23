@@ -78,7 +78,7 @@ static inline bool Type_adopt_any(Type *slot, Type t) {
 static inline typed_value Type_asValue(superscope *s, Type t) { return TV_type(s, ss_type_intern(s, t)); }
 
 static inline bigint int_as_bigint(allocfn allocator, typed_value t, typeenv e) {
-  let tt = type_at(e, t.t);
+  let tt = Type_at(e, t.t);
   assertMessage(!tt.ptr_level);
   assertMessage(t.v.value, "tried to convert unknown value");
   return tu_match_exp(
@@ -113,7 +113,7 @@ static inline void bigint_into_slot(u8 *mem, usize len, bigint b) {
 }
 static inline void bigint_into_int(superscope *ss, allocfn alloc, typed_value *t, bigint b) {
   let e = ss_typeenv(ss);
-  let tt = type_at(e, t->t);
+  let tt = Type_at(e, t->t);
   tu_match_void(
       tt.t,
       (c_int, _, {
@@ -549,7 +549,7 @@ static void tcheck_call errs(superscope *env, scope *s, ir_call call) {
     let items = ast_block_children(env, arv->v.c_ast);
     if (items.len != 1) return_err("ARRAY_INDEX_ONE_ARG");
     u32 idx = try_err(lower, (env, s, items.start));
-    let elem = type_at(tenv, inner.t);
+    let elem = Type_at(tenv, inner.t);
     elem.ref_kind = ref_ref;
     let dv = scope_find(env, s, call.d);
     scope_set_type(env, dv, ss_type_intern(env, elem));
@@ -568,7 +568,7 @@ static void tcheck_call errs(superscope *env, scope *s, ir_call call) {
   vals.ptr[0] = call.l;
   foreach (let j, range(0, nargs)) {
     u32 arg = s->start + 1 + call.r + (u32)j;
-    if (!TypeTree_is_ast(type_at(tenv, type_run_at(tenv, mf.start, j + 1)).t)) {
+    if (!TypeTree_is_ast(Type_at(tenv, type_run_at(tenv, mf.start, j + 1)).t)) {
       let av = scope_find(env, s, arg);
       if (TypeTree_is_ast(ss_type(env, av->t).t) && av->v.c_ast) arg = try_err(lower, (env, s, av->v.c_ast));
     }
@@ -590,7 +590,7 @@ static void tcheck_array errs(superscope *env, scope *s, ir_array arr) {
   if (base.ref_kind) base.ref_kind = ref_none;
   let inner = TypeTree_inner_array(base.t, tenv);
   if (!inner.t) return_err("ARRAY_OF_NON_ARRAY");
-  Type elem = type_at(tenv, inner.t);
+  Type elem = Type_at(tenv, inner.t);
   Type asref = elem;
   asref.ref_kind = ref_ref;
   let dv = scope_find(env, s, arr.d);

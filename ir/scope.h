@@ -102,7 +102,7 @@ static inline Type value_asType errs(superscope *ss, typed_value t) {
   if (!tu_is(c_type, ss_type(ss, t.t).t))
     return_err("TYPE_IS_NOT_VALUE", T());
   if (!t.v.c_type) return_err("UNKNOWN_TYPE", T());
-  return type_at(ss_typeenv(ss), t.v.c_type);
+  return Type_at(ss_typeenv(ss), t.v.c_type);
 }
 
 u32 scope_last_item(superscope *, scope *s) { return s->start + msList_len(s->values); }
