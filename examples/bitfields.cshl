@@ -1,0 +1,16 @@
+u8s~~@bitstruct{
+  a~@uint(1):1;
+  b~@uint(1):1;
+  c~@uint(1):1;
+  d~@uint(1):1;
+  e~@uint(1):1;
+  f~@uint(1):1;
+  g~@uint(1):1;
+  h~@uint(1):1;
+};
+
+ia~u8s;
+ia.a = 1;
+ia.b = 1;
+ia.h = 1;
+ia;

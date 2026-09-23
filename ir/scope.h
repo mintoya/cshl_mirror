@@ -23,12 +23,10 @@ char *print_errsbuffer(void *) { return (char *)errors_buffer.buf; }
   print_errsbuffer;                                            \
 })
 
-scope *scope_owner(const scope *s, u32 idx) {
-  while (s)
-    if (idx > s->start && idx <= s->start + msList_len(s->values))
-      return s;
-    else s = s->parent;
-  return nullptr;
+const scope *scope_owner(const scope *s, u32 idx) {
+  while (!(idx > s->start && idx <= s->start + msList_len(s->values)))
+    s = s->parent;
+  return s;
 }
 typed_value *scope_find(superscope *env, const scope *s, u32 idx) {
   let owner = scope_owner(s, idx);
@@ -57,13 +55,15 @@ static inline void scope_push_named(superscope *b, scope *s) {
 static inline void scope_pop_named(scope *s) {
   if (mList_len(s->named) > 1) moxmap_deinit(mList_pop(s->named));
 }
-
+// only any is 'resizable'
+// TODO: wierd
 static inline void scope_resize_value(superscope *env, typed_value *v) {
   if (v->v.value) return;
   if_decl (let sz, Type_sizeof(ss_type(env, v->t), ss_typeenv(env)))
     v->v.value = acreate(env->alloc, u8[sz]);
 }
 static inline void scope_set_type(superscope *env, typed_value *v, typeidx t) {
+  assertMessage(v->t == env->t_any);
   v->t = t;
   scope_resize_value(env, v);
 }
@@ -119,44 +119,7 @@ static inline cmpres Type_cmp_ndecor(Type a, Type b, typeenv e) {
       P$(b, ($.decorations &= x, $))
   );
 }
-static inline void scope_emit_inst errs(superscope *env, scope *s, ir i) {
-#if !defined NDEBUG
-  tu_match_void(
-      i,
-      (ir_putptr, pp, {
-        let lt = ss_type(env, scope_find(env, s, pp.l)->t);
-        let dt = ss_type(env, scope_find(env, s, pp.d)->t);
-        lt.ref_kind = ref_none;
-        dt.ref_kind = ref_none;
-        if (!lt.ptr_level) {
-          println("[dbg:1]{Type_full}->{Type_full}", ss_typeF(env, ss_type(env, scope_find(env, s, pp.l)->t)), ss_typeF(env, ss_type(env, scope_find(env, s, pp.d)->t)));
-          assertMessage(false);
-        }
-        lt.ptr_level--;
-        if (Type_cmp_ndecor(lt, dt, ss_typeenv(env))) {
-          println("[dbg:2]{Type_full}->{Type_full}", ss_typeF(env, ss_type(env, scope_find(env, s, pp.l)->t)), ss_typeF(env, ss_type(env, scope_find(env, s, pp.d)->t)));
-          assertMessage(false);
-        }
-      }),
-      (ir_getptr, pp, {
-        let lt = ss_type(env, scope_find(env, s, pp.l)->t);
-        let dt = ss_type(env, scope_find(env, s, pp.d)->t);
-        lt.ref_kind = ref_none;
-        lt.ptr_level++;
-        if (dt.ref_kind) {
-          dt.ref_kind = ref_none;
-          dt.ptr_level++;
-        }
-        if (Type_cmp_ndecor(lt, dt, ss_typeenv(env))) {
-          println("[dbg:3]{Type_full}->{Type_full}", ss_typeF(env, ss_type(env, scope_find(env, s, pp.l)->t)), ss_typeF(env, ss_type(env, scope_find(env, s, pp.d)->t)));
-          assertMessage(false);
-        }
-      }),
-      (default, {}),
-  );
-#endif
-  msList_push(env->alloc, s->instructions, i);
-}
+static inline void scope_emit_inst errs(superscope *env, scope *s, ir i) { msList_push(env->alloc, s->instructions, i); }
 
 static bool Type_ncmp_nptr(Type a, Type b, typeenv e) { return a.ptr_level == b.ptr_level && !TypeTree_cmp(e, a.t, b.t); }
 static inline bool Type_isnull(Type t) { return tu_is(r_null, t.t); }

@@ -1,12 +1,6 @@
 #pragma once
 #include "../type.h"
 #include "ir.h"
-#include "wheels/errable.h"
-#include "wheels/sList.h"
-#include <string.h>
-#include <wheels/bigint.h>
-#include <wheels/macros.h>
-#include <wheels/print/print_pre.h>
 
 typedef struct {
   astidx start;
@@ -25,8 +19,6 @@ struct scope {
     u32 fn, index;
   } instance;
 };
-sliceDef(scope);
-
 typedef struct {
   Type ret;
   scope *spec;
@@ -123,7 +115,7 @@ static inline astidx ast_make_empty(superscope *ss) {
 u32 scope_last_item(superscope *ss, scope *s);
 scope *scope_inferior(superscope *b, scope *s);
 u32 scope_add_value(superscope *env, scope *s, typed_value v);
-scope *scope_owner(const scope *s, u32 idx);
+const scope *scope_owner(const scope *s, u32 idx);
 
 typeidx ss_type_intern(superscope *ss, Type t);
 static inline Type *ss_getType(superscope *ss, Type t) {
@@ -537,7 +529,7 @@ typePrinter(scope_full) {
         (ir_ife, _, PUTS("(ife)")),
         (ir_loops, _, PUTS("(loops)")),
         (ir_loope, _, PUTS("(loope)")),
-        (default, TODO()),
+        (default, assertMessage(false)),
     );
     PUTS(",");
   }
