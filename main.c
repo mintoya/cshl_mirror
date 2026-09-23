@@ -67,14 +67,14 @@ cmd_main(
     if (lowerast || execute)
       print_wf(sexplike, "{scope_full}\n", ((scope_full){env->outermost, env}));
     if (c_output) {
-      let out = fopen(strcat(strcat((char[255]){}, args[1]), ".c"), "w");
+      let name = snprint(allocator, "{cstr}.c{c8}", args[1], (c8)0);
+      defer { slice_free(allocator, name); };
+      let out = fopen(name.ptr, "w");
       assertMessage(out);
       defer { assertMessage(fclose(out) == 0, "failed to close C output"); };
 
       printerfunction_context pctx = {.put = fileprint, .arb = out, .allocator = allocator};
-      // makeTypes(env, fileprint, pctx);
-      // makeFuncs(env, fileprint, pctx);
-      // makeScope(env, env->outermost, fileprint, pctx);
+      makeC(env, fileprint, pctx);
     }
     if (execute) {
       let res = catch_errcall((interpret, (env, env->outermost)), e, (err_panic(e), (typed_value){}));

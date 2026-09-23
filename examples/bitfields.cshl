@@ -1,141 +1,22 @@
-u32 ~~@uint(32);
-ast ~~@ast();
-type ~~@type();
-void ~~@void();
-fn  ~~ @fn (a ~ast),@inlineast(),{
-  return 
-    @qot @fn(
-      @uqot(a."()".opleft),
-      @uqot(a."()".opright."()".opleft),
-      @uqot(a."()".opright."()".opright),
-    );
-};
-if  ~~ @fn (a ~ast),@inlineast(),{
-  call ~ast~ a."()";
-  cond ~ast~ call.opleft;
-  rest ~ast~ call.opright;
-
-  @cif((rest."()".opright."()".opleft == "else"), {
-    then ~ast~ rest.opleft;
-    else ~ast~ rest.opright."()".opright;
-
-    return @qot @if(
-      @uqot(cond),
-      @uqot(then),
-      @uqot(else)
-    );
-  });
-
-  return @qot @if(
-    @uqot(cond),
-    @uqot(rest)
-  );
-};
-while  ~~ @fn (a ~ast),@inlineast(),{
-  cnd ~~ a."()".opleft;
-  res ~~ a."()".opright;
-  return @qot @loop{
-    @if(
-      (@uqot(cnd)),
-      (@uqot(res)),
-      (break())
-    );
+u8~~@uint(8);
+u8s~~ @union{
+  full~u8;
+  bits~@bitstruct{
+    @id("0")~u8:1;
+    @id("1")~u8:1;
+    @id("2")~u8:1;
+    @id("3")~u8:1;
+    @id("4")~u8:1;
+    @id("5")~u8:1;
+    @id("6")~u8:1;
+    @id("7")~u8:1;
   };
 };
-f32~~ @struct{
-  bits ~ @bitstruct{
-    mantissa ~ u32:23;
-    exponent ~ u32:8;
-    sign     ~ u32:1;
-  };
-  Self ~type~ @this();
-  
-  @id("as") ~~ fn (this~Self, target~type) u32 {
-    ret ~ u32;
-    ret = this.bits.mantissa;
-    ret = ret bor (this.bits.exponent shl 23);
-    ret = ret bor (this.bits.sign shl 31);
-    return ret;
-  };
 
-  @id("=") ~~ fn (this~@refT(Self), val~u32) void {
-    this.bits.mantissa = val band 8388607;
-    this.bits.exponent = (val shr 23) band 255;
-    this.bits.sign = (val shr 31) band 1;
-  };
+ia~u8s;
+ia.bits.0 = 1;
+ia.bits.1 = 1;
+ia.bits.7 = 1;
+ia.full;
 
-  @id("+") ~~ fn (this~Self,other~Self) Self {
-    m1 ~ u32; m1 = this.bits.mantissa;
-    m2 ~ u32; m2 = other.bits.mantissa;
-    e1 ~ u32; e1 = this.bits.exponent;
-    e2 ~ u32; e2 = other.bits.exponent;
-    s1 ~ u32; s1 = this.bits.sign;
-    s2 ~ u32; s2 = other.bits.sign;
 
-    // Restore the implicit leading 1 for normalized numbers
-    if (e1) { m1 = m1 bor (1 shl 23); };
-    if (e2) { m2 = m2 bor (1 shl 23); };
-
-    out_e ~ u32; out_e = e1;
-    out_s ~ u32; out_s = s1;
-
-    // Align exponents by shifting the mantissa of the smaller number right
-    if (e1 < e2) {
-      diff ~ u32; diff = e2 - e1;
-      m1 = m1 shr diff;
-      out_e = e2;
-      out_s = s2;
-    };
-    if (e2 < e1) {
-      diff ~ u32;
-      diff = e1 - e2;
-      m2 = m2 shr diff;
-    };
-
-    out_m ~ u32; out_m = 0;
-
-    // Add or subtract mantissas depending on signs
-    if (s1 == s2) {
-      out_m = m1 + m2;
-      // Check if addition carried over into the 24th bit
-      if (out_m band (1 shl 24)) {
-        out_m = out_m shr 1;
-        out_e = out_e + 1;
-      };
-    } else {
-      if (m1 >= m2) {
-        out_m = m1 - m2;
-        out_s = s1;
-      } else {
-        out_m = m2 - m1;
-        out_s = s2;
-      };
-      // Normalize if there were leading zeros after subtraction
-      if (out_m) {
-        while ((out_m band (1 shl 23)) == 0) {
-          out_m = out_m shl 1;
-          out_e = out_e - 1;
-        };
-      };
-    };
-
-    ret ~ Self;
-    if (out_m) {
-      // Mask out the implicit leading 1 (keep bottom 23 bits)
-      ret.bits.mantissa = out_m band 8388607; 
-      ret.bits.exponent = out_e;
-      ret.bits.sign = out_s;
-    } else {
-      ret.bits.mantissa = 0;
-      ret.bits.exponent = 0;
-      ret.bits.sign = 0;
-    };
-    return ret;
-  };
-
-};
-a ~ f32;
-a = 5;
-b ~ f32;
-b = 6000000000;
-a + b;

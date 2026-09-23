@@ -321,6 +321,11 @@ test_file_1(ast_array_falsy);
 test_file_1(sib_fn);
 test_file_1(referance_types);
 test_file_1(referance_types_i);
+test_file_1(cout_loop_control);
+test_file_1(cout_signed_shifts);
+test_file_1(cout_packed_return);
+test_file_1(cout_non_power_alignment);
+test_file_1(cout_union_bool);
 
 //
 // error tests
