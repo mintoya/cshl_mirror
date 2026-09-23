@@ -39,9 +39,10 @@ u32 lower_low errs(superscope *ss, scope *s, astidx a) {
          let res = scope_add_value(ss, s, TV_any(ss));
          try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_blocks, {})), 0);
          let stmts = ast_block_children(ss, a);
+         u32 last = s->start + 1;
          foreach (let i, span(stmts.start, stmts.len))
-           try_err(lower, (ss, s, i), 0);
-         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = res, .l = scope_last_item(ss, s)})), 0);
+           last = try_err(lower, (ss, s, i), 0);
+         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = res, .l = last})), 0);
          try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_blocke, {})), 0);
          res;
        })),
@@ -59,6 +60,11 @@ u32 lower_low errs(superscope *ss, scope *s, astidx a) {
          if (valueidx) {
            value = try_err(lower, (ss, s, valueidx), 0);
            assertMessage(value);
+           if (!dcl.isconst && tag_set_member(ss, type).owner) {
+             let slot = scope_add_value(ss, s, TV_of(ss, type));
+             try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = value, .d = slot})), 0);
+             value = slot;
+           }
          } else {
            if (!typeidx) return_err("DECL_NO_TYPE_OR_VALUE", 0);
            value = scope_add_value(ss, s, TV_of(ss, type));

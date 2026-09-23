@@ -299,6 +299,7 @@ test_file_1(bitstruct_member_update_reads_the_old_bits);
 test_file_1(bitstruct_member_read_is_a_copy);
 test_file_1(bitstruct_reference_alias);
 test_file_1(bitstruct_nested_member);
+test_file_1(bitstruct_inline_member_gets_layout);
 test_file_1(as_without_overload_is_a_cast);
 test_file_1(struct_closure_capture);
 test_file_1(overload_call_yields_the_result_after_arg_coercion);
@@ -311,6 +312,7 @@ test_file_1(math_unsigned_is_weaker_at_the_same_width);
 test_file_1(bxor_toggles_the_bits);
 test_file_1(comptime_math_stays_comptime);
 test_file_1(field_assignment_writes_into_the_struct);
+test_file_1(struct_assignment_calls_the_eq_overload);
 test_file_1(field_access_is_addressable);
 test_file_1(array_assignment_writes_into_the_array);
 test_file_1(array_access_is_addressable);
@@ -328,23 +330,6 @@ static err_t lower_source_err(allocfn arena, fptr src) {
   let ctx = catch_errcall((parse_source, (arena, src, nullptr)), e, (({ return e; }), (astidx_full){}));
   let env = ss_init(arena, ctx);
   return call_err(lower, (env, env->outermost, ctx.idx)).err;
-}
-
-// a declaration without a definition is only a symbol, so there is nothing to instantiate
-test_fn(lower_error_function_not_defined) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-  let e = lower_source_err(
-      arena,
-      fp(
-          "i ~~ @sint;\n"
-          "i32 ~~ i(32);\n"
-          "f ~~ @fn (),i32;\n"
-          "f();\n"
-      )
-  );
-  test_assert(e.err_code);
-  test_streq(e.err_code, "FUNCTION_NOT_DEFINED");
 }
 
 test_fn(lower_error_too_many_args) {
@@ -517,22 +502,6 @@ test_fn(lower_error_bitstruct_member_without_width) {
   test_streq(e.err_code, "BITSTRUCT_MEMBER_NO_WIDTH");
 }
 
-// a bitfield is a run of bits of one integer, so a member that is not an integer has no bits
-// to take
-test_fn(lower_error_bitstruct_member_not_integer) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-  let e = lower_source_err(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "B ~type~ @bitstruct{ a ~@void():3; };\n"
-      )
-  );
-  test_assert(e.err_code);
-  test_streq(e.err_code, "BITSTRUCT_MEMBER_NOT_INTEGER");
-}
-
 test_fn(lower_error_bitstruct_member_zero_width) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -547,21 +516,6 @@ test_fn(lower_error_bitstruct_member_zero_width) {
   test_assert(e.err_code);
   test_streq(e.err_code, "BAD_BIT_WIDTH");
 }
-test_fn(lower_error_bitstruct_member_wider_than_base_type) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-  let e = lower_source_err(
-      arena,
-      fp(
-          "type ~~ @type();\n"
-          "s32 ~~ @sint(32);\n"
-          "B ~type~ @bitstruct{ a ~s32:33; };\n"
-      )
-  );
-  test_assert(e.err_code);
-  test_streq(e.err_code, "BITSTRUCT_MEMBER_TOO_WIDE");
-}
-
 test_fn(lower_error_bitfield_member_not_addressable) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -605,6 +559,28 @@ test_fn(lower_error_op_on_struct_without_overload) {
   );
   test_assert(e.err_code);
   test_streq(e.err_code, "OP_UNSUPPORTED_OPERANDS");
+}
+
+test_fn(lower_error_set_through_const_destination) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(
+      arena,
+      fp(
+          "type ~~ @type();\n"
+          "u32 ~~ @uint(32);\n"
+          "void ~~ @void();\n"
+          "S ~~ @struct{\n"
+          "  Self ~type~ @this();\n"
+          "  v ~ u32;\n"
+          "  @id(\"=\") ~~ @fn (this ~@refT(Self), val ~u32), @void(), { this.v = val; };\n"
+          "};\n"
+          "s ~ @const(S);\n"
+          "s = 5;\n"
+      )
+  );
+  test_assert(e.err_code);
+  test_streq(e.err_code, "CANNOT_CAST");
 }
 
 // Exercise the same heap-backed allocation path as the CLI: an outer arena

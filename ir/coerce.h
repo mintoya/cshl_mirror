@@ -21,6 +21,11 @@ static inline struct type_named ss_tag_named(superscope *ss, TypeTree t, fptr na
       if_decl (let idx, moxmap_get(mList_last((*info)->named), name)) return (struct type_named){*info, *idx};
   return (struct type_named){};
 }
+static inline struct type_named tag_set_member(superscope *ss, Type t) {
+  if (t.ref_kind || t.ptr_level || t.isconst || t.isvolatile || t.iscomptime)
+    return (struct type_named){};
+  return ss_tag_named(ss, t.t, fp("="));
+}
 
 static bool Type_isint(Type t, typeenv en) {
   return !t.ptr_level &&
@@ -437,6 +442,17 @@ static void tcheck_set errs(superscope *env, scope *s, ir_set st) {
   let tenv = ss_typeenv(env);
   Type dt = scope_reg_type(env, s, st.d);
   Type lt = scope_reg_type(env, s, st.l);
+  let m = tag_set_member(env, P$(dt, ($.ref_kind = ref_none, $)));
+  if (m.owner) {
+    u32 self = st.d;
+    if (!dt.ref_kind) {
+      self = scope_add_value(env, s, TV_of(env, P$(dt, ($.ref_kind = ref_ref, $))));
+      try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_getref, {.l = st.d, .d = self})));
+    }
+    let method = scope_add_value(env, s, *scope_find(env, m.owner, m.idx));
+    try_err(lower_function_call_values, (env, s, method, ((slice(u32)){2, (u32[2]){self, st.l}})));
+    return;
+  }
   // Assigning a reference member binds its stored reference.
   if (lt.ref_kind && dt.ref_kind && !Type_cmp_ndecor(lt, dt, tenv)) {
     foreach (let inst, span(s->instructions, msList_len(s->instructions))) {

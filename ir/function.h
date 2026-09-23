@@ -221,7 +221,7 @@ static u32 lower_function_call_args errs(superscope *ss, scope *s, u32 fn, slice
     if (ss_type(ss, key[i].t).ref_kind)
       try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_getref, {.l = leads.ptr[i], .d = dst})), 0);
     else
-      try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = leads.ptr[i], .d = dst})), 0);
+      try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_set, {.l = leads.ptr[i], .d = dst})), 0);
   }
   foreach (let l, span(key, msList_len(key)))
     l->v.value = (!Type_is_comptime(ss_type(ss, l->t)) && l->v.value) ? nullptr : l->v.value;

@@ -404,6 +404,7 @@ static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
     if (dcl.isconst)
       try_err(scope_bind, (ss, working_scope, scope_add_value(ss, working_scope, bound), name), 0);
 
+    e = ss_typeenv(ss);
     r_struct_item *ri = type_struct_item(e, members, i);
     ri->name = id_srcpos(ss, nameidx, name);
     ri->t = ss_type(ss, bound.t);
