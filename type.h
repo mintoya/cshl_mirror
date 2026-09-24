@@ -32,6 +32,9 @@ typedef enum : u8 {
   builtin_uint,      // @uint(N) unsigned integer with N bits
   builtin_typeof,    // @typeof(V) type of argument
   builtin_typeinfo,  // @typeinfo(T) what a type is made of, @typeinfo() being that type
+  builtin_opaque,    // @opaque("Tag") an external C tag; no C definition is emitted
+  builtin_cinclude,  // @cinclude("header.h") add a C header to generated output
+  builtin_externfn,  // @externfn("name", (args), return) declare a C function
   builtin_arrof,     // @arrof(N,t) array of N t's
   builtin_ptrof,     // @ptrof(t) pionter to t
                      //
@@ -95,7 +98,7 @@ tu_def( // type
     (c_inlineast /*  */, struct {}),
     // something else
     // a run of Type slots, the return type last, terminated by a null
-    (c_fun /*        */, struct { typeidx start; }),
+    (c_fun /*        */, struct { typeidx start; bool isextern; fptr external_name; }),
 );
 static_assert(sizeof(TypeTree));
 #define T(...) ((Type){__VA_ARGS__})
@@ -384,6 +387,8 @@ cmpres TypeTree_cmp(typeenv e, TypeTree a, TypeTree b) {
 
       (c_fun, ai, {
         let bi = tu_catch(c_fun, b);
+        if_decl (let cmp, icmp(ai.isextern, bi.isextern)) return cmp;
+        if (ai.isextern) if_decl (let cmp, fptr_cmp(ai.external_name, bi.external_name)) return cmp;
         u32 an = type_run_len(e, ai.start), bn = type_run_len(e, bi.start);
         if_decl (let cmp, icmp(an, bn)) return cmp;
 

@@ -593,8 +593,6 @@ static void tcheck_cast errs(superscope *env, scope *s, ir_cast cv) {
     let src = scope_add_value(env, s, TV_bool(env, truthy));
     return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_set, {.l = src, .d = cv.d})));
   }
-  // an info that describes nothing is falsy too, which is what lets a conditional pick a kind
-  // apart: "@cif(@typeinfo(T).sint, ...)" reads as "is T a signed integer"
   if (tu_is(c_typeinfo, Type_stripTag(lt, tenv).t) && tu_is(r_bool, dt.t)) {
     let src = P$(
         scope_find(env, s, cv.l),
@@ -603,7 +601,8 @@ static void tcheck_cast errs(superscope *env, scope *s, ir_cast cv) {
     return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_set, {.l = src, .d = cv.d})));
   }
   if (!(Type_is_integer_like(lt, tenv) && Type_is_integer_like(Type_stripTag(dt, tenv), tenv)))
-    return_err("CANNOT_CAST");
+    println("cant cast {Type_full} to {Type_full}", ss_typeF(env, lt), ss_typeF(env, dt)),
+        return_err("CANNOT_CAST");
   return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_cast, cv)));
 }
 static void tcheck_ret errs(superscope *env, scope *s, u32 r) {

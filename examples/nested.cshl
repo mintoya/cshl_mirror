@@ -1,10 +1,16 @@
+@cinclude("stdio.h");
+void ~~ @void();
 i ~~ @sint;
 i64 ~~ i(64);
+any ~~ @any();
+printf ~~ @externfn("printf", (@ptr(@sint(8)), any), @sint(32));
+
 outer ~~ @fn (run ~i64,in ~i64),i64,{
   run = run + 1;
   odd ~~ @fn (a ~i64, o ~i64),i64, return(outer a,o * 3 + 1);
   even ~~ @fn (a ~i64, e ~i64),i64, return(outer a,e / 2);
   resolve ~~ @fn (r ~i64, n ~i64),i64,{
+    printf (@where "iteration: %ld\n"[0]), n ;
     @if((n == 1), (return r - 1));
     @if((n band 1), (return odd(r,n)));
     return even(r,n);

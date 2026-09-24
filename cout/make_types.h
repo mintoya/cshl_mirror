@@ -1,6 +1,7 @@
 #pragma once
 #include "../ast.h"
 #include "../ir/common.h"
+#include "../ir/coerce.h"
 #include "../srcpos.h"
 #include "../type.h"
 #include "wheels/macros.h"
@@ -17,7 +18,19 @@ typePrinter(id_str) {
     PUTC((char)(((*it) & 0xf) + 'a')),
         PUTC((char)((((*it) & 0xf0) >> 4) + 'a'));
 }
-void makeInt(printerfunction_context _ctx, usize bits) {
+static bool out_integerIsWide(typeenv e, Type t) {
+  while (tu_is(r_tag, t.t)) t = Type_at(e, tu_catch(r_tag, t.t).t);
+  usize bits = tu_match_exp(
+      t.t,
+      (r_sint, v, (usize)v.bits),
+      (r_uint, v, (usize)v.bits),
+      (default, (usize)0)
+  );
+  return bits && bits != sizeof(char) * CHAR_BIT && bits != sizeof(short) * CHAR_BIT &&
+         bits != sizeof(int) * CHAR_BIT && bits != sizeof(long) * CHAR_BIT;
+}
+
+static void makeInt(printerfunction_context _ctx, usize bits) {
   switch_tuple(
       bits,
       (sizeof(char) * CHAR_BIT, PUTS("char")),
@@ -25,23 +38,18 @@ void makeInt(printerfunction_context _ctx, usize bits) {
       (sizeof(int) * CHAR_BIT, PUTS("int")),
       (sizeof(long) * CHAR_BIT, PUTS("long")),
       (default, {
-        if (true) {
-          PUTS("_BitInt(");
-          USETYPEPRINTER(usize, bits);
-          PUTS(")");
-        } else {
-          if /**/ (bits <= sizeof(char) * CHAR_BIT) PUTS("");
-          else if (bits <= sizeof(short) * CHAR_BIT) PUTS("");
-          else if (bits <= sizeof(int) * CHAR_BIT) PUTS("");
-          else if (bits <= sizeof(long) * CHAR_BIT) PUTS("");
-          else assertMessage(false, "int too big right now");
-        }
+        PUTS("cshl_int_");
+        USETYPEPRINTER(usize, bits);
       })
   );
 }
 void makeType(superscope *ss, printerfunction_context _ctx, Type t);
 void makeTypeTree(superscope *ss, printerfunction_context _ctx, TypeTree t);
 void makeFullType(superscope *ss, printerfunction_context _ctx, Type t);
+static void makeTypedefName(printerfunction_context _ctx, typeidx idx) {
+  PUTS("cshlT_");
+  USETYPEPRINTER(usize, idx);
+}
 
 bool out_structIsUnnatural(typeenv e, r_struct s);
 static bool out_structIsUnion(typeenv e, r_struct s);
@@ -76,6 +84,12 @@ static bool out_typeIsNaturalC(typeenv e, Type t) {
        })),
       (default, return false)
   );
+}
+
+// comptime values and void have no runtime representation at all: cshl gives them zero bytes and lets
+// the next member take their offset, so the C struct must not give them a member either
+static bool out_memberHasStorage(typeenv e, Type t) {
+  return !Type_is_comptime(t) && Type_sizeof(t, e) != 0;
 }
 
 bool out_structIsUnnatural(typeenv e, r_struct s) {
@@ -177,7 +191,7 @@ static void out_makeFieldArray(
     u32 next = len;
     foreach (let i, range(0, len)) {
       let item = type_struct_item(e, s, i);
-      if ((*emitted)[i] || Type_is_comptime(item->t)) continue;
+      if ((*emitted)[i] || !out_memberHasStorage(e, item->t)) continue;
       if (next == len || item->offset < type_struct_item(e, s, next)->offset) next = i;
     }
     if (next == len) break;
@@ -191,9 +205,9 @@ static void out_makeFieldArray(
       PUTS("];\n");
     }
     if (fallback) {
-      PUTS("unsigned char ");
-      out_makeMemberName(e, _ctx, item->name);
-      PUTS("[0];\n");
+      // byte storage: this member has no C representation of its own, only an offset, so it gets no
+      // member at all. the pads and the trailing storage already put every byte where cshl says it
+      // goes, and member access recomputes addresses from the same offsets rather than by name
       cursor = item->offset;
     } else {
       makeType(ss, _ctx, item->t);
@@ -228,14 +242,20 @@ void makeFullType(superscope *ss, printerfunction_context _ctx, Type t) {
         if (fallback)
           foreach (let i, range(0, type_struct_len(e, s))) {
             let item = type_struct_item(e, s, i);
-            if (!Type_is_comptime(item->t)) storage_start = MAX$(storage_start, item->offset);
+            if (out_memberHasStorage(e, item->t)) storage_start = MAX$(storage_start, item->offset);
           }
+        bool has_storage = false;
+        foreach (let i, range(0, type_struct_len(e, s)))
+          has_storage |= out_memberHasStorage(e, type_struct_item(e, s, i)->t);
         out_makeFieldArray(ss, _ctx, s, fallback);
         if (fallback) {
           usize size = Type_sizeof(t, e);
           PUTS("unsigned char cshl_storage[");
           USETYPEPRINTER(usize, size - storage_start);
           PUTS("];\n");
+        } else if (!has_storage) {
+          // C99 does not permit an empty structure declaration.
+          PUTS("unsigned char cshl_empty[1];\n");
         }
         PUTS("}");
       }),
@@ -256,32 +276,42 @@ static void out_assertLayout(superscope *ss, printerfunction_context _ctx, Type 
     out_assertLayout(ss, _ctx, Type_at(e, tag.t));
     return;
   }
-  PUTS("static_assert(sizeof(");
+  // ISO C has no zero-sized object; empty cshl structs use a compatibility byte instead.
+  if (!Type_sizeof(t, e)) return;
+  PUTS("typedef char cshl_size_assert_");
+  out_makeTagName(ss, _ctx, t);
+  PUTS("_");
+  USETYPEPRINTER(usize, ss_type_intern(ss, t));
+  PUTS("[(sizeof(");
   out_makeAggregateKeyword(e, _ctx, t);
   PUTS(" ");
   out_makeTagName(ss, _ctx, t);
   PUTS(") == ");
   usize size = tu_is(r_bitfield, tree) ? out_bitfieldSize(e, tu_catch(r_bitfield, tree)) : Type_sizeof(t, e);
   USETYPEPRINTER(usize, size);
-  PUTS(" , \"cshl alignment insurance\");\n");
+  PUTS(") ? 1 : -1];\n");
   bool check_alignment = !tu_is(r_bitfield, tree);
   iflet_tu (let s, r_struct, tree)
     check_alignment = !out_structNeedsByteStorage(e, s, _ctx.allocator);
   if (check_alignment) {
-    PUTS("static_assert(_Alignof(");
-    out_makeAggregateKeyword(e, _ctx, t);
-    PUTS(" ");
-    out_makeTagName(ss, _ctx, t);
-    PUTS(") == ");
-    USETYPEPRINTER(usize, Type_alignof(t, e));
-    PUTS(",\"cshl alignment insurance\");\n");
+    // C99 has no alignof operator. The array's element type alignment is supplied by the
+    // surrounding struct layout checks and by the runtime's use of the byte storage.
   }
   if (!tu_is(r_struct, tree)) return;
   r_struct s = tu_catch(r_struct, tree);
+  // a byte storage struct has no named members left for these to name, and the size assert above
+  // plus the pad sizes already pin the same layout down
+  if (out_structNeedsByteStorage(e, s, _ctx.allocator)) return;
   foreach (let i, range(0, type_struct_len(e, s))) {
     let item = type_struct_item(e, s, i);
-    if (Type_is_comptime(item->t)) continue;
-    PUTS("static_assert(offsetof(");
+    if (!out_memberHasStorage(e, item->t)) continue;
+    PUTS("typedef char cshl_offset_assert_");
+    out_makeTagName(ss, _ctx, t);
+    PUTS("_");
+    USETYPEPRINTER(usize, ss_type_intern(ss, t));
+    PUTS("_");
+    out_makeMemberName(e, _ctx, item->name);
+    PUTS("[(offsetof(");
     out_makeAggregateKeyword(e, _ctx, t);
     PUTS(" ");
     out_makeTagName(ss, _ctx, t);
@@ -289,7 +319,7 @@ static void out_assertLayout(superscope *ss, printerfunction_context _ctx, Type 
     out_makeMemberName(e, _ctx, item->name);
     PUTS(") == ");
     USETYPEPRINTER(usize, item->offset);
-    PUTS(");\n");
+    PUTS(") ? 1 : -1];\n");
   }
 }
 void makeType(superscope *ss, printerfunction_context _ctx, Type t) {
@@ -323,16 +353,21 @@ void makeTypeTree(superscope *ss, printerfunction_context _ctx, TypeTree t) {
       (c_inlineast, _, ),
       (r_bool, _, PUTS("_Bool")),
       (r_void, _, PUTS("void_t")),
-      (r_sint, s, PUTS("signed   "), makeInt(_ctx, s.bits)),
-      (r_uint, u, PUTS("unsigned "), makeInt(_ctx, u.bits)),
-      (r_tag, it, USETYPEPRINTER(id_str, type_name(ss_typeenv(ss), it.name))),
-      (r_arr, a, {
-        PUTS("struct {\n");
-        makeType(ss, _ctx, sglist_get(ss->tlist, a.t - 1));
-        PUTS("_[");
-        USETYPEPRINTER(usize, a.count);
-        PUTS("];");
-        PUTS("}\n");
+      (r_sint, s, out_integerIsWide(ss_typeenv(ss), T(t)) ? (PUTS("cshl_int_"), USETYPEPRINTER(usize, (usize)s.bits))
+                                                          : (PUTS("signed   "), makeInt(_ctx, s.bits))),
+      (r_uint, u, out_integerIsWide(ss_typeenv(ss), T(t)) ? (PUTS("cshl_int_"), USETYPEPRINTER(usize, (usize)u.bits))
+                                                          : (PUTS("unsigned "), makeInt(_ctx, u.bits))),
+      (r_tag, it, ({
+        Type target = Type_at(ss_typeenv(ss), it.t);
+        fptr name = type_name(ss_typeenv(ss), it.name);
+        if (tu_is(c_type, target.t)) _ctx.put(name.ptr, _ctx.arb, name.len, 0);
+        else USETYPEPRINTER(id_str, name);
+      })),
+      // Arrays get a stable C identity because repeating an anonymous struct definition would make
+      // incompatible pointer-to-struct types. Their definitions are emitted separately.
+      (r_arr, _, {
+        PUTS("struct ");
+        out_makeTagName(ss, _ctx, T(t));
       }),
       (r_struct, sn, out_makeAggregateKeyword(ss_typeenv(ss), _ctx, T(tu_of(r_struct, sn))), PUTS(" "), out_makeTagName(ss, _ctx, T(tu_of(r_struct, sn))), PUTS(" ")),
       (r_bitfield, sn, PUTS("struct "), out_makeTagName(ss, _ctx, T(tu_of(r_bitfield, sn))), PUTS(" ")),
@@ -343,20 +378,58 @@ static bool out_isAggregate(Type t) {
   return !t.ptr_level && !t.ref_kind &&
          (tu_is(r_struct, t.t) || tu_is(r_bitfield, t.t));
 }
+static bool out_isOpaqueTag(superscope *ss, Type t) {
+  if (t.ptr_level || t.ref_kind || t.decorations) return false;
+  iflet_tu (let tag, r_tag, t.t)
+    return tu_is(c_type, Type_at(ss_typeenv(ss), tag.t).t);
+  return false;
+}
 void makeTypes(superscope *ss, outputFunction _put, printerfunction_context _ctx) {
   let e = ss_typeenv(ss);
+  msList(u16) wide_bits = msList_init(_ctx.allocator, u16);
+  defer { msList_deInit(_ctx.allocator, wide_bits); };
+  usize candidate_count = ss->tlist.len;
+  foreach (let candidate_index, range(0, candidate_count)) {
+    Type candidate = sglist_get(ss->tlist, candidate_index);
+    if (!out_integerIsWide(e, candidate)) continue;
+    u16 candidate_bits = tu_is(r_sint, candidate.t) ? candidate.t.r_sint.bits : candidate.t.r_uint.bits;
+    bool seen = false;
+    usize wide_count = msList_len(wide_bits);
+    for (usize i = 0; i < wide_count; i++) seen |= wide_bits[i] == candidate_bits;
+    if (!seen) msList_push(_ctx.allocator, wide_bits, candidate_bits);
+  }
+  usize wide_count = msList_len(wide_bits);
+  for (usize i = 0; i < wide_count; i++) {
+    u16 bits = wide_bits[i];
+    PUTS("CSHL_DEFINE_INTEGER(cshl_int_");
+    USETYPEPRINTER(u16, bits);
+    PUTS(", ");
+    USETYPEPRINTER(u16, bits);
+    PUTS(")\n");
+  }
+  // the same tag can sit in the type list more than once, its entries differing only in where the
+  // name was written, and each would declare the same typedef, so remember the names already declared
+  msList(fptr) declared_tags = msList_init(_ctx.allocator, fptr);
+  defer { msList_deInit(_ctx.allocator, declared_tags); };
 
   foreach (let idx, range(0, ss->tlist.len)) {
     let t = sglist_get(ss->tlist, idx);
     if (tu_is(r_null, t.t)) continue;
-    if (out_isAggregate(t)) {
-      out_makeAggregateKeyword(e, _ctx, t);
-      PUTS(" ");
+    if (out_isAggregate(t) || tu_is(r_arr, t.t)) {
+      PUTS("struct ");
       out_makeTagName(ss, _ctx, t);
       PUTS(";\n");
     } else iflet_tu (let tag, r_tag, t.t) {
+      // a pointer, a referance or a decoration of a tag carries the same tree as the tag, so only the
+      // undecorated one declares the typedef; the rest would redefine the same name
+      if (t.decorations) continue;
       let target = Type_at(e, tag.t);
       if (out_isAggregate(target)) {
+        fptr name = type_name(e, tag.name);
+        bool declared = false;
+        foreach (let it, span(declared_tags, msList_len(declared_tags))) declared |= !!fptr_eq(*it, name);
+        if (declared) continue;
+        msList_push(_ctx.allocator, declared_tags, name);
         out_printTypeComment(ss, _ctx, t);
         PUTS("typedef ");
         out_makeAggregateKeyword(e, _ctx, target);
@@ -371,7 +444,8 @@ void makeTypes(superscope *ss, outputFunction _put, printerfunction_context _ctx
 
   foreach (let idx, range(0, ss->tlist.len)) {
     let t = sglist_get(ss->tlist, idx);
-    if (tu_is(r_null, t.t) || Type_is_comptime(t) || out_isAggregate(t) || tu_is(r_arr, t.t)) continue;
+    if (tu_is(r_null, t.t) || Type_is_comptime(t) || out_isAggregate(t) || out_isOpaqueTag(ss, t) ||
+        (tu_is(r_arr, t.t) && !t.decorations)) continue;
     iflet_tu (let tag, r_tag, t.t)
       if (out_isAggregate(Type_at(e, tag.t))) continue;
     out_printTypeComment(ss, _ctx, t);
@@ -384,24 +458,30 @@ void makeTypes(superscope *ss, outputFunction _put, printerfunction_context _ctx
 
   foreach (let idx, range(0, ss->tlist.len)) {
     let t = sglist_get(ss->tlist, idx);
-    if (tu_is(r_null, t.t) || Type_is_comptime(t) || !tu_is(r_arr, t.t)) continue;
-    out_printTypeComment(ss, _ctx, t);
-    PUTS("typedef ");
-    makeType(ss, _ctx, t);
-    PUTS(" cshlT_");
-    USETYPEPRINTER(usize, idx + 1);
-    PUTS(";\n");
-  }
-
-  foreach (let idx, range(0, ss->tlist.len)) {
-    let t = sglist_get(ss->tlist, idx);
-    if (tu_is(r_null, t.t) || Type_is_comptime(t) || !out_isAggregate(t)) continue;
-    out_printTypeComment(ss, _ctx, t);
-    PUTS("typedef ");
-    makeFullType(ss, _ctx, t);
-    PUTS(" cshlT_");
-    USETYPEPRINTER(usize, idx + 1);
-    PUTS(";\n");
-    out_assertLayout(ss, _ctx, t);
+    if (tu_is(r_null, t.t) || Type_is_comptime(t) || t.decorations) continue;
+    if (tu_is(r_arr, t.t)) {
+      r_arr a = tu_catch(r_arr, t.t);
+      out_printTypeComment(ss, _ctx, t);
+      PUTS("struct ");
+      out_makeTagName(ss, _ctx, t);
+      PUTS(" {\n");
+      makeType(ss, _ctx, Type_at(e, a.t));
+      PUTS(" cshl_elements[");
+      USETYPEPRINTER(usize, a.count);
+      PUTS("];\n};\n");
+      PUTS("typedef struct ");
+      out_makeTagName(ss, _ctx, t);
+      PUTS(" cshlT_");
+      USETYPEPRINTER(usize, idx + 1);
+      PUTS(";\n");
+    } else if (out_isAggregate(t)) {
+      out_printTypeComment(ss, _ctx, t);
+      PUTS("typedef ");
+      makeFullType(ss, _ctx, t);
+      PUTS(" cshlT_");
+      USETYPEPRINTER(usize, idx + 1);
+      PUTS(";\n");
+      out_assertLayout(ss, _ctx, t);
+    }
   }
 }

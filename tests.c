@@ -80,7 +80,7 @@ test_fn(cout_layout_declarations) {
     test_assert(!out_structIsUnnatural(ss_typeenv(ss), t.t.r_struct));
     ss_type_intern(ss, t);
   }
-  let pipe = popen("clang -std=c23 -x c -fsyntax-only -", "w");
+  let pipe = popen("clang -std=c99 -pedantic-errors -x c -fsyntax-only -", "w");
   test_assert(pipe);
   printerfunction_context pctx = {.put = fileprint, .arb = pipe, .allocator = arena};
   out_runtime(pctx);

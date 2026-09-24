@@ -52,7 +52,7 @@ static Type tv_type(interp x) { return Type_at(x.env, x.t); }
     makeC(ctx, fileprint, pctx);                                                         \
     test_inteq(0, fclose(out));                                                          \
     snprintf(                                                                            \
-        command, sizeof(command), "clang -std=c23 -O0 -o \"%s\" \"%s\"", exe_path, cpath \
+        command, sizeof(command), "clang -std=c99 -O0 -o \"%s\" \"%s\"", exe_path, cpath \
     );                                                                                   \
     test_inteq(0, system(command));                                                      \
     snprintf(command, sizeof(command), "\"%s\"", exe_path);                              \
@@ -289,6 +289,7 @@ test_file_1(interpret_global_comptime_mutation);
 test_file_1(interpret_runtime_recursion);
 test_file_1(const_declaration_retypes_call_destination);
 test_file_1(if_cshl);
+test_file_1(external_c_binding);
 test_file_1(wide_integer_write_extends_the_bigint);
 test_file_1(struct_operator_overload_vector_equality_true);
 test_file_1(struct_cast_ovl);

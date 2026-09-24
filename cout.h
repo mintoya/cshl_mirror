@@ -5,11 +5,19 @@
 
 void out_runtime(printerfunction_context _ctx);
 void makeRuntime(printerfunction_context _ctx);
+static void makeCIncludes(superscope *ss, printerfunction_context _ctx) {
+  foreach (let header, span(ss->c_includes, msList_len(ss->c_includes))) {
+    PUTS("#include \"");
+    _ctx.put(header->ptr, _ctx.arb, header->len, 0);
+    PUTS("\"\n");
+  }
+}
 void makeTypes(superscope *ss, outputFunction _put, printerfunction_context _ctx);
 void makeFuncs(superscope *ss, printerfunction_context _ctx);
 void makeMain(superscope *ss, printerfunction_context _ctx);
 static void makeVariables(superscope *ss, printerfunction_context _ctx, scope *s);
 void makeC(superscope *ss, outputFunction _put, printerfunction_context _ctx) {
+  makeCIncludes(ss, _ctx);
   makeRuntime(_ctx);
   makeTypes(ss, _put, _ctx);
   makeVariables(ss, _ctx, ss->outermost);

@@ -1,0 +1,4 @@
+@cinclude("stdlib.h");
+FILE ~~ @opaque("FILE");
+abs ~~ @externfn("abs", (@sint(32)), @sint(32));
+abs(-1);

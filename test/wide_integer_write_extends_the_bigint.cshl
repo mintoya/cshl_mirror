@@ -2,4 +2,7 @@ type ~~ @type();
 s128 ~~ @sint(128);
 big ~s128 = 111;
 neg ~s128 = 0 - 1;
-(big == 111) and (neg == (0 - 1));
+(big == 111) and (neg == (0 - 1)) and ((big + 5) == 116) and ((big * 3) == 333)
+  and ((big / 2) == 55) and ((big % 2) == 1) and ((big bxor 7) == 104)
+  and ((big band 112) == 96) and ((big bor 7) == 111)
+  and ((big shl 4) == 1776) and ((neg shr 127) == (0 - 1));

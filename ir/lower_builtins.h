@@ -7,8 +7,38 @@ static u32 lower_builtin_fn errs(superscope *ss, scope *s, astidx args) {
   builtin_args(ss, args, 3);
   let pnode = ast_at(ss, list.start);
   tu_catch(astPBlock, pnode, return_err("EXPECTED_PBLOCK_FNARGS", 0));
-  return try_err(lower_function, (ss, s, list.start, list.start + 1, list.start + 2), 0);
+  return try_err(lower_function, (ss, s, list.start, list.start + 1, list.start + 2, nullFptr, false), 0);
 }
+static u32 lower_builtin_externfn errs(superscope *ss, scope *s, astidx args) {
+  builtin_args(ss, args, 3);
+  let pnode = ast_at(ss, list.start + 1);
+  tu_catch(astPBlock, pnode, return_err("EXPECTED_PBLOCK_FNARGS", 0));
+  typed_value name_value = try_err(temporary_interpret, (ss, s, list.start), 0);
+  fptr name = value_to_fptr(ss, name_value);
+  if (fptr_isNull(name)) return_err("EXTERN_NAME_NOT_STRING", 0);
+  return try_err(lower_function, (ss, s, list.start + 1, list.start + 2, 0, name, true), 0);
+}
+
+static u32 lower_builtin_cinclude errs(superscope *ss, scope *s, astidx args) {
+  builtin_args(ss, args, 1);
+  typed_value value = try_err(temporary_interpret, (ss, s, list.start), 0);
+  fptr header = value_to_fptr(ss, value);
+  if (fptr_isNull(header)) return_err("CINCLUDE_NOT_STRING", 0);
+  foreach (let existing, span(ss->c_includes, msList_len(ss->c_includes)))
+    if (fptr_eq(*existing, header)) return scope_add_value(ss, s, TV_void(ss));
+  msList_push(ss->alloc, ss->c_includes, header);
+  return scope_add_value(ss, s, TV_void(ss));
+}
+
+static u32 lower_builtin_opaque errs(superscope *ss, scope *s, astidx args) {
+  builtin_args(ss, args, 1);
+  typed_value value = try_err(temporary_interpret, (ss, s, list.start), 0);
+  fptr name = value_to_fptr(ss, value);
+  if (fptr_isNull(name)) return_err("OPAQUE_NAME_NOT_STRING", 0);
+  Type opaque = T(tu_of(r_tag, {ss->t_type, ss_srcpos_of_text(ss, name)}));
+  return scope_add_value(ss, s, Type_asValue(ss, opaque));
+}
+
 static u32 lower_builtin_cif errs(superscope *ss, scope *s, astidx args) {
   builtin_args(ss, args, 2, 3);
   let value = ({
@@ -550,6 +580,9 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
       (builtin_uint, /*    */ try_err(lower_builtin_intty, (ss, s, args, false), 0)),
       (builtin_typeof, /*  */ try_err(lower_builtin_typeof, (ss, s, args), 0)),
       (builtin_typeinfo, /**/ try_err(lower_builtin_typeinfo, (ss, s, args), 0)),
+      (builtin_opaque, /*    */ try_err(lower_builtin_opaque, (ss, s, args), 0)),
+      (builtin_cinclude, /*  */ try_err(lower_builtin_cinclude, (ss, s, args), 0)),
+      (builtin_externfn, /*  */ try_err(lower_builtin_externfn, (ss, s, args), 0)),
       (builtin_arrof, /*   */ try_err(lower_builtin_arrof, (ss, s, args), 0)),
       (builtin_ptrof, /*   */ try_err(lower_builtin_ptrof, (ss, s, args), 0)),
       (builtin_sizeof, /*  */ try_err(lower_builtin_sizeof, (ss, s, args), 0)),

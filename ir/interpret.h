@@ -454,6 +454,9 @@ void interpret_call errs(intstate is, ir_call c) {
   let fv = fr.v.c_fun;
 
   let fn = &is->ss->functions[fv.fn - 1];
+  TypeTree function_type_tree = ss_type(is->ss, fn->signature).t;
+  c_fun function_type = tu_catch(c_fun, function_type_tree);
+  if (function_type.isextern) return_err("EXTERN_CALL");
   let inst = &fn->instances[fv.spec];
 
   usize nargs = c.e - c.r;

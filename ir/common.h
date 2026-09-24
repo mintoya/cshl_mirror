@@ -29,6 +29,7 @@ typedef struct function {
   astidx_span params;
   astidx retT;
   astidx body;
+  typeidx signature;
   scope *defscope;
   msList(function_instance) instances;
   moxmap(sliceDef(typed_value), u32) mp;
@@ -50,6 +51,7 @@ struct superscope {
   msList(typeidx) thisstack;
   moxmap(fptr, scope *) type_info;
   msList(function) functions;
+  msList(fptr) c_includes;
   scope *outermost;
 
   typeidx t_void, t_any, t_int, t_bool, t_ast, t_type, t_typeinfo;

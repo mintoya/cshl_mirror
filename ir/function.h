@@ -66,29 +66,45 @@ static inline Type function_item_type errs(superscope *ss, scope *s, astidx item
   return t;
 }
 
-u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, astidx body) {
+u32 lower_function errs(
+    superscope *ss,
+    scope *s,
+    astidx args,
+    astidx retT,
+    astidx body,
+    fptr external_name,
+    bool args_are_types
+) {
   let params = builtin_arg_list(ss, args);
   let arg_scope = scope_inferior(ss, s);
   let signature = (c_fun){.start = ss_type_reserve(ss, params.len + 1)};
   let env = ss_typeenv(ss);
-  foreach (let p, span(params.start, params.len))
-    sglist_get(env.tlist, signature.start - 1 + (p - params.start)) =
-        try_err(function_item_type, (ss, arg_scope, p), 0);
+  foreach (let p, span(params.start, params.len)) {
+    Type param = args_are_types
+                      ? try_err(value_asType, (ss, try_err(temporary_interpret, (ss, arg_scope, p), 0)), 0)
+                      : try_err(function_item_type, (ss, arg_scope, p), 0);
+    sglist_get(env.tlist, signature.start - 1 + (p - params.start)) = param;
+  }
   sglist_get(env.tlist, signature.start + params.len - 1) =
       try_err(value_asType, (ss, try_err(temporary_interpret, (ss, arg_scope, retT), 0)), 0);
+
+  signature.isextern = !fptr_isNull(external_name);
+  signature.external_name = external_name;
+  typeidx signature_idx = ss_type_intern(ss, T(tu_of(c_fun, signature)));
 
   // clang-format off
   msList_push(ss->alloc, ss->functions, {
       .params = params,
       .retT = retT,
       .body = body,
+      .signature = signature_idx,
       .defscope = s,
       .instances = msList_init(ss->alloc, function_instance),
       .mp = moxmap_init(ss->alloc, slice(typed_value), u32, (oxmap_cmp){slice_typed_value_cmp_hash, ss}),
   });
   // clang-format on
   let fn = (u32)msList_len(ss->functions);
-  return scope_add_value(ss, s, TV_with(ss, T(tu_of(c_fun, signature)), VS(.c_fun = {.fn = fn})));
+  return scope_add_value(ss, s, TV_with(ss, ss_type(ss, signature_idx), VS(.c_fun = {.fn = fn})));
 }
 
 bool function_complete_declaration errs(superscope *ss, scope *s, u32 declared, u32 definition_register) {
@@ -123,8 +139,10 @@ static u32 lower_comptime_call_result errs(superscope *ss, scope *s, scope *spec
 }
 
 static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg, u32 fn, slice(typed_value) key, u32 rpos, u32 nargs) {
-  if (!ss->functions[fn - 1].body) return_err("FUNCTION_NOT_DEFINED", 0);
   let function_item = &ss->functions[fn - 1];
+  TypeTree function_type_tree = ss_type(ss, function_item->signature).t;
+  c_fun function_type = tu_catch(c_fun, function_type_tree);
+  if (!function_item->body && !function_type.isextern) return_err("FUNCTION_NOT_DEFINED", 0);
 
   if_decl (let inst, moxmap_get(function_item->mp, key)) {
     let instance = &function_item->instances[*inst];
@@ -154,16 +172,18 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
 
   let params = function_item->params;
   let retT = function_item->retT;
-  foreach (let i, range(0, key.len)) {
-    let item = tu_catchr(astDecl, ast_at(ss, params.start + i));
-    let name = try_err(id_from_ast, (ss, spec, ast_child(ss, item.name_type_value)), 0);
-    u32 value = 0;
-    if (Type_is_comptime(ss_type(ss, key.ptr[i].t))) value = scope_add_value(ss, spec, key.ptr[i]);
-    else {
-      value = scope_add_value(ss, spec, (typed_value){.t = key.ptr[i].t});
-      try_err(scope_add_inst, (ss, spec, (ir)tu_of(ir_farg, {.l = (u32)i, .d = value})), 0);
+  if (!function_type.isextern) {
+    foreach (let i, range(0, key.len)) {
+      let item = tu_catchr(astDecl, ast_at(ss, params.start + i));
+      let name = try_err(id_from_ast, (ss, spec, ast_child(ss, item.name_type_value)), 0);
+      u32 value = 0;
+      if (Type_is_comptime(ss_type(ss, key.ptr[i].t))) value = scope_add_value(ss, spec, key.ptr[i]);
+      else {
+        value = scope_add_value(ss, spec, (typed_value){.t = key.ptr[i].t});
+        try_err(scope_add_inst, (ss, spec, (ir)tu_of(ir_farg, {.l = (u32)i, .d = value})), 0);
+      }
+      try_err(scope_bind, (ss, spec, value, name), 0);
     }
-    try_err(scope_bind, (ss, spec, value, name), 0);
   }
 
   let ret_value = try_err(temporary_interpret, (ss, spec, retT), 0);
@@ -174,12 +194,14 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
   sig.ptr[key.len] = ss_type_intern(ss, ret);
   function_item->instances[spec_number].sig = sig;
 
-  let body = function_item->body;
-  try_err(lower, (ss, spec, body), 0);
-  function_item = &ss->functions[fn - 1];
-  ret = function_instance_ret(ss, &function_item->instances[spec_number]);
-  let fallback = scope_add_value(ss, spec, tu_is(c_any, ret.t) ? TV_void(ss) : TV_of(ss, ret));
-  try_err(scope_add_inst, (ss, spec, (ir)tu_of(ir_ret, fallback)), 0);
+  if (!function_type.isextern) {
+    let body = function_item->body;
+    try_err(lower, (ss, spec, body), 0);
+    function_item = &ss->functions[fn - 1];
+    ret = function_instance_ret(ss, &function_item->instances[spec_number]);
+    let fallback = scope_add_value(ss, spec, tu_is(c_any, ret.t) ? TV_void(ss) : TV_of(ss, ret));
+    try_err(scope_add_inst, (ss, spec, (ir)tu_of(ir_ret, fallback)), 0);
+  }
   scope_finish(ss, spec);
   function_item = &ss->functions[fn - 1];
   ret = function_instance_ret(ss, &function_item->instances[spec_number]);
