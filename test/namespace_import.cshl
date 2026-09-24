@@ -1,0 +1,4 @@
+lib ~~ @import("namespaces/wrapper.cshl");
+@using(lib);
+result ~i32 = wrapped();
+(result == 42) and (lib.math.add(2) == 42) and (@uqot(lib.math.quoted) == 42);

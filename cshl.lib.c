@@ -7,21 +7,20 @@
 #include <assert.h>
 #include <limits.h>
 
-// no runtime representation. a real object so it can be a parameter or a value, but the emitter never
-// makes it a member: anything with no bytes is left out of the C struct it belongs to
+// Placeholder for zero-sized values; omitted from generated struct members.
 typedef struct {
   char cshl_unused;
 } void_t;
 
 typedef struct {
   unsigned char *ptr;
-  unsigned char bit_offset; // :4
+  unsigned char bit_offset;
   unsigned int width;
 } double_offset;
 
 #define double_offset_t(T)                                                                      \
   union {                                                                                       \
-    /*dont use this, it's here for type info, and pointer sized cause that's garunteed to fit*/ \
+    /* Metadata only; pointer-sized to fit any supported type. */ \
     T *data_type;                                                                               \
     double_offset data;                                                                         \
   }
@@ -85,12 +84,7 @@ static inline int cshl_copy(double_offset dest, double_offset src, size_t size, 
   return 0;
 }
 
-/*
- * Portable arbitrary-width integers.
- *
- * Each generated width gets a small little-endian byte-array struct. Operations are implemented
- * here over byte buffers so generated C does not depend on compiler extensions such as _BitInt.
- */
+// Little-endian byte buffers support arbitrary widths without _BitInt.
 enum cshl_int_op {
   CSHL_INT_ADD,
   CSHL_INT_SUB,

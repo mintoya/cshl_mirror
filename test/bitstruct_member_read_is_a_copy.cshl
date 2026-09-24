@@ -9,7 +9,6 @@ B ~type~ @bitstruct{
 x ~B;
 x.a = 5;
 
-// reading a member is reading a value, so a copy of it can be written to on its own
 copy ~u8 = x.a;
 copy = 9;
 

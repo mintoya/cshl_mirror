@@ -1,5 +1,17 @@
+#define ERROR_LOC_IMPLEMENTATION
 #define MY_TEST_FRAMEWORK_C (1)
 #define TESTS_SUBPROCESSES (1)
+
+#if defined(_WIN32) && !defined(__MINGW32__)
+  #include <stdio.h>
+  #if !defined(popen)
+    #define popen _popen
+  #endif
+  #if !defined(pclose)
+    #define pclose _pclose
+  #endif
+#endif
+
 #include <wheels/tests.h>
 
 // so output survives a crash mid-test
@@ -20,10 +32,10 @@ test_fn(cout_struct_layout) {
   sglist_push(items, (r_struct_item){.t = word, .alignment = 4, .offset = 8});
   sglist_push(items, (r_struct_item){.t = word, .alignment = 4, .offset = 0});
   sglist_push(items, (r_struct_item){.t = T(tu_of(c_type, {})), .offset = 1});
-  typeenv e = {.sitems = items};
+  typeenv e = {.sitems = &items};
   r_struct s = {.start = 1};
-  let a = type_struct_item(e, s, 0);
-  let b = type_struct_item(e, s, 1);
+  let a = &sglist_get(items, 0);
+  let b = &sglist_get(items, 1);
   test_inteq(false, out_structIsUnnatural(e, (r_struct){}));
   test_inteq(false, out_structIsUnnatural(e, s)); // unordered, with a gap
   a->offset = 4;
@@ -42,9 +54,7 @@ test_fn(cout_struct_layout) {
   test_inteq(true, out_structIsUnnatural(e, s)); // over-aligned member
 }
 
-// Compile the declarations themselves: their static assertions check every
-// member offset, size, and alignment, including layouts source syntax cannot
-// currently construct.
+// Static assertions cover layouts the source syntax cannot express.
 test_fn(cout_layout_declarations) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -84,7 +94,7 @@ test_fn(cout_layout_declarations) {
   test_assert(pipe);
   printerfunction_context pctx = {.put = fileprint, .arb = pipe, .allocator = arena};
   out_runtime(pctx);
-  makeTypes(ss, fileprint, pctx);
+  makeTypes(ss, pctx);
   test_inteq(0, pclose(pipe));
 }
 

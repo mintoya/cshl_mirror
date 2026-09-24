@@ -1,8 +1,12 @@
 #pragma once
 #include "common.h"
 #include "function.h"
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
 
-// static fptr interpret_string(superscope *ss, scope *s, u32 idx) {}
+astidx_full parse_source errs(allocfn out_allocator, fptr input, const char *filename);
+
 static u32 lower_builtin_fn errs(superscope *ss, scope *s, astidx args) {
   builtin_args(ss, args, 3);
   let pnode = ast_at(ss, list.start);
@@ -28,6 +32,123 @@ static u32 lower_builtin_cinclude errs(superscope *ss, scope *s, astidx args) {
     if (fptr_eq(*existing, header)) return scope_add_value(ss, s, TV_void(ss));
   msList_push(ss->alloc, ss->c_includes, header);
   return scope_add_value(ss, s, TV_void(ss));
+}
+
+static astidx import_ast(superscope *ss, astidx_full parsed) {
+  u32 ao = ss->asts.len, po = ss->plist.len, fo = ss->flist.len;
+  foreach (let i, range(0, parsed.flist.len))
+    sglist_push(ss->flist, sglist_get(parsed.flist, i));
+  foreach (let i, range(0, parsed.plist.len)) {
+    let pos = sglist_get(parsed.plist, i);
+    if (pos.fidx) pos.fidx += fo;
+    sglist_push(ss->plist, pos);
+  }
+  foreach (let i, range(0, parsed.alist.len)) {
+    let node = sglist_get(parsed.alist, i);
+    switch (node.tag) {
+      case TU_TAG(astId):
+        if (node.astId) node.astId += po;
+        break;
+      case TU_TAG(astString):
+        if (node.astString) node.astString += po;
+        break;
+      case TU_TAG(astNumber):
+        if (node.astNumber) node.astNumber += po;
+        break;
+      case TU_TAG(astEmpty):
+        if (node.astEmpty) node.astEmpty += po;
+        break;
+      case TU_TAG(astDecl):
+        node.astDecl.name_type_value += ao;
+        break;
+      case TU_TAG(astOp):
+        node.astOp.left_right += ao;
+        break;
+      case TU_TAG(astBBlock):
+        if (node.astBBlock.pos) node.astBBlock.pos += po;
+        if (node.astBBlock.start) node.astBBlock.start += ao;
+        break;
+      case TU_TAG(astABlock):
+        if (node.astABlock.pos) node.astABlock.pos += po;
+        if (node.astABlock.start) node.astABlock.start += ao;
+        break;
+      case TU_TAG(astPBlock):
+        if (node.astPBlock.pos) node.astPBlock.pos += po;
+        if (node.astPBlock.start) node.astPBlock.start += ao;
+        break;
+      default:
+        break;
+    }
+    sglist_push(ss->asts, node);
+  }
+  let root = parsed.idx + ao;
+  sglist_deinit(parsed.alist);
+  sglist_deinit(parsed.plist);
+  sglist_deinit(parsed.flist);
+  return root;
+}
+
+static u32 lower_builtin_import errs(superscope *ss, scope *s, astidx args) {
+  builtin_args(ss, args, 1);
+  let value = try_err(temporary_interpret, (ss, s, list.start), 0);
+  let requested = value_to_fptr(ss, value);
+  if (fptr_isNull(requested)) return_err("IMPORT_NOT_STRING", 0);
+  if (!requested.len || memchr(requested.ptr, 0, requested.len)) return_err("IMPORT_BAD_PATH", 0);
+  const char *base = "";
+  let pos = srcpos_ast(ast_at(ss, args), ss->asts);
+  if (pos) {
+    let file = sglist_get(ss->plist, pos - 1).fidx;
+    if (file) base = sglist_get(ss->flist, file - 1).filename ?: "";
+  }
+  const char *slash = strrchr(base, '/');
+  usize prefix = requested.ptr[0] == '/' || !slash ? 0 : slash - base + 1;
+  char path[prefix + requested.len + 1];
+  memcpy(path, base, prefix);
+  memcpy(path + prefix, requested.ptr, requested.len);
+  path[prefix + requested.len] = 0;
+  char *realpath(const char *restrict path, char *restrict resolved_path);
+  char *canonical = realpath(path, nullptr);
+  if (!canonical) return_err("IMPORT_FILE_NOT_FOUND", 0);
+  defer { free(canonical); };
+  struct stat info;
+  if (stat(canonical, &info) || !S_ISREG(info.st_mode)) return_err("IMPORT_NOT_FILE", 0);
+  foreach (let entry, span(ss->imports, msList_len(ss->imports))) {
+    if (!fptr_eq(entry->path, fp(canonical))) continue;
+    if (!entry->ns) return_err("IMPORT_CYCLE", 0);
+    try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_scope, entry->ns)), 0);
+    return scope_add_value(ss, s, TV_with(ss, T(tu_of(c_namespace, {})), VS(.c_namespace = entry->ns)));
+  }
+  let name = *acreate(ss->alloc, char[strlen(canonical) + 1]);
+  strcpy(name, canonical);
+  let filename = fp(name);
+  usize cache = msList_len(ss->imports);
+  msList_push(ss->alloc, ss->imports, ((scope_import){filename, nullptr}));
+  let parsed = try_err(parse_source, (ss->alloc, nullFptr, name), 0);
+  let root = import_ast(ss, parsed);
+  let ns = scope_inferior(ss, ss->prelude);
+  ns->module_id = cache + 1;
+  let statements = ast_block_children(ss, root);
+  foreach (let stmt, span(statements.start, statements.len))
+    try_err(lower, (ss, ns, stmt), 0);
+  scope_finish(ss, ns);
+  ss->imports[cache].ns = ns;
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_scope, ns)), 0);
+  return scope_add_value(ss, s, TV_with(ss, T(tu_of(c_namespace, {})), VS(.c_namespace = ns)));
+}
+
+static u32 scope_use_namespace errs(superscope *ss, scope *s, typed_value value) {
+  if (!tu_is(c_namespace, ss_type(ss, value.t).t)) return_err("USING_NOT_NAMESPACE", 0);
+  if (!value.v.c_namespace) return_err("UNKNOWN_NAMESPACE", 0);
+  // A new register marks when the link became visible to child scopes.
+  let at = scope_add_value(ss, s, TV_void(ss));
+  msList_push(ss->alloc, s->using, ((scope_use){value.v.c_namespace, at, mList_len(s->named)}));
+  return at;
+}
+static u32 lower_builtin_using errs(superscope *ss, scope *s, astidx args) {
+  builtin_args(ss, args, 1);
+  let index = try_err(lower, (ss, s, list.start), 0);
+  let value = *scope_find(ss, s, index);
+  return try_err(scope_use_namespace, (ss, s, value), 0);
 }
 
 static u32 lower_builtin_opaque errs(superscope *ss, scope *s, astidx args) {
@@ -97,6 +218,13 @@ static u32 lower_builtin_return errs(superscope *ss, scope *s, astidx args) {
   let val = list.len ? try_err(lower, (ss, s, list.start + 0), 0) : s->start + 1;
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_ret, val)), 0);
   return scope_add_value(ss, s, TV_void(ss));
+}
+static u32 lower_builtin_returnType errs(superscope *ss, scope *s, astidx args) {
+  builtin_no_args(ss, args);
+  let owner = enclosing_function(s);
+  if (!owner) return_err("RETURN_TYPE_OUTSIDE_FUNCTION", 0);
+  let inst = &ss->functions[owner->instance.fn - 1].instances[owner->instance.index];
+  return scope_add_value(ss, s, TV_type(ss, ss_type_intern(ss, function_instance_ret(ss, inst))));
 }
 
 static u32 lower_builtin_id errs(superscope *ss, scope *s, astidx args) {
@@ -238,8 +366,7 @@ static u32 lower_builtin_qot errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss, args);
   if (!list.len) arg = ast_make_empty(ss);
   else if (list.len == 1) arg = list.start + 0;
-  // a parenthesized list of several items is quoted as the list itself, so the macro can index
-  // into it; a single item is still the item, which is how @qot(expr) reads
+  // Quote multi-item lists intact; unwrap single items.
   else arg = args;
   assertMessage(arg);
   return scope_add_value(ss, s, TV_ast(ss, try_err(qot_walk, (ss, s, arg), 0)));
@@ -258,7 +385,7 @@ static u32 lower_builtin_ast_op errs(superscope *ss, scope *s, astidx args) {
   let b = try_err(temporary_interpret, (ss, s, list.start + 2), 0);
   if (!TypeTree_is_ast(ss_type(ss, a.t).t) || !TypeTree_is_ast(ss_type(ss, b.t).t)) return_err("AST_OP_TYPE_ERROR", 0);
   if (!a.v.c_ast || !b.v.c_ast) return_err("AST_OP_UNKNOWN", 0);
-  // a spelling is up to 4 bytes packed into a u32, so pack it the same way the parser does
+  // Match the parser’s packed operator spelling.
   Type st = ss_type(ss, sym.t);
   if (!tu_is(r_arr, st.t) || st.ptr_level || st.ref_kind || !st.iscomptime) return_err("AST_OP_SYM_NOT_STRING", 0);
   let arr = tu_catch(r_arr, st.t);
@@ -277,7 +404,6 @@ static u32 lower_builtin_ast_op errs(superscope *ss, scope *s, astidx args) {
   sglist_push(ss->asts, (ast)tu_of(astOp, {.left_right = off, .number_rep = spelling.n}));
   return scope_add_value(ss, s, TV_ast(ss, (astidx)ss->asts.len));
 }
-// TODO
 static u32 lower_builtin_apply errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss, args);
   if (list.len < 1) return_err("WRONG_ARG_COUNT", 0);
@@ -442,7 +568,7 @@ static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
       try_err(scope_bind, (ss, working_scope, scope_add_value(ss, working_scope, bound), name), 0);
 
     e = ss_typeenv(ss);
-    r_struct_item *ri = type_struct_item(e, members, i);
+    r_struct_item *ri = &sglist_get(ss->sitems, members.start - 1 + i);
     ri->name = id_srcpos(ss, nameidx, name);
     ri->t = ss_type(ss, bound.t);
     if (!Type_is_comptime(ri->t)) {
@@ -478,7 +604,7 @@ static u32 lower_builtin_union errs(superscope *ss, scope *s, astidx args) {
     if (Type_is_comptime(bt)) return_err("UNION_MEMBER_COMPTIME", 0);
 
     let e = ss_typeenv(ss);
-    r_struct_item *ri = type_struct_item(e, members, i);
+    r_struct_item *ri = &sglist_get(ss->sitems, members.start - 1 + i);
     ri->name = id_srcpos(ss, nameidx, name);
     ri->t = bt;
     ri->offset = 0;
@@ -532,7 +658,7 @@ static u32 lower_builtin_bitstruct errs(superscope *ss, scope *s, astidx args) {
     bigint_into_slot((void *)&width, sizeof(width), width_big);
     if (width > (usize)Type_intLike_bitcount(base, e)) return_err("BITSTRUCT_MEMBER_WIDER_THAN_ITSELF", 0);
 
-    r_bitf_item *ri = type_bitf_item(e, members, i);
+    r_bitf_item *ri = &sglist_get(ss->bitems, members.start - 1 + i);
     ri->name = id_srcpos(ss, nameidx, name);
     ri->t = base;
     ri->width = (u32)width;
@@ -558,49 +684,53 @@ static u32 lower_builtin_continue errs(superscope *ss, scope *s, astidx args) {
 static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, astidx args) {
   return switch_exp(
       builtin,
-      (builtin_fn, /*      */ try_err(lower_builtin_fn, (ss, s, args), 0)),
-      (builtin_if, /*      */ try_err(lower_builtin_if, (ss, s, args), 0)),
-      (builtin_cif, /*     */ try_err(lower_builtin_cif, (ss, s, args), 0)),
-      (builtin_loop, /*    */ try_err(lower_builtin_loop, (ss, s, args), 0)),
-      (builtin_return, /*  */ try_err(lower_builtin_return, (ss, s, args), 0)),
-      (builtin_break, /*   */ try_err(lower_builtin_break, (ss, s, args), 0)),
-      (builtin_continue, /**/ try_err(lower_builtin_continue, (ss, s, args), 0)),
-      (builtin__id, /*     */ try_err(lower_builtin_id, (ss, s, args), 0)),
-      (builtin_ast, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_ast, {}))), 0)),
-      (builtin_inlineast, /**/ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_inlineast, {}))), 0)),
-      (builtin_any, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_any, {}))), 0)),
-      (builtin_bool, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, ss_bool_type(ss)), 0)),
-      (builtin_void, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(r_void, {}))), 0)),
-      (builtin_int, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_int, {}))), 0)),
-      (builtin_type, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_type, {}))), 0)),
-      (builtin_const, /*   */ try_err(lower_builtin_decor, (ss, s, args, 1, 0, 0), 0)),
-      (builtin_volatile, /**/ try_err(lower_builtin_decor, (ss, s, args, 0, 1, 0), 0)),
-      (builtin_comptime, /**/ try_err(lower_builtin_decor, (ss, s, args, 0, 0, 1), 0)),
-      (builtin_sint, /*    */ try_err(lower_builtin_intty, (ss, s, args, true), 0)),
-      (builtin_uint, /*    */ try_err(lower_builtin_intty, (ss, s, args, false), 0)),
-      (builtin_typeof, /*  */ try_err(lower_builtin_typeof, (ss, s, args), 0)),
-      (builtin_typeinfo, /**/ try_err(lower_builtin_typeinfo, (ss, s, args), 0)),
-      (builtin_opaque, /*    */ try_err(lower_builtin_opaque, (ss, s, args), 0)),
-      (builtin_cinclude, /*  */ try_err(lower_builtin_cinclude, (ss, s, args), 0)),
-      (builtin_externfn, /*  */ try_err(lower_builtin_externfn, (ss, s, args), 0)),
-      (builtin_arrof, /*   */ try_err(lower_builtin_arrof, (ss, s, args), 0)),
-      (builtin_ptrof, /*   */ try_err(lower_builtin_ptrof, (ss, s, args), 0)),
-      (builtin_sizeof, /*  */ try_err(lower_builtin_sizeof, (ss, s, args), 0)),
-      (builtin_alignof, /* */ try_err(lower_builtin_alignof, (ss, s, args), 0)),
-      (builtin_offsetof, /**/ try_err(lower_builtin_offsetof, (ss, s, args), 0)),
-      (builtin_rawget, /*  */ try_err(lower_builtin_rawget, (ss, s, args), 0)),
-      (builtin_struct, /*  */ try_err(lower_builtin_struct, (ss, s, args), 0)),
-      (builtin_union, /*   */ try_err(lower_builtin_union, (ss, s, args), 0)),
+      (builtin_fn, /*       */ try_err(lower_builtin_fn, (ss, s, args), 0)),
+      (builtin_if, /*       */ try_err(lower_builtin_if, (ss, s, args), 0)),
+      (builtin_cif, /*      */ try_err(lower_builtin_cif, (ss, s, args), 0)),
+      (builtin_loop, /*     */ try_err(lower_builtin_loop, (ss, s, args), 0)),
+      (builtin_return, /*   */ try_err(lower_builtin_return, (ss, s, args), 0)),
+      (builtin_returnT, /*  */ try_err(lower_builtin_returnType, (ss, s, args), 0)),
+      (builtin_break, /*    */ try_err(lower_builtin_break, (ss, s, args), 0)),
+      (builtin_continue, /* */ try_err(lower_builtin_continue, (ss, s, args), 0)),
+      (builtin__id, /*      */ try_err(lower_builtin_id, (ss, s, args), 0)),
+      (builtin_sint, /*     */ try_err(lower_builtin_intty, (ss, s, args, true), 0)),
+      (builtin_uint, /*     */ try_err(lower_builtin_intty, (ss, s, args, false), 0)),
+      (builtin_typeof, /*   */ try_err(lower_builtin_typeof, (ss, s, args), 0)),
+      (builtin_typeinfo, /* */ try_err(lower_builtin_typeinfo, (ss, s, args), 0)),
+      (builtin_opaque, /*   */ try_err(lower_builtin_opaque, (ss, s, args), 0)),
+      (builtin_cinclude, /* */ try_err(lower_builtin_cinclude, (ss, s, args), 0)),
+      (builtin_include, /* */ try_err(lower_builtin_import, (ss, s, args), 0)),
+      (builtin_import, /*  */ try_err(lower_builtin_import, (ss, s, args), 0)),
+      (builtin_using, /*   */ try_err(lower_builtin_using, (ss, s, args), 0)),
+      (builtin_externfn, /* */ try_err(lower_builtin_externfn, (ss, s, args), 0)),
+      (builtin_arrof, /*    */ try_err(lower_builtin_arrof, (ss, s, args), 0)),
+      (builtin_ptrof, /*    */ try_err(lower_builtin_ptrof, (ss, s, args), 0)),
+      (builtin_sizeof, /*   */ try_err(lower_builtin_sizeof, (ss, s, args), 0)),
+      (builtin_alignof, /*  */ try_err(lower_builtin_alignof, (ss, s, args), 0)),
+      (builtin_offsetof, /* */ try_err(lower_builtin_offsetof, (ss, s, args), 0)),
+      (builtin_rawget, /*   */ try_err(lower_builtin_rawget, (ss, s, args), 0)),
+      (builtin_struct, /*   */ try_err(lower_builtin_struct, (ss, s, args), 0)),
+      (builtin_union, /*    */ try_err(lower_builtin_union, (ss, s, args), 0)),
       (builtin_bitstruct, /**/ try_err(lower_builtin_bitstruct, (ss, s, args), 0)),
-      (builtin__this, /*   */ try_err(lower_builtin_this, (ss, s, args), 0)),
-      (builtin_qot, /*     */ try_err(lower_builtin_qot, (ss, s, args), 0)),
-      (builtin_uqot, /*    */ try_err(lower_builtin_uqot, (ss, s, args), 0)),
-      (builtin_ast_op, /*  */ try_err(lower_builtin_ast_op, (ss, s, args), 0)),
-      (builtin_apply, /*   */ try_err(lower_builtin_apply, (ss, s, args), 0)),
-      (builtin_at, /*      */ try_err(lower_builtin_at, (ss, s, args), 0)),
-      (builtin_where, /*   */ try_err(lower_builtin_where, (ss, s, args), 0)),
-      (builtin_ref, /*     */ try_err(lower_builtin_ref, (ss, s, args), 0)),
-      (builtin_reft, /*    */ try_err(lower_builtin_reft, (ss, s, args), 0)),
+      (builtin__this, /*    */ try_err(lower_builtin_this, (ss, s, args), 0)),
+      (builtin_qot, /*      */ try_err(lower_builtin_qot, (ss, s, args), 0)),
+      (builtin_uqot, /*     */ try_err(lower_builtin_uqot, (ss, s, args), 0)),
+      (builtin_ast_op, /*   */ try_err(lower_builtin_ast_op, (ss, s, args), 0)),
+      (builtin_apply, /*    */ try_err(lower_builtin_apply, (ss, s, args), 0)),
+      (builtin_at, /*       */ try_err(lower_builtin_at, (ss, s, args), 0)),
+      (builtin_where, /*    */ try_err(lower_builtin_where, (ss, s, args), 0)),
+      (builtin_ref, /*      */ try_err(lower_builtin_ref, (ss, s, args), 0)),
+      (builtin_reft, /*     */ try_err(lower_builtin_reft, (ss, s, args), 0)),
+      (builtin_const, /*    */ try_err(lower_builtin_decor, (ss, s, args, 1, 0, 0), 0)),
+      (builtin_volatile, /* */ try_err(lower_builtin_decor, (ss, s, args, 0, 1, 0), 0)),
+      (builtin_comptime, /* */ try_err(lower_builtin_decor, (ss, s, args, 0, 0, 1), 0)),
+      (builtin_ast, /*      */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_ast, {}))), 0)),
+      (builtin_any, /*      */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_any, {}))), 0)),
+      (builtin_int, /*      */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_int, {}))), 0)),
+      (builtin_bool, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(r_bool, {}))), 0)),
+      (builtin_void, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(r_void, {}))), 0)),
+      (builtin_type, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_type, {}))), 0)),
+      (builtin_inlineast, /**/ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_inlineast, {}))), 0)),
   );
   assertMessage(false, "unhandled builtin %u", builtin);
 }

@@ -1,0 +1,40 @@
+@using @include("../examples/macros.cshl");
+! ~~ fn (T ~type) type {
+  return @struct {
+    Self ~type~ @this();
+    has_err ~bool;
+    data ~@union { err_text ~(@ptr @sint 8); result ~T; };
+    try ~~ fn (self ~ast) (@inlineast()) {
+      return @qot {
+        this ~~ @uqot(self);
+        if this.has_err {
+          @cif(@typeinfo(@returnT()).struct.namespace.parent == @typeinfo(@typeof(!)).fn.namespace, {
+            result ~@returnT();
+            result.has_err = 1;
+            result.data.err_text = this.data.err_text;
+            return result;
+          }, {
+            return 77;
+          });
+        };
+        this.data.result;
+      };
+    };
+  };
+};
+f1 ~~ fn (fail ~bool) (! void) {
+  result ~(! void);
+  result.has_err = fail;
+  return result;
+};
+main ~~ fn (times ~int, fail ~bool) (! void) {
+  @cif(times, { return main(times - 1, fail); });
+  f1(fail):try();
+};
+plain ~~ fn () i32 {
+  f1(1):try();
+  return 0;
+};
+good ~(! void) = main(2, 0);
+bad ~(! void) = main(2, 1);
+(good.has_err == 0) and (bad.has_err == 1) and (plain() == 77);

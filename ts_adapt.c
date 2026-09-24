@@ -6,24 +6,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <tree-sitter/lib/include/tree_sitter/api.h>
-// TODO: i will write an actual parser but if i ever want to change the way the ast works that would be pulling teeth
 
 extern const TSLanguage *tree_sitter_cshl(void);
 
 static ast null_ast() { return (ast)tu_of(astNull, {}); }
-
-static char *printerr_point(void *userdata) {
-  static char ebuff[100] = {};
-  let epoint = (TSPoint *)&userdata;
-  snprintf(
-      ebuff,
-      countof(ebuff),
-      "Syntax error line %u column %u",
-      epoint->row + 1,
-      epoint->column + 1
-  );
-  return ebuff;
-}
 
 static srcpos register_pos(poslist *plist, u32 fileIndex, TSNode n) {
   u32 start = ts_node_start_byte(n);
@@ -31,11 +17,11 @@ static srcpos register_pos(poslist *plist, u32 fileIndex, TSNode n) {
   return (srcpos)plist->len;
 }
 
-static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u32 fileIndex, const u8 *source, TSNode ts_node) {
-  static thread_local TSPoint error_location;
-  static_assert(sizeof(TSPoint) == sizeof(itypeof(err_t, fnd)));
+static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, filelist *flist, u32 fileIndex, const u8 *source, TSNode ts_node) {
   if (ts_node_is_null(ts_node) || !ts_node_is_named(ts_node) || ts_node_is_error(ts_node) || ts_node_is_missing(ts_node))
-    return_err_extras("PARSE_ERROR", printerr_point, (error_location = ts_node_start_point(ts_node), *(void **)&error_location), (ast){});
+    pass_err(error_loc_add(allocator,
+        ((err_t){.err_code = "PARSE_ERROR", .file = __FILE__, .line = __LINE__, .function = __FUNCTION__}),
+        ((srcpos_full){register_pos(plist, fileIndex, ts_node), *plist, *flist})), (ast){});
 
   if (ts_node_has_error(ts_node)) {
     TSNode bad = ts_node;
@@ -51,7 +37,9 @@ static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u3
       if (ts_node_is_null(next)) break;
       bad = next;
     }
-    return_err_extras("PARSE_ERROR", printerr_point, (error_location = ts_node_start_point(bad), *(void **)&error_location), (ast){});
+    pass_err(error_loc_add(allocator,
+        ((err_t){.err_code = "PARSE_ERROR", .file = __FILE__, .line = __LINE__, .function = __FUNCTION__}),
+        ((srcpos_full){register_pos(plist, fileIndex, bad), *plist, *flist})), (ast){});
   }
 
   let type = ts_node_type(ts_node);
@@ -73,11 +61,10 @@ static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u3
     TSNode value_node = ts_node_child_by_field_name(ts_node, "value", 5);
     TSNode assign_op = ts_node_child_by_field_name(ts_node, "assignment_op", 13);
 
-    ast name = !ts_node_is_null(name_node) ? try_err(ts_to_ast2, (allocator, alist, plist, fileIndex, source, name_node), (ast){}) : null_ast();
-    ast type_ = !ts_node_is_null(type_node) ? try_err(ts_to_ast2, (allocator, alist, plist, fileIndex, source, type_node), (ast){}) : null_ast();
-    ast value = !ts_node_is_null(value_node) ? try_err(ts_to_ast2, (allocator, alist, plist, fileIndex, source, value_node), (ast){}) : null_ast();
+    ast name = !ts_node_is_null(name_node) ? try_err(ts_to_ast2, (allocator, alist, plist, flist, fileIndex, source, name_node), (ast){}) : null_ast();
+    ast type_ = !ts_node_is_null(type_node) ? try_err(ts_to_ast2, (allocator, alist, plist, flist, fileIndex, source, type_node), (ast){}) : null_ast();
+    ast value = !ts_node_is_null(value_node) ? try_err(ts_to_ast2, (allocator, alist, plist, flist, fileIndex, source, value_node), (ast){}) : null_ast();
 
-    // name, type and value all next to each other starting at off
     astidx off = (astidx)alist->len + 1;
     sglist_push(*alist, name);
     sglist_push(*alist, type_);
@@ -91,10 +78,9 @@ static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u3
     TSNode right_node = ts_node_child_by_field_name(ts_node, "right", 5);
     TSNode op_node = ts_node_child_by_field_name(ts_node, "operator", 8);
 
-    ast left = !ts_node_is_null(left_node) ? try_err(ts_to_ast2, (allocator, alist, plist, fileIndex, source, left_node), (ast){}) : null_ast();
-    ast right = !ts_node_is_null(right_node) ? try_err(ts_to_ast2, (allocator, alist, plist, fileIndex, source, right_node), (ast){}) : null_ast();
+    ast left = !ts_node_is_null(left_node) ? try_err(ts_to_ast2, (allocator, alist, plist, flist, fileIndex, source, left_node), (ast){}) : null_ast();
+    ast right = !ts_node_is_null(right_node) ? try_err(ts_to_ast2, (allocator, alist, plist, flist, fileIndex, source, right_node), (ast){}) : null_ast();
 
-    // left and right next to each other
     astidx off = (astidx)alist->len + 1;
     sglist_push(*alist, left);
     sglist_push(*alist, right);
@@ -118,7 +104,7 @@ static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u3
     for (u32 i = 0; i < count; i++) {
       let child = ts_node_named_child(ts_node, i);
       if (!strcmp(ts_node_type(child), "comment")) continue;
-      roots[rc++] = try_err(ts_to_ast2, (allocator, alist, plist, fileIndex, source, child), (ast){});
+      roots[rc++] = try_err(ts_to_ast2, (allocator, alist, plist, flist, fileIndex, source, child), (ast){});
     }
 
     astidx start = (astidx)alist->len + 1;
@@ -163,7 +149,7 @@ astidx_full parse_source errs(allocfn out_allocator, fptr input, const char *fil
   TSTree *tree = ts_parser_parse_string(parser, NULL, (const char *)content.ptr, content.len);
   defer { ts_tree_delete(tree); };
 
-  let root = try_err(ts_to_ast2, (out_allocator, &res.alist, &res.plist, fileIndex, content.ptr, ts_tree_root_node(tree)), (astidx_full){});
+  let root = try_err(ts_to_ast2, (out_allocator, &res.alist, &res.plist, &res.flist, fileIndex, content.ptr, ts_tree_root_node(tree)), (astidx_full){});
   sglist_push(res.alist, root); // the root is referenced by no parent slot
   res.idx = (astidx)res.alist.len;
   return res;

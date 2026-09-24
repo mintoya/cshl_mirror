@@ -27,7 +27,11 @@ static void makeFunctionType(superscope *ss, printerfunction_context _ctx, typei
   else makeTypedefName(_ctx, idx);
 }
 
-static void makeVariable(printerfunction_context _ctx, u32 reg) {
+static void makeVariable(printerfunction_context _ctx, scope *s, u32 reg) {
+  let owner = scope_owner(s, reg);
+  if (owner->module_id) {
+    PUTS("ns"), USETYPEPRINTER(u32, owner->module_id), PUTS("_");
+  }
   PUTS("v");
   USETYPEPRINTER(u32, reg);
 }
@@ -76,8 +80,11 @@ static bool scope_register_written(scope *s, u32 reg) {
     u32 destination = tu_match_exp(
         *instruction,
         (ir_set, op, op.d),
+        (ir_read, op, op.d),
         (ir_cast, op, op.d),
+        (ir_ptrcast, op, op.d),
         (ir_getref, op, op.d),
+        (ir_scoperef, op, op.d),
         (ir_getptr, op, op.d),
         (ir_putptr, op, op.d),
         (ir_field, op, op.d),
@@ -146,7 +153,7 @@ static void makeRegisterPlace(superscope *ss, printerfunction_context _ctx, scop
       }
     }
   }
-  if (!scope_register_written(s, reg) && tu_is(r_bool, t.t) && value->v.value) {
+  if (!scope_register_written((scope *)scope_owner(s, reg), reg) && tu_is(r_bool, t.t) && value->v.value) {
     if (*(bool *)value->v.value) PUTS("((_Bool)1)");
     else PUTS("((_Bool)0)");
     return;
@@ -157,27 +164,30 @@ static void makeRegisterPlace(superscope *ss, printerfunction_context _ctx, scop
     PUTS("*(*(");
     makeRegisterType(ss, _ctx, s, reg);
     PUTS(" *)");
-    makeVariable(_ctx, reg);
+    makeVariable(_ctx, s, reg);
     PUTS(")");
     return;
   }
   if (t.ref_kind == ref_ref) PUTS("*");
-  makeVariable(_ctx, reg);
+  makeVariable(_ctx, s, reg);
 }
 
 static void makeDrefSignBits(superscope *ss, printerfunction_context _ctx, scope *s, u32 reg) {
   Type t = function_register_type(ss, s, reg);
   if (t.ref_kind == ref_dref && function_sign_bits(t, ss_typeenv(ss))) {
-    makeVariable(_ctx, reg);
+    makeVariable(_ctx, s, reg);
     PUTS(".data.width");
   } else USETYPEPRINTER(u32, function_sign_bits(t, ss_typeenv(ss)));
 }
 
 static void makeDrefValue(superscope *ss, printerfunction_context _ctx, scope *s, u32 reg) {
   Type t = function_register_type(ss, s, reg);
-  if (function_sign_bits(t, ss_typeenv(ss))) PUTS("(int64_t)");
+  t.ref_kind = 0;
+  PUTS("(");
+  makeType(ss, _ctx, t);
+  PUTS(")");
   PUTS("cshl_load(");
-  makeVariable(_ctx, reg);
+  makeVariable(_ctx, s, reg);
   PUTS(".data, ");
   makeDrefSignBits(ss, _ctx, s, reg);
   PUTS(")");
@@ -280,11 +290,11 @@ static void makeWideOperandAs(
   Type t = function_register_type(ss, s, reg);
   if (function_is_wide(ss, t) && function_integer_bits(ss, t)) {
     if (t.ref_kind == ref_ref) {
-      makeVariable(_ctx, reg);
+      makeVariable(_ctx, s, reg);
       PUTS("->bytes");
     } else {
       PUTS("(");
-      makeVariable(_ctx, reg);
+      makeVariable(_ctx, s, reg);
       PUTS(".bytes)");
     }
     return;
@@ -312,7 +322,7 @@ static void makeWideDecimal(printerfunction_context _ctx, bigint value) {
   PUTS("\"");
   for (usize i = 0; i < text.len; i++) {
     const char c = text.ptr[i];
-    if (c == '-' || (c >= '0' && c <= '9')) _ctx.put(&c, _ctx.arb, 1, 0);
+    if (c == '-' || (c >= '0' && c <= '9')) PUTC(c);
   }
   PUTS("\"");
 }
@@ -336,31 +346,31 @@ static void makeWideCastFromOperand(
     PUTS(")");
     return;
   }
-  if (function_is_wide(ss, lt)) {
-    u32 source_bits = function_integer_bits(ss, lt);
-    Type source_base = Type_stripTag(lt, ss_typeenv(ss));
-    bool source_signed = tu_is(r_sint, source_base.t);
-    makeWideType(_ctx, bits);
-    PUTS("_cast_value(");
-    makeWideOperandAs(ss, _ctx, s, source_reg, bits);
-    PUTS(", sizeof(");
-    makeWideType(_ctx, source_bits);
-    PUTS("), ");
-    USETYPEPRINTER(usize, source_bits);
-    PUTS(", ");
-    if (source_signed) PUTS("1"); else PUTS("0");
-    PUTS(", ");
-    if (is_signed) PUTS("1"); else PUTS("0");
-    PUTS(")");
-    return;
-  }
   makeWideType(_ctx, bits);
-  PUTS("_from_i64((int64_t)");
-  makeRegisterPlace(ss, _ctx, s, source_reg);
+  PUTS("_cast_value(");
+  if (function_is_wide(ss, lt)) {
+    makeWideOperandAs(ss, _ctx, s, source_reg, bits);
+  } else {
+    PUTS("(const unsigned char *)&(");
+    lt.ref_kind = 0;
+    makeType(ss, _ctx, lt);
+    PUTS("){ ");
+    makeRegisterPlace(ss, _ctx, s, source_reg);
+    PUTS(" }");
+  }
+  lt.ref_kind = 0;
+  PUTS(", sizeof(");
+  makeType(ss, _ctx, lt);
+  PUTS("), ");
+  USETYPEPRINTER(u32, function_integer_bits(ss, lt));
+  PUTS(", ");
+  USETYPEPRINTER(u32, !!function_sign_bits(lt, ss_typeenv(ss)));
+  PUTS(", ");
+  USETYPEPRINTER(u32, is_signed);
   PUTS(")");
 }
 
-static const char *makeWideOperationName(u32 operation) {
+static cstr makeWideOperationName(u32 operation) {
   switch (operation) {
     case enop_plus: return "CSHL_INT_ADD";
     case enop_minus: return "CSHL_INT_SUB";
@@ -406,8 +416,7 @@ static void makeWideOperation(
   PUTS(", ");
   makeWideOperandAs(ss, _ctx, s, right_reg, bits);
   PUTS(", ");
-  const char *operation_name = makeWideOperationName(operation);
-  _ctx.put(operation_name, _ctx.arb, strlen(operation_name), 0);
+  USETYPEPRINTER(cstr, makeWideOperationName(operation));
   PUTS(", ");
   if (is_signed) PUTS("1"); else PUTS("0");
   PUTS(")");
@@ -461,74 +470,57 @@ static void makeWideComparison(
   PUTS(" 0)");
 }
 
-static void makeShift(superscope *ss, printerfunction_context _ctx, scope *s, u32 d, u32 l, u32 r, Type dt, Type lt, Type rt, u32 op) {
-  typeenv e = ss_typeenv(ss);
-  Type base = dt;
-  while (tu_is(r_tag, base.t))
-    base = Type_at(e, tu_catch(r_tag, base.t).t);
-  usize bits = tu_match_exp(
-      base.t,
-      (r_sint, v, (usize)v.bits),
-      (r_uint, v, (usize)v.bits),
-      (r_bool, _, (usize)1),
-      (default, (usize)0)
-  );
-  if (!bits) bits = sizeof(uint64_t) * CHAR_BIT;
-  bool is_signed = tu_is(r_sint, base.t);
-  if (op == enop_shl) {
-    bool negative_branch = is_signed;
-    if (negative_branch) {
-      PUTS("((int64_t)");
-      makeRawOperand(ss, _ctx, s, rt, r);
-      PUTS(") < 0 ? ((int64_t)");
-      makeRawOperand(ss, _ctx, s, lt, l);
-      PUTS(") >> (-(int64_t)");
-      makeRawOperand(ss, _ctx, s, rt, r);
-      PUTS(") : (");
-    }
-    PUTS("(");
-    if (is_signed) PUTS("(int64_t)");
-    else PUTS("(uint64_t)");
-    makeRawOperand(ss, _ctx, s, lt, l);
-    PUTS(") * (");
-    PUTS("((uint64_t)");
-    makeRawOperand(ss, _ctx, s, rt, r);
-    PUTS(") >= ");
-    USETYPEPRINTER(usize, bits);
-    PUTS(" ? 0 : (");
-    if (is_signed) PUTS("(int64_t)");
-    else PUTS("(uint64_t)");
-    PUTS("1 << (");
-    makeRawOperand(ss, _ctx, s, rt, r);
-    PUTS(")))");
-    if (negative_branch) PUTS(")");
-  } else {
-    bool negative_branch = is_signed;
-    if (negative_branch) {
-      PUTS("((int64_t)");
-      makeRawOperand(ss, _ctx, s, rt, r);
-      PUTS(") < 0 ? ((int64_t)");
-      makeRawOperand(ss, _ctx, s, lt, l);
-      PUTS(") << (-(int64_t)");
-      makeRawOperand(ss, _ctx, s, rt, r);
-      PUTS(") : (");
-    }
-    PUTS("(");
-    if (is_signed) PUTS("(int64_t)");
-    else PUTS("(uint64_t)");
-    makeRawOperand(ss, _ctx, s, lt, l);
-    PUTS(") >> (");
-    PUTS("((uint64_t)");
-    makeRawOperand(ss, _ctx, s, rt, r);
-    PUTS(") >= ");
-    USETYPEPRINTER(usize, bits);
-    PUTS(" ? ");
-    USETYPEPRINTER(usize, is_signed ? bits - 1 : 0);
-    PUTS(" : ");
-    makeRawOperand(ss, _ctx, s, rt, r);
-    PUTS(")");
-    if (negative_branch) PUTS(")");
+static void makeShiftAmount(superscope *ss, printerfunction_context _ctx, scope *s, Type rt, u32 r, bool negative) {
+  if (negative) {
+    PUTS("((");
+    u32 bits = function_integer_bits(ss, rt);
+    makeType(ss, _ctx, T(TypeTree_uint(bits ? bits : sizeof(usize) * CHAR_BIT)));
+    PUTS(")(-(");
   }
+  makeRawOperand(ss, _ctx, s, rt, r);
+  if (negative) PUTS(" + 1)) + 1u)");
+}
+
+static void makeDirectedShift(superscope *ss, printerfunction_context _ctx, scope *s, Type dt, Type lt, Type rt, u32 l, u32 r, bool left, bool negative) {
+  u32 bits = function_integer_bits(ss, dt);
+  bool is_signed = !!function_sign_bits(dt, ss_typeenv(ss));
+  PUTS("(");
+  makeShiftAmount(ss, _ctx, s, rt, r, negative);
+  PUTS(" >= ");
+  USETYPEPRINTER(u32, bits);
+  PUTS(" ? ");
+  if (!left && is_signed) {
+    PUTS("(");
+    makeRawOperand(ss, _ctx, s, lt, l);
+    PUTS(" < 0 ? -1 : 0)");
+  } else PUTS("0");
+  PUTS(" : ((");
+  if (left) {
+    PUTS("(");
+    makeType(ss, _ctx, T(TypeTree_uint(bits)));
+    PUTS(")");
+  }
+  makeRawOperand(ss, _ctx, s, lt, l);
+  // Keep narrow left operands unsigned after C's integer promotions.
+  if (left) PUTS(" + 0u");
+  if (left) PUTS(") << ");
+  else PUTS(") >> ");
+  makeShiftAmount(ss, _ctx, s, rt, r, negative);
+  PUTS("))");
+}
+
+static void makeShift(superscope *ss, printerfunction_context _ctx, scope *s, u32 l, u32 r, Type dt, Type lt, Type rt, u32 op) {
+  bool left = op == enop_shl;
+  bool signed_amount = function_sign_bits(rt, ss_typeenv(ss)) || tu_is(c_int, rt.t);
+  if (signed_amount) {
+    PUTS("(");
+    makeRawOperand(ss, _ctx, s, rt, r);
+    PUTS(" < 0 ? ");
+    makeDirectedShift(ss, _ctx, s, dt, lt, rt, l, r, !left, true);
+    PUTS(" : ");
+  }
+  makeDirectedShift(ss, _ctx, s, dt, lt, rt, l, r, left, false);
+  if (signed_amount) PUTS(")");
 }
 
 static void makeCall(
@@ -541,15 +533,14 @@ static void makeCall(
 ) {
   typed_value *callee = scope_find(ss, s, callee_reg);
   assertMessage(callee->v.c_fun.fn && callee->v.c_fun.spec < msList_len(ss->functions[callee->v.c_fun.fn - 1].instances), "un-specialized function call");
-  Type callee_type = ss_type(ss, callee->t);
-  c_fun function_type = tu_catch(c_fun, callee_type.t);
-  if (!function_type.isextern) {
+  let function = &ss->functions[callee->v.c_fun.fn - 1];
+  if (!function->isextern) {
     PUTS("cshl_fn");
     USETYPEPRINTER(usize, callee->v.c_fun.fn);
     PUTS("_");
     USETYPEPRINTER(usize, callee->v.c_fun.spec);
   } else {
-    _ctx.put(function_type.external_name.ptr, _ctx.arb, function_type.external_name.len, 0);
+    PUTS(*VLAP((const c8 *)function->external_name.ptr, function->external_name.len + 1));
   }
   PUTS("(");
   bool first = true;
@@ -558,12 +549,144 @@ static void makeCall(
     if (Type_is_comptime(t)) continue;
     if (!first) PUTS(", ");
     first = false;
-    makeVariable(_ctx, i);
+    makeVariable(_ctx, s, i);
   }
   PUTS(")");
 }
 
+static void makeReference(superscope *ss, printerfunction_context _ctx, scope *s, itypeof(ir, ir_getref) op) {
+  Type dt = function_register_type(ss, s, op.d);
+  PUTS("  ");
+  if (dt.ref_kind == ref_dref) {
+    makeVariable(_ctx, s, op.d);
+    PUTS(".data = ");
+    makeVariable(_ctx, s, op.l);
+    PUTS(".data");
+  } else {
+    Type lt = function_register_type(ss, s, op.l);
+    bool field_ref = lt.ref_kind && function_register_is_field_ref(ss, s, op.d);
+    if (field_ref) {
+      PUTS("*((");
+      makeRegisterType(ss, _ctx, s, op.l);
+      PUTS(" *)");
+      makeVariable(_ctx, s, op.d);
+      PUTS(") = ");
+      makeVariable(_ctx, s, op.l);
+    } else {
+      makeVariable(_ctx, s, op.d);
+      PUTS(" = ");
+      if (lt.ref_kind == ref_dref) makeVariable(_ctx, s, op.l), PUTS(".data");
+      else if (lt.ref_kind) makeVariable(_ctx, s, op.l);
+      else {
+        PUTS("&");
+        makeVariable(_ctx, s, op.l);
+      }
+    }
+  }
+  PUTS(";");
+}
+
+static void makeFieldReference(superscope *ss, printerfunction_context _ctx, scope *s, itypeof(ir, ir_field) op) {
+  typeenv e = ss_typeenv(ss);
+  Type lt = function_register_type(ss, s, op.l);
+  r_bitfield bf = TypeTree_inner_bitfield(lt.t, e);
+  PUTS("  ");
+  makeVariable(_ctx, s, op.d);
+  if (bf.start) {
+    u32 offset = 0;
+    foreach (let i, range(0, op.i))
+      offset += type_bitf_item(e, bf, i)->width;
+    PUTS(".data = (double_offset){ .ptr = (unsigned char *)");
+    makeRegisterAddress(ss, _ctx, s, op.l);
+    PUTS(" + ");
+    USETYPEPRINTER(usize, offset / 8);
+    PUTS(", .bit_offset = ");
+    USETYPEPRINTER(usize, offset % 8);
+    PUTS(", .width = ");
+    USETYPEPRINTER(usize, type_bitf_item(e, bf, op.i)->width);
+    PUTS(" }");
+  } else {
+    r_struct strct = TypeTree_inner_struct(lt.t, e);
+    assertMessage(strct.start && op.i < type_struct_len(e, strct), "field type has no member");
+    u32 offset = type_struct_item(e, strct, op.i)->offset;
+    PUTS(" = (");
+    makeRegisterType(ss, _ctx, s, op.d);
+    PUTS(")((unsigned char *)");
+    makeRegisterAddress(ss, _ctx, s, op.l);
+    PUTS(" + ");
+    USETYPEPRINTER(usize, offset);
+    PUTS(")");
+  }
+  PUTS(";");
+}
+
+static void makeArrayReference(superscope *ss, printerfunction_context _ctx, scope *s, itypeof(ir, ir_array) op) {
+  PUTS("  ");
+  makeVariable(_ctx, s, op.d);
+  PUTS(" = (");
+  makeRegisterType(ss, _ctx, s, op.d);
+  PUTS(")((unsigned char *)");
+  makeRegisterAddress(ss, _ctx, s, op.l);
+  PUTS(" + ");
+  makeRegisterPlace(ss, _ctx, s, op.r);
+  PUTS(" * sizeof(*");
+  makeVariable(_ctx, s, op.d);
+  PUTS("));");
+}
+
+static void makeCast(superscope *ss, printerfunction_context _ctx, scope *s, itypeof(ir, ir_cast) op) {
+  Type dt = function_register_type(ss, s, op.d);
+  Type lt = function_register_type(ss, s, op.l);
+  PUTS("  ");
+  if (function_is_wide(ss, dt)) {
+    if (dt.ref_kind == ref_ref) PUTS("*");
+    makeVariable(_ctx, s, op.d);
+    PUTS(" = ");
+    makeWideCastFromOperand(ss, _ctx, s, op.d, op.l);
+    PUTS(";");
+  } else if (function_is_wide(ss, lt)) {
+    u32 source_bits = function_integer_bits(ss, lt);
+    Type source_base = Type_stripTag(lt, ss_typeenv(ss));
+    bool source_signed = tu_is(r_sint, source_base.t);
+    if (dt.ref_kind == ref_ref) PUTS("*");
+    makeVariable(_ctx, s, op.d);
+    PUTS(" = (");
+    makeType(ss, _ctx, dt);
+    PUTS(") cshl_int_to_i64(");
+    makeWideOperand(ss, _ctx, s, op.l);
+    PUTS(", sizeof(");
+    makeWideType(_ctx, source_bits);
+    PUTS("), ");
+    USETYPEPRINTER(usize, source_bits);
+    PUTS(", ");
+    if (source_signed) PUTS("1"); else PUTS("0");
+    PUTS(");");
+  } else if (lt.ref_kind == ref_dref) {
+    PUTS("cshl_read(");
+    makeVariable(_ctx, s, op.l);
+    PUTS(".data, (unsigned char *)&");
+    if (dt.ref_kind == ref_ref) PUTS("*");
+    makeVariable(_ctx, s, op.d);
+    PUTS(", ");
+    makeRegisterSize(ss, _ctx, s, op.d);
+    PUTS(", ");
+    makeRegisterSize(ss, _ctx, s, op.d);
+    PUTS(", ");
+    makeDrefSignBits(ss, _ctx, s, op.l);
+    PUTS(");");
+  } else {
+    if (dt.ref_kind == ref_ref) PUTS("*");
+    makeVariable(_ctx, s, op.d);
+    PUTS(" = (");
+    makeType(ss, _ctx, dt);
+    PUTS(")");
+    makeRegisterPlace(ss, _ctx, s, op.l);
+    PUTS(";");
+  }
+}
+
 static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx, scope *s, ir inst) {
+  if (tu_is(ir_read, inst)) inst = (ir)tu_of(ir_set, {.l = inst.ir_read.l, .d = inst.ir_read.d});
   if (tu_is(ir_set, inst) &&
       (Type_is_comptime(function_register_type(ss, s, inst.ir_set.d)) ||
        function_is_non_int_comptime(function_register_type(ss, s, inst.ir_set.l))))
@@ -584,102 +707,45 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
   if (tu_is(ir_rawdot, inst)) PUTS("  // ir_rawdot");
   tu_match_void(
       inst,
-      (ir_getref, op, {
-        Type dt = function_register_type(ss, s, op.d);
+      (ir_scope, child, {
+        PUTS("  cshl_ns_init"), USETYPEPRINTER(u32, child->module_id), PUTS("();");
+      }),
+      (ir_scoperef, ref, {
         PUTS("  ");
-        if (dt.ref_kind == ref_dref) {
-          makeVariable(_ctx, op.d);
-          PUTS(".data = ");
-          makeVariable(_ctx, op.l);
-          PUTS(".data");
-        } else {
-          Type lt = function_register_type(ss, s, op.l);
-          bool field_ref = lt.ref_kind && function_register_is_field_ref(ss, s, op.d);
-          if (field_ref) {
-            PUTS("*((");
-            makeRegisterType(ss, _ctx, s, op.l);
-            PUTS(" *)");
-            makeVariable(_ctx, op.d);
-            PUTS(") = ");
-            makeVariable(_ctx, op.l);
-          } else {
-            // the typechecker already made both sides the same type, so no cast is needed
-            makeVariable(_ctx, op.d);
-            PUTS(" = ");
-            if (lt.ref_kind == ref_dref) makeVariable(_ctx, op.l), PUTS(".data");
-            else if (lt.ref_kind) makeVariable(_ctx, op.l);
-            else {
-              PUTS("&");
-              makeVariable(_ctx, op.l);
-            }
-          }
-        }
+        makeVariable(_ctx, s, ref.d);
+        let type = function_register_type(ss, ref.owner, ref.l);
+        if (type.ref_kind == ref_dref) PUTS(".data");
+        PUTS(" = ");
+        if (!type.ref_kind) PUTS("&");
+        makeVariable(_ctx, ref.owner, ref.l);
+        if (type.ref_kind == ref_dref) PUTS(".data");
         PUTS(";");
       }),
+      (ir_getref, op, makeReference(ss, _ctx, s, op)),
       (ir_getptr, op, {
         PUTS("  ");
-        makeVariable(_ctx, op.d);
+        makeVariable(_ctx, s, op.d);
         PUTS(" = ");
         makeRegisterAddress(ss, _ctx, s, op.l);
         PUTS(";");
       }),
       (ir_putptr, op, {
         PUTS("  ");
-        makeVariable(_ctx, op.d);
+        makeVariable(_ctx, s, op.d);
         PUTS(" = ");
         makeRegisterPlace(ss, _ctx, s, op.l);
         PUTS(";");
       }),
-      (ir_cast, op, {
-        Type dt = function_register_type(ss, s, op.d);
-        Type lt = function_register_type(ss, s, op.l);
+      (ir_ptrcast, op, {
         PUTS("  ");
-        if (function_is_wide(ss, dt)) {
-          if (dt.ref_kind == ref_ref) PUTS("*");
-          makeVariable(_ctx, op.d);
-          PUTS(" = ");
-          makeWideCastFromOperand(ss, _ctx, s, op.d, op.l);
-          PUTS(";");
-        } else if (function_is_wide(ss, lt)) {
-          u32 source_bits = function_integer_bits(ss, lt);
-          Type source_base = Type_stripTag(lt, ss_typeenv(ss));
-          bool source_signed = tu_is(r_sint, source_base.t);
-          if (dt.ref_kind == ref_ref) PUTS("*");
-          makeVariable(_ctx, op.d);
-          PUTS(" = (");
-          makeType(ss, _ctx, dt);
-          PUTS(") cshl_int_to_i64(");
-          makeWideOperand(ss, _ctx, s, op.l);
-          PUTS(", sizeof(");
-          makeWideType(_ctx, source_bits);
-          PUTS("), ");
-          USETYPEPRINTER(usize, source_bits);
-          PUTS(", ");
-          if (source_signed) PUTS("1"); else PUTS("0");
-          PUTS(");");
-        } else if (lt.ref_kind == ref_dref) {
-          PUTS("cshl_read(");
-          makeVariable(_ctx, op.l);
-          PUTS(".data, (unsigned char *)&");
-          if (dt.ref_kind == ref_ref) PUTS("*");
-          makeVariable(_ctx, op.d);
-          PUTS(", ");
-          makeRegisterSize(ss, _ctx, s, op.d);
-          PUTS(", ");
-          makeRegisterSize(ss, _ctx, s, op.d);
-          PUTS(", ");
-          makeDrefSignBits(ss, _ctx, s, op.l);
-          PUTS(");");
-        } else {
-          if (dt.ref_kind == ref_ref) PUTS("*");
-          makeVariable(_ctx, op.d);
-          PUTS(" = (");
-          makeType(ss, _ctx, dt);
-          PUTS(")");
-          makeRegisterPlace(ss, _ctx, s, op.l);
-          PUTS(";");
-        }
+        makeVariable(_ctx, s, op.d);
+        PUTS(" = (");
+        makeType(ss, _ctx, function_register_type(ss, s, op.d));
+        PUTS(")");
+        makeRegisterPlace(ss, _ctx, s, op.l);
+        PUTS(";");
       }),
+      (ir_cast, op, makeCast(ss, _ctx, s, op)),
       (ir_rawop, op, {
         Type dt = function_register_type(ss, s, op.d);
         Type lt = function_register_type(ss, s, op.l);
@@ -687,7 +753,7 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
         u32 raw_op = op_as_enum(op.o);
         PUTS("  ");
         if (function_is_wide(ss, dt) && dt.ref_kind == ref_ref) PUTS("*");
-        makeVariable(_ctx, op.d);
+        makeVariable(_ctx, s, op.d);
         PUTS(" = ");
         if (function_is_wide(ss, dt))
           makeWideOperation(ss, _ctx, s, op.d, op.l, op.r, raw_op);
@@ -715,7 +781,7 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
               (default, assertMessage(false, "wide integer operation has a native destination"))
           );
         } else if (raw_op == enop_shl || raw_op == enop_shr) {
-          makeShift(ss, _ctx, s, op.d, op.l, op.r, dt, lt, rt, raw_op);
+          makeShift(ss, _ctx, s, op.l, op.r, dt, lt, rt, raw_op);
         } else {
           makeRawOperand(ss, _ctx, s, lt, op.l);
           PUTS(" ");
@@ -726,63 +792,17 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
         PUTS(";");
       }),
       (ir_rawdot, _, PUTS("")),
-      (ir_field, op, {
-        typeenv e = ss_typeenv(ss);
-        Type lt = function_register_type(ss, s, op.l);
-        Type dt = function_register_type(ss, s, op.d);
-        r_bitfield bf = TypeTree_inner_bitfield(lt.t, e);
-        PUTS("  ");
-        makeVariable(_ctx, op.d);
-        if (bf.start) {
-          u32 offset = 0;
-          foreach (let i, range(0, op.i))
-            offset += type_bitf_item(e, bf, i)->width;
-          PUTS(".data = (double_offset){ .ptr = (unsigned char *)");
-          makeRegisterAddress(ss, _ctx, s, op.l);
-          PUTS(" + ");
-          USETYPEPRINTER(usize, offset / 8);
-          PUTS(", .bit_offset = ");
-          USETYPEPRINTER(usize, offset % 8);
-          PUTS(", .width = ");
-          USETYPEPRINTER(usize, type_bitf_item(e, bf, op.i)->width);
-          PUTS(" }");
-        } else {
-          r_struct strct = TypeTree_inner_struct(lt.t, e);
-          assertMessage(strct.start && op.i < type_struct_len(e, strct), "field type has no member");
-          u32 offset = type_struct_item(e, strct, op.i)->offset;
-          PUTS(" = (");
-          makeRegisterType(ss, _ctx, s, op.d);
-          PUTS(")((unsigned char *)");
-          makeRegisterAddress(ss, _ctx, s, op.l);
-          PUTS(" + ");
-          USETYPEPRINTER(usize, offset);
-          PUTS(")");
-        }
-        PUTS(";");
-      }),
-      (ir_array, op, {
-        Type dt = function_register_type(ss, s, op.d);
-        PUTS("  ");
-        makeVariable(_ctx, op.d);
-        PUTS(" = (");
-        makeRegisterType(ss, _ctx, s, op.d);
-        PUTS(")((unsigned char *)");
-        makeRegisterAddress(ss, _ctx, s, op.l);
-        PUTS(" + ");
-        makeRegisterPlace(ss, _ctx, s, op.r);
-        PUTS(" * sizeof(*");
-        makeVariable(_ctx, op.d);
-        PUTS("));");
-      }),
+      (ir_field, op, makeFieldReference(ss, _ctx, s, op)),
+      (ir_array, op, makeArrayReference(ss, _ctx, s, op)),
       (ir_call, op, {
         Type dt = function_register_type(ss, s, op.d);
         PUTS("  ");
         if (dt.ref_kind == ref_dref) {
-          makeVariable(_ctx, op.d);
+          makeVariable(_ctx, s, op.d);
           PUTS(" = ");
           makeCall(ss, _ctx, s, op.l, op.r, op.e);
         } else {
-          makeVariable(_ctx, op.d);
+          makeVariable(_ctx, s, op.d);
           PUTS(" = ");
           makeCall(ss, _ctx, s, op.l, op.r, op.e);
         }
@@ -794,13 +814,13 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
         PUTS("  ");
         if (dt.ref_kind == ref_dref) {
           if (lt.ref_kind == ref_dref) {
-            makeVariable(_ctx, op.d);
+            makeVariable(_ctx, s, op.d);
             PUTS(".data = ");
-            makeVariable(_ctx, op.l);
+            makeVariable(_ctx, s, op.l);
             PUTS(".data;");
           } else {
             PUTS("  cshl_write(");
-            makeVariable(_ctx, op.d);
+            makeVariable(_ctx, s, op.d);
             PUTS(".data, (const unsigned char *)&");
             makeRegisterPlace(ss, _ctx, s, op.l);
             PUTS(", ");
@@ -810,10 +830,10 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
         } else {
           if (lt.ref_kind == ref_dref) {
             PUTS("cshl_read(");
-            makeVariable(_ctx, op.l);
+            makeVariable(_ctx, s, op.l);
             PUTS(".data, (unsigned char *)&");
             if (dt.ref_kind == ref_ref) PUTS("*");
-            makeVariable(_ctx, op.d);
+            makeVariable(_ctx, s, op.d);
             PUTS(", ");
             makeRegisterSize(ss, _ctx, s, op.d);
             PUTS(", ");
@@ -828,15 +848,15 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
               PUTS("*(*(");
               makeRegisterType(ss, _ctx, s, op.d);
               PUTS(" *)");
-              makeVariable(_ctx, op.d);
+              makeVariable(_ctx, s, op.d);
               PUTS(")");
               PUTS(" = ");
             } else {
               if (dt.ref_kind == ref_ref) PUTS("*");
-              makeVariable(_ctx, op.d);
+              makeVariable(_ctx, s, op.d);
               PUTS(" = ");
             }
-            if (dt.ref_kind == ref_ref && lt.ref_kind) makeVariable(_ctx, op.l);
+            if (dt.ref_kind == ref_ref && lt.ref_kind) makeVariable(_ctx, s, op.l);
             else makeRegisterPlace(ss, _ctx, s, op.l);
             PUTS(";");
           }
@@ -860,12 +880,12 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
           arg_index += !Type_is_comptime(function_instance_type_at(ss, instance, i));
         PUTS("  ");
         if (dt.ref_kind == ref_dref) {
-          makeVariable(_ctx, op.d);
+          makeVariable(_ctx, s, op.d);
           PUTS(".data = arg");
           USETYPEPRINTER(usize, arg_index);
           PUTS(".data");
         } else {
-          makeVariable(_ctx, op.d);
+          makeVariable(_ctx, s, op.d);
           PUTS(" = arg");
           USETYPEPRINTER(usize, arg_index);
         }
@@ -875,7 +895,7 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
         function *function = &ss->functions[s->instance.fn - 1];
         Type rt = function_instance_ret(ss, &function->instances[s->instance.index]);
         PUTS("  return ");
-        if (rt.ref_kind) makeVariable(_ctx, reg);
+        if (rt.ref_kind) makeVariable(_ctx, s, reg);
         else makeRegisterPlace(ss, _ctx, s, reg);
         PUTS(";");
       }),
@@ -894,7 +914,9 @@ static void makeVariables(superscope *ss, printerfunction_context _ctx, scope *s
     if (Type_is_comptime(t)) continue;
     t.isconst = false;
     makeType(ss, _ctx, t);
-    PUTS(" v"), USETYPEPRINTER(usize, s->start + (value - s->values) + 1), PUTS(" = {0};\n");
+    PUTS(" ");
+    makeVariable(_ctx, s, s->start + (value - s->values) + 1);
+    PUTS(" = {0};\n");
   }
 }
 
@@ -947,9 +969,7 @@ void makeFuncs(superscope *ss, printerfunction_context _ctx) {
     function *function = &ss->functions[i];
     foreach (let j, range(0, msList_len(function->instances))) {
       function_instance *instance = &function->instances[j];
-      TypeTree function_type_tree = ss_type(ss, function->signature).t;
-      c_fun function_type = tu_catch(c_fun, function_type_tree);
-      if (function_type.isextern) continue;
+      if (function->isextern) continue;
       if (!function_should_be_emitted(ss, instance)) continue;
       makeFunctionSignature(ss, _ctx, i, j, instance);
       PUTS(";\n");
@@ -959,14 +979,24 @@ void makeFuncs(superscope *ss, printerfunction_context _ctx) {
     function *function = &ss->functions[i];
     foreach (let j, range(0, msList_len(function->instances))) {
       function_instance *instance = &function->instances[j];
-      TypeTree function_type_tree = ss_type(ss, function->signature).t;
-      c_fun function_type = tu_catch(c_fun, function_type_tree);
-      if (function_type.isextern) continue;
+      if (function->isextern) continue;
       if (!function_should_be_emitted(ss, instance)) continue;
       makeFunctionSignature(ss, _ctx, i, j, instance);
       PUTS("{\n");
       makeFunctionBody(ss, _ctx, instance);
       PUTS("}\n");
     }
+  }
+}
+
+// Child scope instructions run in source order, once per imported namespace.
+static void makeNamespaces(superscope *ss, printerfunction_context _ctx) {
+  foreach (let entry, span(ss->imports, msList_len(ss->imports))) {
+    let ns = entry->ns;
+    PUTS("static void cshl_ns_init"), USETYPEPRINTER(u32, ns->module_id), PUTS("(void){\n");
+    PUTS("  static int initialized;\n  if (initialized) return;\n  initialized = 1;\n");
+    foreach (let inst, span(ns->instructions, msList_len(ns->instructions)))
+      makeFunctionInstruction(ss, _ctx, ns, *inst);
+    PUTS("}\n");
   }
 }

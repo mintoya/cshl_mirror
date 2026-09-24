@@ -1,52 +1,4 @@
-type ~~ @type();
-bool ~~ @bool();
-void ~~ @void();
-ast ~~ @ast();
-any ~~ @any();
-int ~~ @int();
-i32 ~type~ @sint(32);
-fn  ~~ @fn (a ~ast),@inlineast(),{
-  return 
-    @qot @fn(
-      @uqot(a."()".opleft),
-      @uqot(a."()".opright."()".opleft),
-      @uqot(a."()".opright."()".opright),
-    );
-};
-if  ~~ @fn (a ~ast),@inlineast(),{
-  call ~ast~ a."()";
-  cond ~ast~ call.opleft;
-  rest ~ast~ call.opright;
-
-  @cif((rest."()".opright."()".opleft == "else"), {
-    then ~ast~ rest.opleft;
-    else ~ast~ rest.opright."()".opright;
-
-    return @qot @if(
-      @uqot(cond),
-      @uqot(then),
-      @uqot(else)
-    );
-  });
-
-  return @qot @if(
-    @uqot(cond),
-    @uqot(rest)
-  );
-};
-while  ~~ @fn (a ~ast),@inlineast(),{
-  cond ~ast~ a."()".opleft;
-  rest ~ast~ a."()".opright;
-  return @qot{
-    @loop{
-      @if(@uqot(cond) , @uqot(rest),break());
-    };
-  };
-};
-arr ~~ fn (i~int) any
-  (return fn (T~type) type 
-    (return @arrof(T,i)));
-
+@using @include("macros.cshl");
 
 ! ~~ fn (T~type) type {
   return @struct{
@@ -60,7 +12,16 @@ arr ~~ fn (i~int) any
       return @qot{
         this ~~ @uqot(self);
         if this.has_err {
-          return this;
+          @cif (
+            @typeinfo(@returnT()).struct.namespace.parent == @typeinfo(@typeof(!)).fn.namespace),
+          {
+            result ~ @returnT();
+            result.has_err = 1;
+            result.data.err_text = this.data.err_text;
+            return result;
+          },{
+            // panic or something
+          };
         };
         this.data.result;
       };
@@ -71,10 +32,9 @@ arr ~~ fn (i~int) any
 f1 ~~ fn () (! void) {;};
 main ~~ fn (times ~int) (! void) {
   @cif(
-    ( times ),
-    ( return main(times - 1) )
+    (times),
+    (return main(times - 1))
   );
-  f1()
-    :try();
+  f1():try();
 };
-main(2);
+main(2); // just generates n+1 specializations of main

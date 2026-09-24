@@ -1,12 +1,12 @@
 #pragma once
-#include "srcpos.h"
+#include "error_loc.h"
 #include "wheels/macros.h"
 #include "wheels/print/print_pre.h"
 #include <assert.h>
 #include <wheels/errable.h>
 
 static inline fptr read_file(allocfn allocator, const char *filename) {
-  FILE *fileptr = fopen(filename, "rb");
+  FILE *fileptr = fopen(filename, "r");
   assertMessage(fileptr);
   defer { fclose(fileptr); };
   fseek(fileptr, 0, SEEK_END);
@@ -90,12 +90,10 @@ tu_def(
     (astString, srcpos),
     (astNumber, srcpos),
     (astDecl, struct {
-      // list of name type and value all next to eachother startign at idx
       astidx name_type_value;
       bool isconst; // weather ~ or = is used
     }),
     (astOp, struct {
-      // left and right next to eaachother
       astidx left_right;
       union {
         c8 symliteral[sizeof(u32)];

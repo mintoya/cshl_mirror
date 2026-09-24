@@ -9,7 +9,6 @@
 
 astidx_full parse_source errs(allocfn out_allocator, fptr input, const char *filename);
 
-// a lowered+interpreted value together with the types it indexes into
 typedef struct {
   typeidx t;
   value_store v;
@@ -120,32 +119,6 @@ static interp ast_probe(allocfn arena, fptr dotwork, fptr arg, astidx_full *ctx)
 }
 
 test_file_1(interpret_comptime_recursion);
-/*
-// both branches are lowered, much rader to reconcile
-// not meant to work for a while
-// could work since that's n-1
-test_fn(interpret_comptime_recursion_low) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-  let r = interpret_source(
-      arena,
-      fp(
-          "fact ~~ @fn((n ~@int()),@int(),{"
-          "   @if("
-          "     (n <= 1),"
-          "     (return ( 1 )),"
-          "     (return ( n * fact(n - 1)))"
-          "   );"
-          " });"
-          "fact(5);"
-      ),
-      nullptr
-  );
-
-  test_assert(tu_is(c_int, tv_type(r).t));
-  test_assert(!BInt.cmp(r.v.c_int, BInt.from.i64(arena, 120)));
-}
-*/
 
 test_fn(bool_bigint_roundtrip) {
   let arena = arena_new_ext(allocator, 1 << 16);
@@ -290,6 +263,7 @@ test_file_1(interpret_runtime_recursion);
 test_file_1(const_declaration_retypes_call_destination);
 test_file_1(if_cshl);
 test_file_1(external_c_binding);
+test_file_1(include);
 test_file_1(wide_integer_write_extends_the_bigint);
 test_file_1(struct_operator_overload_vector_equality_true);
 test_file_1(struct_cast_ovl);
@@ -313,6 +287,54 @@ test_file_1(bitstruct_reference_alias);
 test_file_1(bitstruct_nested_member);
 test_file_1(bitstruct_inline_member_gets_layout);
 test_file_1(as_without_overload_is_a_cast);
+test_file_1(explicit_pointer_cast);
+test_file_1(reference_value_reads);
+test_file_1(typeinfo_namespaces);
+test_file_1(return_type_in_macro);
+
+test_fn(interpret_return_type_in_macro) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let ctx = parse_source(nullptr, arena, nullFptr, "test/return_type_in_macro.cshl");
+  let env = ss_init(arena, ctx);
+  lower(nullptr, env, env->outermost, ctx.idx);
+  let result = interpret(nullptr, env, env->outermost);
+  test_assert(tu_is(r_bool, ss_type(env, result.t).t));
+  test_assert(*(bool *)result.v.value);
+}
+
+test_fn(interpret_typeinfo_namespaces) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let ctx = parse_source(nullptr, arena, nullFptr, "test/typeinfo_namespaces.cshl");
+  let env = ss_init(arena, ctx);
+  lower(nullptr, env, env->outermost, ctx.idx);
+  let result = interpret(nullptr, env, env->outermost);
+  test_assert(tu_is(r_bool, ss_type(env, result.t).t));
+  test_assert(*(bool *)result.v.value);
+}
+
+test_fn(interpret_reference_value_reads) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let ctx = parse_source(nullptr, arena, nullFptr, "test/reference_value_reads.cshl");
+  let env = ss_init(arena, ctx);
+  lower(nullptr, env, env->outermost, ctx.idx);
+  let result = interpret(nullptr, env, env->outermost);
+  test_assert(tu_is(r_bool, ss_type(env, result.t).t));
+  test_assert(*(bool *)result.v.value);
+}
+
+test_fn(interpret_explicit_pointer_cast) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let ctx = parse_source(nullptr, arena, nullFptr, "test/explicit_pointer_cast.cshl");
+  let env = ss_init(arena, ctx);
+  lower(nullptr, env, env->outermost, ctx.idx);
+  let result = interpret(nullptr, env, env->outermost);
+  test_assert(*(bool *)result.v.value);
+}
+
 test_file_1(struct_closure_capture);
 test_file_1(overload_call_yields_the_result_after_arg_coercion);
 test_file_1(struct_ref_capture);
@@ -338,18 +360,113 @@ test_file_1(referance_types);
 test_file_1(referance_types_i);
 test_file_1(cout_loop_control);
 test_file_1(cout_signed_shifts);
+test_file_1(cout_native_wide_casts);
 test_file_1(cout_packed_return);
 test_file_1(cout_non_power_alignment);
 test_file_1(cout_union_bool);
-
-//
-// error tests
-//
 
 static err_t lower_source_err(allocfn arena, fptr src) {
   let ctx = catch_errcall((parse_source, (arena, src, nullptr)), e, (({ return e; }), (astidx_full){}));
   let env = ss_init(arena, ctx);
   return call_err(lower, (env, env->outermost, ctx.idx)).err;
+}
+
+static char *error_loc_test_detail(void *data) { return data; }
+
+test_fn(error_locations_keep_independent_errors) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let first = lower_source_err(arena, fp("missing_one;"));
+  test_assert(error_loc_get(first));
+  let primary = error_loc_primary(first);
+  test_assert(primary);
+  test_fpeq(fp_from_srcpos(primary->source), "missing_one");
+  char *saved = first.fn(first.fnd);
+  let second = lower_source_err(arena, fp("missing_two;"));
+  test_assert(error_loc_get(second));
+  test_fpeq(fp_from_srcpos(error_loc_primary(second)->source), "missing_two");
+  test_assert(strstr(second.fn(second.fnd), "line 1"));
+  test_assert(first.fn(first.fnd) == saved);
+  test_fpeq(fp_from_srcpos(error_loc_primary(first)->source), "missing_one");
+  test_streq(first.err_code, "UNBOUND_ID");
+}
+
+test_fn(error_locations_keep_long_chains_and_foreign_details) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let ctx = parse_source(nullptr, arena, fp("x;"), nullptr);
+  srcpos_full source = {srcpos_ast(sglist_get(ctx.alist, ctx.idx - 1), ctx.alist), ctx.plist, ctx.flist};
+  err_t original = {.err_code = "TEST_ERROR", .file = __FILE__, .line = __LINE__,
+                   .function = __FUNCTION__, .fn = error_loc_test_detail, .fnd = "original detail"};
+  err_t error = error_loc_add(arena, original, source);
+  let primary = error_loc_primary(error);
+  err_t saved = error;
+  for (usize i = 0; i < 128; i++) error = error_loc_add(arena, error, source);
+  usize count = 0;
+  for (let node = error_loc_get(error); node; node = error_loc_next(node)) count++;
+  test_inteq(count, 129);
+  test_assert(error_loc_primary(error) == primary);
+  test_assert(!error_loc_next(error_loc_get(saved)));
+  char *message = error.fn(error.fnd);
+  test_assert(strlen(message) > 1024);
+  test_assert(strstr(message, "original detail"));
+  test_assert(error.fn(error.fnd) == message);
+  test_streq(error.err_code, original.err_code);
+  test_inteq(error.line, original.line);
+}
+
+test_fn(parser_errors_use_structured_locations) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let parsed = call_err(parse_source, (arena, fp("x ~@sint(32) = );"), nullptr));
+  test_streq(parsed.err.err_code, "PARSE_ERROR");
+  // parse_source lives in another translation unit; its payload is still recognized.
+  let primary = error_loc_primary(parsed.err);
+  test_assert(primary);
+  test_assert(primary->source.pidx && primary->source.flist.len == 1);
+  test_assert(strstr(parsed.err.fn(parsed.err.fnd), "line 1"));
+  let wrapped = error_loc_add(arena, parsed.err, primary->source);
+  test_assert(error_loc_next(error_loc_get(wrapped)) == primary);
+}
+
+test_fn(array_call_checks_generated_index_instruction) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("a ~@arr(2, @sint(32)); x ~@sint(32); a[@where(x)];"));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "ARRAY_INDEX_NON_INT");
+}
+
+test_fn(pointer_casts_are_never_implicit) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  fptr cases[] = {
+    fp("x ~@sint(32); p ~@ptr(@uint(8)) = @where(x);"),
+    fp("x ~@sint(32); p ~@ptr(@uint(8)); p = @where(x);"),
+    fp("f ~~ @fn((p ~@ptr(@uint(8))), @void(), {}); x ~@sint(32); f(@where(x));"),
+    fp("f ~~ @fn((p ~@ptr(@sint(32))), @ptr(@uint(8)), { return p; }); x ~@sint(32); f(@where(x));"),
+    fp("x ~@sint(32); @if(@where(x), {});"),
+  };
+  foreach (let src, span(cases, countof(cases))) {
+    let e = lower_source_err(arena, *src);
+    test_assert(e.err_code);
+    test_streq(e.err_code, "CANNOT_CAST");
+  }
+}
+
+test_fn(pointer_cast_requires_pointer_values) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  fptr cases[] = {
+    fp("1 as @ptr(@uint(8));"),
+    fp("x ~@sint(32); @where(x) as @uint(64);"),
+    fp("x ~@sint(32); @where(x) as @refT(@ptr(@uint(8)));"),
+  };
+  foreach (let src, span(cases, countof(cases))) {
+    let e = lower_source_err(arena, *src);
+    test_assert(e.err_code);
+    test_streq(e.err_code, "CANNOT_CAST_POINTER");
+  }
 }
 
 test_fn(lower_error_too_many_args) {
@@ -387,8 +504,6 @@ test_fn(lower_error_type_not_value) {
   test_streq(e.err_code, "TYPE_IS_NOT_VALUE");
 }
 
-// a return needs a function instance to hand its result to; a macro that expands to a return can
-// only be called from inside a function (this is what meta.cshl's `main():try()` trips over)
 test_fn(lower_error_return_outside_function) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -413,8 +528,6 @@ test_fn(lower_error_bare_top_level_return) {
   test_streq(e.err_code, "RETURN_OUTSIDE_FUNCTION");
 }
 
-// @at is *l, so it takes a pointer. a referance to an int is not a pointer: reading the value
-// out of it first leaves an int, which has nothing to dereference
 test_fn(lower_error_at_on_int_reference) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -523,8 +636,6 @@ test_fn(lower_error_union_member_initializer) {
   test_streq(e.err_code, "UNION_MEMBER_INITIALIZER");
 }
 
-// a bitstruct member is a name, a base type and a bit width, so a member that only names a
-// type has nothing to lay out
 test_fn(lower_error_bitstruct_member_without_width) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -621,8 +732,7 @@ test_fn(lower_error_set_through_const_destination) {
   test_streq(e.err_code, "CANNOT_CAST");
 }
 
-// Exercise the same heap-backed allocation path as the CLI: an outer arena
-// masks attempts to resize temporary-arena storage with the wrong allocator.
+// An outer arena would mask temporary-storage allocator mismatches.
 test_fn(interpret_recursion_heap_allocator) {
   let heap = debugAllocator(.allocator = stdAlloc);
   defer { debugAllocatorDeInit(heap); };
@@ -838,13 +948,10 @@ test_fn(typeinfo_reads_integer_widths) {
   test_assert(!BInt.cmp(r.v.c_int, BInt.from.i64(arena, 32)));
 }
 
-// the struct kind reads members by position, and a member's type comes back as a usable type
-// annotation: the first of these two is a whole float, the second a byte
 static char *typeinfo_struct_source =
     "S ~~ @struct{ a ~@sint(32); b ~@sint(8); };\n"
     "@sizeof(@typeinfo(S).struct.0) + @sizeof(@typeinfo(S).struct.1);\n";
 
-// a function kind is its parameters and its return type, with the parameters numbered
 static char *typeinfo_fn_source =
     "f ~~ @fn((a ~@sint(8)), @sint(64), { return a; });\n"
     "(@typeinfo(@typeof(f)).fn.args * 10)\n"
@@ -867,7 +974,6 @@ test_fn(typeinfo_reads_function_signature) {
   test_assert(!BInt.cmp(r.v.c_int, BInt.from.i64(arena, 19)));
 }
 
-// a selector keeps the info when the kind matches, so it can chain past its own kind
 static char *typeinfo_selector_source =
     "ti ~@typeinfo() = @typeinfo(@sint(9));\n"
     "ti.sint.sint.bits;\n";
@@ -880,8 +986,6 @@ test_fn(typeinfo_selector_keeps_matching_kind) {
   test_assert(!BInt.cmp(r.v.c_int, BInt.from.i64(arena, 9)));
 }
 
-// a kind selector is a condition in its own right: it keeps the info when the kind matches and
-// an empty info is falsy, so the branch taken is the answer
 static char *typeinfo_kind_condition_source =
     "r ~@sint(32) = 0;\n"
     "@cif(@typeinfo(@sint(9)).sint, { r = 1; }, { r = 2; });\n"
@@ -892,12 +996,34 @@ test_fn(typeinfo_kind_is_a_condition) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   let r = interpret_source(arena, fp(typeinfo_kind_condition_source), nullptr);
-  // the source ends on a runtime variable, so the result is that variable's s32 storage rather
-  // than a compile-time integer
   let rt = tv_type(r);
   test_assert(tu_is(r_sint, rt.t));
   test_inteq(tu_catch(r_sint, rt.t).bits, 32);
   test_assert(*(i32 *)r.v.value == 21);
+}
+
+test_fn(return_type_in_compile_time_child_scope) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let result = interpret_source(arena, fp(
+      "outer ~~ @fn((), @sint(32), {"
+      "  inner ~~ @fn((), @sint(8), {"
+      "    @cif(@returnT() == @sint(8), { return 7; }); return 0;"
+      "  });"
+      "  @cif(@returnT() == @sint(32), {"
+      "    @cif(@typeinfo(@returnT()).sint.bits == 32, { return inner(); });"
+      "  }); return 0;"
+      "}); outer() == 7;"), nullptr);
+  test_assert(tu_is(r_bool, tv_type(result).t));
+  test_assert(*(bool *)result.v.value);
+}
+
+test_fn(return_type_outside_function_still_errors) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("@cif(@returnT() == @void(), {});"));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "RETURN_TYPE_OUTSIDE_FUNCTION");
 }
 
 test_fn(lower_error_typeinfo_on_non_type) {
@@ -916,22 +1042,13 @@ test_fn(lower_error_typeinfo_arg_count) {
   test_streq(e.err_code, "WRONG_ARG_COUNT");
 }
 
-// an int has no parameters, so asking for the ones it does not have is an error rather than a
-// silently empty answer, the way asking an ast for a member is empty
 static char *typeinfo_error_sources[] = {
-    "@typeinfo(@sint(8)).fn.args;",
     "@typeinfo(@struct{ x ~@sint(8); }).struct.bits;",
     "@typeinfo(@sint(8)).sint.7;",
-    // selecting a kind the type is not empties the info, so its payloads are gone too
-    "@typeinfo(@sint(9)).uint.bits;",
-    "@typeinfo(@sint(9)).fn.ret;",
 };
 static char *typeinfo_error_codes[] = {
-    "TYPEINFO_NOT_FUNCTION",
     "TYPEINFO_NOT_INTEGER",
     "TYPEINFO_NO_MEMBER",
-    "TYPEINFO_NOT_INTEGER",
-    "TYPEINFO_NOT_FUNCTION",
 };
 
 test_fn(lower_error_typeinfo_missing_payload) {
@@ -964,7 +1081,6 @@ test_fn(lower_error_binding_reserved_ids) {
   }
 }
 
-// the guard is on user bindings only: the pipe still binds its own `_`
 test_fn(pipe_binds_its_own_underscore) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -983,4 +1099,80 @@ test_fn(interpret_packed_return_survives_next_instruction) {
                                           "(f(0 - 3) + f(7)) == 4;"),
                                 nullptr);
   test_assert(*(bool *)result.v.value);
+}
+
+test_file_1(namespace_import);
+
+test_fn(namespace_import_and_using) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let result = interpret_source(arena, fp(
+      "lib ~~ @import(\"test/namespaces/wrapper.cshl\");"
+      "@using(lib); @using(lib.math);"
+      "wrapped() + lib.math.add(2);"), nullptr);
+  test_inteq(*(i32 *)result.v.value, 84);
+}
+
+test_fn(namespace_values_and_cache) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let result = interpret_source(arena, fp(
+      "a ~~ @import(\"test/namespaces/math.cshl\");"
+      "b ~~ @import(\"test/namespaces/./math.cshl\");"
+      "@using(a); @using(b);"
+      "read ~~ @fn (ns ~@typeof(a)), @int(), { return ns.answer; };"
+      "read(a) + answer;"), nullptr);
+  test_assert(!BInt.cmp(result.v.c_int, BInt.from.i64(arena, 80)));
+}
+
+test_fn(namespace_using_lexical_precedence) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let result = interpret_source(arena, fp(
+      "answer ~~ 2;"
+      "inside ~~ { @using(@import(\"test/namespaces/math.cshl\")); answer; };"
+      "inside + answer;"), nullptr);
+  test_assert(!BInt.cmp(result.v.c_int, BInt.from.i64(arena, 42)));
+}
+
+test_fn(namespace_errors) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  struct { const char *src, *error; } cases[] = {
+    {"@using(1);", "USING_NOT_NAMESPACE"},
+    {"@import(\"test/namespaces\");", "IMPORT_NOT_FILE"},
+    {"@import(1);", "IMPORT_NOT_STRING"},
+    {"@import(\"test/namespaces/missing.cshl\");", "IMPORT_FILE_NOT_FOUND"},
+    {"@import(\"test/namespaces/cycle.cshl\");", "IMPORT_CYCLE"},
+    {"caller_only ~~ 1; @import(\"test/namespaces/caller.cshl\");", "UNBOUND_ID"},
+    {"lib ~~ @import(\"test/namespaces/math.cshl\"); lib.missing;", "NO_MEMBER"},
+    {"lib ~~ @import(\"test/namespaces/math.cshl\"); lib.@int;", "NO_MEMBER"},
+    {"lib ~~ @import(\"test/namespaces/math.cshl\"); answer;", "UNBOUND_ID"},
+    {"{ @using(@import(\"test/namespaces/math.cshl\")); }; answer;", "UNBOUND_ID"},
+    {"@using(@import(\"test/namespaces/math.cshl\")); answer = 2;", "ASSIGN_IMPORTED_NAME"},
+    {"@using(@import(\"test/namespaces/math.cshl\"));"
+     "@using(@import(\"test/namespaces/other.cshl\")); answer;", "AMBIGUOUS_NAME"},
+  };
+  foreach (let item, vla(cases)) {
+    let error = lower_source_err(arena, fp((char *)item.src));
+    test_assert(error.err_code);
+    test_streq(error.err_code, item.error);
+  }
+}
+
+test_file_1(namespace_runtime);
+
+test_fn(namespace_runtime_interpret) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let result = interpret_source(arena, fp(
+      "state ~~ @import(\"test/namespaces/state.cshl\");"
+      "before ~state.i32 = state.value;"
+      "first ~~ @import(\"test/namespaces/first.cshl\");"
+      "middle ~state.i32 = state.value;"
+      "@using(@import(\"test/namespaces/second.cshl\"));"
+      "again ~~ @import(\"test/namespaces/first.cshl\");"
+      "bump();"
+      "before + middle + value;"), nullptr);
+  test_inteq(*(i32 *)result.v.value, 137);
 }

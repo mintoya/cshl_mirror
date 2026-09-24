@@ -11,7 +11,6 @@
 #include "wheels/sList.h"
 #include <limits.h>
 
-// makeTypes
 typedef fptr id_str;
 typePrinter(id_str) {
   foreach (let it, span(in.ptr, in.len))
@@ -86,8 +85,7 @@ static bool out_typeIsNaturalC(typeenv e, Type t) {
   );
 }
 
-// comptime values and void have no runtime representation at all: cshl gives them zero bytes and lets
-// the next member take their offset, so the C struct must not give them a member either
+// Omit zero-sized members from C structs.
 static bool out_memberHasStorage(typeenv e, Type t) {
   return !Type_is_comptime(t) && Type_sizeof(t, e) != 0;
 }
@@ -205,9 +203,7 @@ static void out_makeFieldArray(
       PUTS("];\n");
     }
     if (fallback) {
-      // byte storage: this member has no C representation of its own, only an offset, so it gets no
-      // member at all. the pads and the trailing storage already put every byte where cshl says it
-      // goes, and member access recomputes addresses from the same offsets rather than by name
+      // Padding supplies storage; member access uses byte offsets.
       cursor = item->offset;
     } else {
       makeType(ss, _ctx, item->t);
@@ -294,13 +290,11 @@ static void out_assertLayout(superscope *ss, printerfunction_context _ctx, Type 
   iflet_tu (let s, r_struct, tree)
     check_alignment = !out_structNeedsByteStorage(e, s, _ctx.allocator);
   if (check_alignment) {
-    // C99 has no alignof operator. The array's element type alignment is supplied by the
-    // surrounding struct layout checks and by the runtime's use of the byte storage.
+    // C99 array alignment is checked through the enclosing struct layout.
   }
   if (!tu_is(r_struct, tree)) return;
   r_struct s = tu_catch(r_struct, tree);
-  // a byte storage struct has no named members left for these to name, and the size assert above
-  // plus the pad sizes already pin the same layout down
+  // Byte storage has no named members to check.
   if (out_structNeedsByteStorage(e, s, _ctx.allocator)) return;
   foreach (let i, range(0, type_struct_len(e, s))) {
     let item = type_struct_item(e, s, i);
@@ -350,6 +344,7 @@ void makeTypeTree(superscope *ss, printerfunction_context _ctx, TypeTree t) {
       (c_type, _, ),
       (builtin, _, ),
       (c_typeinfo, _, ),
+      (c_namespace, _, ),
       (c_inlineast, _, ),
       (r_bool, _, PUTS("_Bool")),
       (r_void, _, PUTS("void_t")),
@@ -360,11 +355,10 @@ void makeTypeTree(superscope *ss, printerfunction_context _ctx, TypeTree t) {
       (r_tag, it, ({
         Type target = Type_at(ss_typeenv(ss), it.t);
         fptr name = type_name(ss_typeenv(ss), it.name);
-        if (tu_is(c_type, target.t)) _ctx.put(name.ptr, _ctx.arb, name.len, 0);
+        if (tu_is(c_type, target.t)) PUTS(*VLAP((const c8 *)name.ptr, name.len + 1));
         else USETYPEPRINTER(id_str, name);
       })),
-      // Arrays get a stable C identity because repeating an anonymous struct definition would make
-      // incompatible pointer-to-struct types. Their definitions are emitted separately.
+      // Named array types avoid incompatible anonymous struct pointers.
       (r_arr, _, {
         PUTS("struct ");
         out_makeTagName(ss, _ctx, T(t));
@@ -384,13 +378,13 @@ static bool out_isOpaqueTag(superscope *ss, Type t) {
     return tu_is(c_type, Type_at(ss_typeenv(ss), tag.t).t);
   return false;
 }
-void makeTypes(superscope *ss, outputFunction _put, printerfunction_context _ctx) {
+static void makeWideTypes(superscope *ss, printerfunction_context _ctx) {
   let e = ss_typeenv(ss);
   msList(u16) wide_bits = msList_init(_ctx.allocator, u16);
   defer { msList_deInit(_ctx.allocator, wide_bits); };
   usize candidate_count = ss->tlist.len;
   foreach (let candidate_index, range(0, candidate_count)) {
-    Type candidate = sglist_get(ss->tlist, candidate_index);
+    Type candidate = Type_stripTag(sglist_get(ss->tlist, candidate_index), e);
     if (!out_integerIsWide(e, candidate)) continue;
     u16 candidate_bits = tu_is(r_sint, candidate.t) ? candidate.t.r_sint.bits : candidate.t.r_uint.bits;
     bool seen = false;
@@ -407,8 +401,11 @@ void makeTypes(superscope *ss, outputFunction _put, printerfunction_context _ctx
     USETYPEPRINTER(u16, bits);
     PUTS(")\n");
   }
-  // the same tag can sit in the type list more than once, its entries differing only in where the
-  // name was written, and each would declare the same typedef, so remember the names already declared
+}
+
+static void makeTypeDeclarations(superscope *ss, printerfunction_context _ctx) {
+  let e = ss_typeenv(ss);
+  // Tags at different source locations can share a typedef name.
   msList(fptr) declared_tags = msList_init(_ctx.allocator, fptr);
   defer { msList_deInit(_ctx.allocator, declared_tags); };
 
@@ -420,8 +417,7 @@ void makeTypes(superscope *ss, outputFunction _put, printerfunction_context _ctx
       out_makeTagName(ss, _ctx, t);
       PUTS(";\n");
     } else iflet_tu (let tag, r_tag, t.t) {
-      // a pointer, a referance or a decoration of a tag carries the same tree as the tag, so only the
-      // undecorated one declares the typedef; the rest would redefine the same name
+      // Only undecorated tags declare typedefs.
       if (t.decorations) continue;
       let target = Type_at(e, tag.t);
       if (out_isAggregate(target)) {
@@ -441,7 +437,10 @@ void makeTypes(superscope *ss, outputFunction _put, printerfunction_context _ctx
       }
     }
   }
+}
 
+static void makeTypeAliases(superscope *ss, printerfunction_context _ctx) {
+  let e = ss_typeenv(ss);
   foreach (let idx, range(0, ss->tlist.len)) {
     let t = sglist_get(ss->tlist, idx);
     if (tu_is(r_null, t.t) || Type_is_comptime(t) || out_isAggregate(t) || out_isOpaqueTag(ss, t) ||
@@ -455,7 +454,10 @@ void makeTypes(superscope *ss, outputFunction _put, printerfunction_context _ctx
     USETYPEPRINTER(usize, idx + 1);
     PUTS(";\n");
   }
+}
 
+static void makeAggregateTypes(superscope *ss, printerfunction_context _ctx) {
+  let e = ss_typeenv(ss);
   foreach (let idx, range(0, ss->tlist.len)) {
     let t = sglist_get(ss->tlist, idx);
     if (tu_is(r_null, t.t) || Type_is_comptime(t) || t.decorations) continue;
@@ -484,4 +486,11 @@ void makeTypes(superscope *ss, outputFunction _put, printerfunction_context _ctx
       out_assertLayout(ss, _ctx, t);
     }
   }
+}
+
+void makeTypes(superscope *ss, printerfunction_context _ctx) {
+  makeWideTypes(ss, _ctx);
+  makeTypeDeclarations(ss, _ctx);
+  makeTypeAliases(ss, _ctx);
+  makeAggregateTypes(ss, _ctx);
 }

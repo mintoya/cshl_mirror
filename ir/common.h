@@ -8,13 +8,29 @@ typedef struct {
 } astidx_span;
 typedef struct superscope superscope;
 typedef struct scope scope;
+typedef struct {
+  scope *owner;
+  u32 idx;
+} scope_binding;
+typedef struct {
+  scope *ns;
+  u32 at, depth;
+} scope_use;
+typedef struct {
+  fptr path;
+  scope *ns; // null while loading, for cycle detection
+} scope_import;
 struct scope {
   scope *parent;
   msList(ir) instructions;
   msList(typed_value) values;
   // TODO: keep names around for debugging
   mList(moxmap(fptr, u32)) named;
+  msList(scope_use) using;
+  bool resolving;
+  u32 module_id;
   u32 start;
+  u32 result; // expression result, independent of temporaries added while checking
   struct {
     u32 fn, index;
   } instance;
@@ -30,7 +46,10 @@ typedef struct function {
   astidx retT;
   astidx body;
   typeidx signature;
+  fptr external_name;
+  bool isextern;
   scope *defscope;
+  scope *namespace; // stable identity shared by this function's specializations
   msList(function_instance) instances;
   moxmap(sliceDef(typed_value), u32) mp;
 } function;
@@ -52,6 +71,8 @@ struct superscope {
   moxmap(fptr, scope *) type_info;
   msList(function) functions;
   msList(fptr) c_includes;
+  msList(scope_import) imports;
+  scope *prelude;
   scope *outermost;
 
   typeidx t_void, t_any, t_int, t_bool, t_ast, t_type, t_typeinfo;
@@ -63,11 +84,11 @@ typedef struct {
 } scope_full;
 static inline typeenv ss_typeenv(superscope *ss) {
   return (typeenv){
-      .tlist = ss->tlist,
-      .sitems = ss->sitems,
-      .bitems = ss->bitems,
-      .plist = ss->plist,
-      .flist = ss->flist,
+      .tlist = &ss->tlist,
+      .sitems = &ss->sitems,
+      .bitems = &ss->bitems,
+      .plist = &ss->plist,
+      .flist = &ss->flist,
   };
 }
 static inline Type_full ss_tf(superscope *ss, Type t) { return (Type_full){t, ss_typeenv(ss)}; }
@@ -125,6 +146,12 @@ u32 scope_add_value(superscope *env, scope *s, typed_value v);
 const scope *scope_owner(const scope *s, u32 idx);
 
 typeidx ss_type_intern(superscope *ss, Type t);
+// Temporary evaluation scopes have lexical function context but no function frame.
+static inline const scope *enclosing_function(const scope *s) {
+  while (s && !s->instance.fn) s = s->parent;
+  return s;
+}
+
 static inline Type function_instance_ret(superscope *ss, function_instance *instance) {
   assertMessage(instance->sig.len, "function instance has no return type");
   return Type_at(ss_typeenv(ss), instance->sig.ptr[instance->sig.len - 1]);
@@ -139,9 +166,7 @@ static inline Type *ss_getType(superscope *ss, Type t) {
 static inline Type_full ss_typeF(superscope *ss, Type t) { return (Type_full){t, ss_typeenv(ss)}; }
 static inline Type ss_type(superscope *ss, typeidx idx) { return Type_at(ss_typeenv(ss), idx); }
 static inline typed_value TV_of(superscope *ss, Type t) { return (typed_value){.t = ss_type_intern(ss, t)}; }
-static inline typed_value TV_with(superscope *ss, Type t, value_store vs) {
-  return TV(ss_type_intern(ss, t), vs);
-}
+static inline typed_value TV_with(superscope *ss, Type t, value_store vs) { return TV(ss_type_intern(ss, t), vs); }
 static inline typed_value TV_void /*  */ (superscope *ss) { return (typed_value){.t = ss->t_void}; }
 static inline typed_value TV_any /*   */ (superscope *ss) { return (typed_value){.t = ss->t_any}; }
 static inline typed_value TV_bigint /**/ (superscope *ss, bigint b) { return (typed_value){.t = ss->t_int, .v = {.c_int = b}}; }
@@ -149,7 +174,6 @@ static inline typed_value TV_ast /*   */ (superscope *ss, astidx a) { return (ty
 static inline typed_value TV_type /*  */ (superscope *ss, typeidx t) { return (typed_value){.t = ss->t_type, .v = {.c_type = t}}; }
 static inline typed_value TV_bool /*  */ (superscope *ss, bool v) { return (typed_value){.t = ss->t_bool, .v = VS(avalue(ss->alloc, v))}; }
 static inline Type ss_ast_type(superscope *ss) { return ss_type(ss, ss->t_ast); }
-static inline Type ss_bool_type(superscope *ss) { return ss_type(ss, ss->t_bool); }
 typed_value *scope_find(superscope *env, const scope *s, u32 idx);
 static inline void scope_bind errs(superscope *env, scope *s, u32 idx, fptr name);
 static inline void scope_sbind errs(superscope *env, scope *s, u32 idx, fptr name);
@@ -166,13 +190,8 @@ typed_value_full ss_tvf(superscope *ss, typed_value tv) {
 }
 typed_value temporary_interpret errs(superscope *ss, scope *s, astidx a) {
   let work = scope_inferior(ss, s);
-  // let afull = ((astidx_full){a, ss->asts, ss->plist, ss->flist});
-  // let sfulll = ((scope_full){s, ss});
-  // println("[LOG:TMP] {astidx_full}", );
   try_err(lower, (ss, work, a), (typed_value){});
-  // println("[LOG:TMP] {scope_full}", );
   let res = try_err(interpret, (ss, work), (typed_value){});
-  // println("[LOG:TMP] {typed_value_full}", ss_tvf(ss, res));
   return res;
 }
 
@@ -362,7 +381,7 @@ static inline u32 ss_compileString(superscope *b, scope *s, fptr in) {
   t.iscomptime = true;
   return scope_add_value(b, s, TV_with(b, t, VS(in.ptr)));
 }
-// the children of a block sit consecutively in the ast list, terminated by the null node
+// Block children are contiguous and null-terminated.
 static inline astidx_span ast_run(superscope *ss, astidx start) {
   astidx end = start;
   while (!tu_is(astNull, ast_at(ss, end)))
@@ -443,6 +462,7 @@ typePrinter(typed_value_full) {
           PUTS("??");
         }
       }),
+      (c_namespace, _, PUTS("(namespace)")),
       (c_typeinfo, _, {
         if (in.v.v.c_type) {
           PUTS("(info ");
@@ -516,6 +536,12 @@ typePrinter(scope_full) {
           PUTS(" -> "), USETYPEPRINTER(u32, op.d);
           PUTS(")");
         }),
+        (ir_scope, _, PUTS("(scope)")),
+        (ir_scoperef, iv, {
+          PUTS("(scoperef ");
+          USETYPEPRINTER(u32, iv.l), PUTS(" -> "), USETYPEPRINTER(u32, iv.d);
+          PUTS(")");
+        }),
         (ir_getref, iv, {
           PUTS("(getref ");
           USETYPEPRINTER(u32, iv.l), PUTS(" -> "), USETYPEPRINTER(u32, iv.d);
@@ -531,9 +557,19 @@ typePrinter(scope_full) {
           USETYPEPRINTER(u32, iv.l), PUTS(" -> "), USETYPEPRINTER(u32, iv.d);
           PUTS(")");
         }),
+        (ir_ptrcast, cv, {
+          PUTS("(ptrcast ");
+          USETYPEPRINTER(u32, cv.l), PUTS(" -> "), USETYPEPRINTER(u32, cv.d);
+          PUTS(")");
+        }),
         (ir_cast, cv, {
           PUTS("(cast ");
           USETYPEPRINTER(u32, cv.l), PUTS(" -> "), USETYPEPRINTER(u32, cv.d);
+          PUTS(")");
+        }),
+        (ir_read, rd, {
+          PUTS("(read ");
+          USETYPEPRINTER(u32, rd.l), PUTS(" -> "), USETYPEPRINTER(u32, rd.d);
           PUTS(")");
         }),
         (ir_set, sv, {

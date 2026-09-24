@@ -1,0 +1,9 @@
+state ~~ @import("namespaces/state.cshl");
+before ~state.i32 = state.value;
+first ~~ @import("namespaces/first.cshl");
+middle ~state.i32 = state.value;
+@using(@import("namespaces/second.cshl"));
+again ~~ @import("namespaces/first.cshl");
+after ~state.i32 = value;
+bump();
+(before == 1) and (middle == 12) and (after == 123) and (state.value == 124);

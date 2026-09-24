@@ -2,8 +2,6 @@ type ~~ @type();
 s32 ~~ @sint(32);
 
 v ~s32 = 5;
-// an element with no name is numbered by its position, and `.number` reads it back. A runtime
-// element is storage, a comptime one is a value, so this pair covers both in one literal.
 q ~= [v, 6];
 q.0 = 7;
 

@@ -4,7 +4,6 @@ vec2 ~type~ @struct{
   Self ~type~ @this();
   x ~ i 32;
   y ~ i 32;
-  // the return type is the dependent type parameter, and the body branches on it
   @id("as") ~~ @fn (self~Self,to ~type),to,{
     @cif (to == (i 8)),{ return (self.x) + (self.y); };
   };

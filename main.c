@@ -1,3 +1,8 @@
+#ifndef _XOPEN_SOURCE
+  #define _XOPEN_SOURCE 700 // POSIX realpath declaration in strict C mode
+#endif
+
+#define ERROR_LOC_IMPLEMENTATION
 #include <string.h>
 #include <wheels/cmdline_parser.h>
 #include <wheels/macros.h>
@@ -15,10 +20,8 @@
 
 astidx_full parse_source errs(allocfn out_allocator, fptr input, const char *filename);
 
-// { util
 void on_allocation(void *, usize in, usize out, void *, const char *file, uint line) {
 }
-// }
 cmd_main(
     int nargs,
     char *args[nargs],
@@ -53,8 +56,7 @@ cmd_main(
   }
   println("(log) after fread : {dbga_stats}", debugAllocator_stats(allocator));
 
-  // parse_source reads the file itself when given a filename, so pass exactly one source
-  let ctx = catch_errcall((parse_source, (allocator, (fptr){}, args[1])), e, (err_panic(e), (astidx_full){}));
+  let ctx = catch_errcall((parse_source, (allocator, (fptr){}, args[1])), e, ({ error_loc_print(stderr, e); return 1; (astidx_full){}; }));
   println("(log) after ast : {dbga_stats}", debugAllocator_stats(allocator));
 
   if (echo_ast)
@@ -62,14 +64,14 @@ cmd_main(
 
   if (lowerast || execute || c_output) {
     let env = ss_init(allocator, ctx);
-    catch_errcall((lower, (env, env->outermost, ctx.idx)), e, (err_panic(e), (u32)0));
+    catch_errcall((lower, (env, env->outermost, ctx.idx)), e, ({ error_loc_print(stderr, e); return 1; (u32)0; }));
     scope_finish(env, env->outermost);
     if (lowerast || execute)
       print_wf(sexplike, "{scope_full}\n", ((scope_full){env->outermost, env}));
     if (c_output) {
       let name = snprint(allocator, "{cstr}.c{c8}", args[1], (c8)0);
       defer { slice_free(allocator, name); };
-      let out = fopen(name.ptr, "wb+");
+      let out = fopen(name.ptr, "w");
       assertMessage(out);
       defer { assertMessage(fclose(out) == 0, "failed to close C output"); };
 
@@ -77,9 +79,8 @@ cmd_main(
       makeC(env, fileprint, pctx);
     }
     if (execute) {
-      let res = catch_errcall((interpret, (env, env->outermost)), e, (err_panic(e), (typed_value){}));
+      let res = catch_errcall((interpret, (env, env->outermost)), e, ({ error_loc_print(stderr, e); return 1; (typed_value){}; }));
       print_wf(sexplike, "result: {typed_value_full}\n", ((typed_value_full){res, ss_typeenv(env)}));
-      // print_wf(sexplike, "after interpret\n{scope_full}\n", ((scope_full){env->outermost, env}));
     }
   }
 

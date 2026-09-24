@@ -1,0 +1,4 @@
+answer ~~ 40;
+i32 ~~ @sint(32);
+add ~~ @fn (x ~i32), i32, { return x + answer; };
+quoted ~~ @qot(42);

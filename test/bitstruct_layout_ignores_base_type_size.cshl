@@ -3,8 +3,6 @@ s16 ~~ @sint(16);
 u16 ~~ @uint(16);
 s64 ~~ @sint(64);
 
-// the base type only says how a member is read, the widths decide the layout, so mixing signed
-// and unsigned members changes nothing about the size
 mixed ~type~ @bitstruct{
   a ~s16:12;
   b ~u16:12;
@@ -13,7 +11,6 @@ mixed ~type~ @bitstruct{
   e ~s16:12;
   f ~u16:12;
 };
-// and neither does widening every base type: 72 bits is 9 bytes either way
 wide ~type~ @bitstruct{
   a ~s64:12;
   b ~s64:12;

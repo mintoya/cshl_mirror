@@ -1,0 +1,2 @@
+@using @include("include_helper.cshl");
+included_value() == 42;

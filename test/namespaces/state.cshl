@@ -1,0 +1,4 @@
+i32 ~~ @sint(32);
+value ~i32 = 0;
+bump ~~ @fn (), @void(), { value = value + 1; };
+bump();

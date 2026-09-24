@@ -1,15 +1,5 @@
-type ~~ @type();
-ast ~~ @ast();
-any ~~ @any();
-i32 ~type~ @sint(32);
-fn  ~~ @fn (a ~ast),@inlineast(),{
-  return 
-    @qot @fn(
-      @uqot(a."()".opleft),
-      @uqot(a."()".opright."()".opleft),
-      @uqot(a."()".opright."()".opright),
-    );
-};
+@using @include "macros.cshl";
+
 Point ~type~ @struct{
   Self ~type~ @this();
   x ~i32;

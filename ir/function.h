@@ -4,10 +4,6 @@
 #include "scope.h"
 #include "wheels/macros.h"
 
-//
-// cmp
-//
-
 static cmpres typed_value_cmp_typed(Type ta, value_store av, Type tb, value_store bv, typeenv e) {
   if_decl (let cmp, Type_cmp(e, ta, tb)) return cmp;
   assertMessage(Type_is_comptime(ta) ?: (!av.value && !bv.value), "should have nulled that out");
@@ -33,6 +29,7 @@ static cmpres typed_value_cmp_typed(Type ta, value_store av, Type tb, value_stor
       (c_fun, _, (cmpres)(icmp(av.c_fun.fn, bv.c_fun.fn) ?: icmp(av.c_fun.spec, bv.c_fun.spec))),
       (c_type, _, icmp(av.c_type, bv.c_type)),
       (c_typeinfo, _, icmp(av.c_type, bv.c_type)),
+      (c_namespace, _, icmp((usize)av.c_namespace, (usize)bv.c_namespace)),
       // asts have no size, so memcmp below would call every ast equal
       (c_ast, _, icmp(av.c_ast, bv.c_ast)),
       (c_inlineast, _, icmp(av.c_ast, bv.c_ast)),
@@ -54,10 +51,6 @@ cmpres slice_typed_value_cmp_hash(void *env, const void *a, const void *b) {
     if_decl (let cmp, typed_value_cmp(ss_typeenv((superscope *)env), av.ptr[i], bv.ptr[i])) return cmp;
   return 0;
 }
-
-//
-//
-//
 
 static inline Type function_item_type errs(superscope *ss, scope *s, astidx item) {
   let placeholder = scope_find(ss, s, try_err(lower, (ss, s, item), T()));
@@ -83,13 +76,12 @@ u32 lower_function errs(
     Type param = args_are_types
                       ? try_err(value_asType, (ss, try_err(temporary_interpret, (ss, arg_scope, p), 0)), 0)
                       : try_err(function_item_type, (ss, arg_scope, p), 0);
-    sglist_get(env.tlist, signature.start - 1 + (p - params.start)) = param;
+    sglist_get(ss->tlist, signature.start - 1 + (p - params.start)) = param;
   }
-  sglist_get(env.tlist, signature.start + params.len - 1) =
+  sglist_get(ss->tlist, signature.start + params.len - 1) =
       try_err(value_asType, (ss, try_err(temporary_interpret, (ss, arg_scope, retT), 0)), 0);
 
-  signature.isextern = !fptr_isNull(external_name);
-  signature.external_name = external_name;
+  signature.origin = (u32)msList_len(ss->functions) + 1;
   typeidx signature_idx = ss_type_intern(ss, T(tu_of(c_fun, signature)));
 
   // clang-format off
@@ -98,7 +90,10 @@ u32 lower_function errs(
       .retT = retT,
       .body = body,
       .signature = signature_idx,
+      .external_name = external_name,
+      .isextern = !fptr_isNull(external_name),
       .defscope = s,
+      .namespace = arg_scope,
       .instances = msList_init(ss->alloc, function_instance),
       .mp = moxmap_init(ss->alloc, slice(typed_value), u32, (oxmap_cmp){slice_typed_value_cmp_hash, ss}),
   });
@@ -114,7 +109,9 @@ bool function_complete_declaration errs(superscope *ss, scope *s, u32 declared, 
   if (!definition->body) return false;
   let item = &ss->functions[declared_value->v.c_fun.fn - 1];
   if (item->body) return false;
-  if (Type_cmp_ndecor(ss_type(ss, declared_value->t), ss_type(ss, definition_value->t), ss_typeenv(ss)))
+  Type declared_type = ss_type(ss, declared_value->t), definition_type = ss_type(ss, definition_value->t);
+  declared_type.t.c_fun.origin = definition_type.t.c_fun.origin = 0;
+  if (Type_cmp_ndecor(declared_type, definition_type, ss_typeenv(ss)))
     return_err("FUNCTION_SIGNATURE_MISMATCH", false);
   item->params = definition->params;
   item->retT = definition->retT;
@@ -140,9 +137,8 @@ static u32 lower_comptime_call_result errs(superscope *ss, scope *s, scope *spec
 
 static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg, u32 fn, slice(typed_value) key, u32 rpos, u32 nargs) {
   let function_item = &ss->functions[fn - 1];
-  TypeTree function_type_tree = ss_type(ss, function_item->signature).t;
-  c_fun function_type = tu_catch(c_fun, function_type_tree);
-  if (!function_item->body && !function_type.isextern) return_err("FUNCTION_NOT_DEFINED", 0);
+  bool isextern = function_item->isextern;
+  if (!function_item->body && !isextern) return_err("FUNCTION_NOT_DEFINED", 0);
 
   if_decl (let inst, moxmap_get(function_item->mp, key)) {
     let instance = &function_item->instances[*inst];
@@ -172,7 +168,7 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
 
   let params = function_item->params;
   let retT = function_item->retT;
-  if (!function_type.isextern) {
+  if (!isextern) {
     foreach (let i, range(0, key.len)) {
       let item = tu_catchr(astDecl, ast_at(ss, params.start + i));
       let name = try_err(id_from_ast, (ss, spec, ast_child(ss, item.name_type_value)), 0);
@@ -194,7 +190,7 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
   sig.ptr[key.len] = ss_type_intern(ss, ret);
   function_item->instances[spec_number].sig = sig;
 
-  if (!function_type.isextern) {
+  if (!isextern) {
     let body = function_item->body;
     try_err(lower, (ss, spec, body), 0);
     function_item = &ss->functions[fn - 1];
@@ -216,8 +212,7 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
   return result;
 }
 
-// coerce every argument to the generic signature, then lay them out as one consecutive run of
-// slots so ir_call can name the whole argument list with [r, e)
+// ir_call requires contiguous argument slots [r, e).
 static u32 lower_function_call_args errs(superscope *ss, scope *s, u32 fn, slice(u32) aargs) {
   let function_value = *scope_find(ss, s, fn);
   let generic_signature = tu_catchr(c_fun, ss_type(ss, function_value.t).t);
@@ -238,10 +233,7 @@ static u32 lower_function_call_args errs(superscope *ss, scope *s, u32 fn, slice
   foreach (let i, range(0, nparams)) {
     msList_push(ss->alloc, key, *scope_find(ss, s, leads.ptr[i]));
     let dst = scope_add_value(ss, s, *scope_find(ss, s, leads.ptr[i]));
-    if (ss_type(ss, key[i].t).ref_kind)
-      try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_getref, {.l = leads.ptr[i], .d = dst})), 0);
-    else
-      try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_set, {.l = leads.ptr[i], .d = dst})), 0);
+    try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_cast, {.l = leads.ptr[i], .d = dst})), 0);
   }
   foreach (let l, span(key, msList_len(key)))
     l->v.value = (!Type_is_comptime(ss_type(ss, l->t)) && l->v.value) ? nullptr : l->v.value;

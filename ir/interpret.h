@@ -1,5 +1,5 @@
 #pragma once
-#include "../cshl.lib.h" // the bit run helpers the C output uses, so both read and write bits the same way
+#include "../cshl.lib.h" // Share packed-bit semantics with generated C.
 #include "common.h"
 #include "scope.h"
 #include "simplify.h"
@@ -198,14 +198,11 @@ typed_value intstate_pop(intstate is) {
         .v = (*f.vals)[sn + argc],
     };
   } else {
-    r = (typed_value){
-        .t = s->values[sn - 1].t,
-        .v = (*f.vals)[sn - 1],
-    };
+    r = intstate_reg(is, s->result);
   }
 
   let frames = mxmap_get(is->vmap, s);
-  msList_pop(*frames);
+  if (!s->module_id) msList_pop(*frames);
   msList_pop(is->cs);
 
   return r;
@@ -262,6 +259,7 @@ void interpret_set errs(intstate is, ir_set c) {
       (c_fun, _, slot->c_fun = l.v.c_fun),
       (c_type, _, slot->c_type = l.v.c_type),
       (c_typeinfo, _, slot->c_type = l.v.c_type),
+      (c_namespace, _, slot->c_namespace = l.v.c_namespace),
       (default, {
         intstate_store(is, place, l);
       })
@@ -442,6 +440,7 @@ void interpret_farg errs(intstate is, ir_farg c) {
       (c_fun, _, dv->c_fun = l->c_fun),
       (c_type, _, dv->c_type = l->c_type),
       (c_typeinfo, _, dv->c_type = l->c_type),
+      (c_namespace, _, dv->c_namespace = l->c_namespace),
       (default, {
         Type dt = ss_type(is->ss, scope_find(is->ss, msList_last(is->cs).sp, c.d)->t);
         if_decl (let sz, Type_sizeof(dt, ss_typeenv(is->ss)))
@@ -454,9 +453,7 @@ void interpret_call errs(intstate is, ir_call c) {
   let fv = fr.v.c_fun;
 
   let fn = &is->ss->functions[fv.fn - 1];
-  TypeTree function_type_tree = ss_type(is->ss, fn->signature).t;
-  c_fun function_type = tu_catch(c_fun, function_type_tree);
-  if (function_type.isextern) return_err("EXTERN_CALL");
+  if (fn->isextern) return_err("EXTERN_CALL");
   let inst = &fn->instances[fv.spec];
 
   usize nargs = c.e - c.r;
@@ -504,14 +501,33 @@ static void intstate_inst errs(intstate is, usize at, ir inst) {
       (ir_break /**/, _, f->pc = intstate_seek(f, at, +1, +1, ir_loops_enum, 0, ir_loope_enum)),
       (ir_ret /*   */, c, try_err(interpret_ret, (is, c))),
       (ir_set /*   */, c, try_err(interpret_set, (is, c))),
+      (ir_read, c, try_err(interpret_set, (is, ((ir_set){.l = c.l, .d = c.d})))),
       (ir_farg /*  */, c, try_err(interpret_farg, (is, c))),
       (ir_cast /*  */, c, try_err(interpret_cast, (is, c))),
+      (ir_ptrcast, c, {
+        let source = intstate_findreg(is, c.l);
+        let dest = intstate_findslots_value(is, c.d);
+        memcpy(dest->value, source.v.value, sizeof(void *));
+      }),
       (ir_field /* */, c, try_err(interpret_field, (is, c))),
       (ir_rawop /* */, c, try_err(interpret_rawop, (is, c))),
       (ir_array /* */, c, try_err(interpret_array, (is, c))),
       (ir_getref /**/, c, try_err(interpret_getref, (is, c))),
       (ir_getptr /**/, c, try_err(interpret_getptr, (is, c))),
       (ir_putptr /**/, c, try_err(interpret_putptr, (is, c))),
+      (ir_scope, child, {
+        if (!mxmap_get(is->vmap, (const scope *)child)) intstate_pushs(is, child, (slice(typed_value)){}, 0);
+      }),
+      (ir_scoperef, ref, {
+        let source = scope_find(is->ss, ref.owner, ref.l);
+        let frames = mxmap_get(is->vmap, (const scope *)ref.owner);
+        value_store value = source->v;
+        if (frames) value = (*msList_last(*frames))[ref.l - ref.owner->start - 1];
+        let dest = intstate_findslots_value(is, ref.d);
+        let type = ss_type(is->ss, source->t);
+        if (type.ref_kind == ref_dref) memcpy(dest->value, value.value, sizeof(dref));
+        else *(void **)dest->value = type.ref_kind ? *(void **)value.value : value.value;
+      }),
       (ir_call, c, try_err(interpret_call, (is, c))),
       (ir_rawdot /**/, _, assertMessage(false, "unreachable")),
       (default, assertMessage(false, "unhandled instruction")),
@@ -526,7 +542,9 @@ static void intstate_run errs(intstate is) {
       let result = intstate_pop(is);
       is->rsig = intstate_normal;
       let caller = &msList_last(is->cs);
-      let call = tu_catchr(ir_call, caller->sp->instructions[caller->pc - 1]);
+      let instruction = caller->sp->instructions[caller->pc - 1];
+      if (tu_is(ir_scope, instruction)) continue;
+      let call = tu_catchr(ir_call, instruction);
       let d = intstate_findslots_value(is, call.d);
       let dst = d;
       let dt = ss_type(is->ss, scope_find(is->ss, caller->sp, call.d)->t);

@@ -1,0 +1,2 @@
+state ~~ @import("state.cshl");
+state.value = state.value * 10 + 2;

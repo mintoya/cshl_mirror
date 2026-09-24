@@ -1,0 +1,42 @@
+type ~~ @type();
+Family ~~ @fn((T ~type), type, {
+  return @struct { Element ~type~ T; value ~T; };
+});
+Other ~~ @fn((T ~type), type, {
+  return @struct { value ~T; };
+});
+A ~~ Family(@sint(32));
+B ~~ Family(@uint(8));
+C ~~ Other(@sint(32));
+fns ~~ @typeinfo(@typeof(Family)).fn.namespace;
+ans ~~ @typeinfo(A).struct.namespace;
+bns ~~ @typeinfo(B).namespace;
+cns ~~ @typeinfo(C).namespace;
+missing ~~ @typeinfo(@sint(32)).namespace;
+empty ~~ @typeinfo(@sint(32)).struct.namespace.parent;
+passes ~@sint(32) = 0;
+@cif(ans, { passes = passes + 1; });
+@cif(empty, { passes = 99; }, { passes = passes + 1; });
+lib ~~ @import("include_helper.cshl");
+again ~~ @import("include_helper.cshl");
+(ans == @typeinfo(A).namespace)
+  and (ans != bns)
+  and (ans.parent == fns)
+  and (bns.parent == fns)
+  and (cns.parent != fns)
+  and (fns != @typeinfo(@typeof(Other)).namespace)
+  and (ans.Element == @sint(32))
+  and (missing == empty)
+  and (@typeinfo(@bool()).namespace == empty)
+  and (@typeinfo(@void()).namespace == empty)
+  and (@typeinfo(@arr(2, @uint(8))).namespace == empty)
+  and (@typeinfo(@ptr(A)).namespace == empty)
+  and (@typeinfo(Family(@sint(32))).namespace == ans)
+  and (empty.parent.namespace.fn.args.ret.bits == empty)
+  and (empty != fns)
+  and (fns != empty)
+  and (ans.parent and (ans.parent == fns))
+  and ((empty and (empty == missing)) == (1 == 0))
+  and (lib == again)
+  and (lib != ans)
+  and (passes == 2);

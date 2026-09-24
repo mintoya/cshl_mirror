@@ -1,0 +1,28 @@
+i32 ~~ @sint(32);
+i64 ~~ @sint(64);
+x ~i32 = 5;
+r ~@refT(i32) = @ref(x);
+copy ~i32 = r;
+widened ~i64 = r as i64;
+bump ~~ @fn((v ~@refT(i32)), i32, { v = v + 1; return v; });
+alias ~~ @fn((v ~@refT(i32)), @refT(i32), { return v; });
+y ~i32 = bump(r);
+alias(r) = 9;
+p ~@ptr(i32) = @where(r);
+@at(p) = 11;
+arr ~@arr(3, i32);
+index ~i32 = 1;
+ri ~@refT(i32) = @ref(index);
+arr[ri] = r;
+flag ~@bool() = r == 11;
+rf ~@refT(@bool()) = @ref(flag);
+@if(rf, { arr[ri] = arr[ri] + 1; });
+Bits ~~ @bitstruct { first ~i32:5; second ~i32:5; };
+bits ~Bits;
+bits.first = -3;
+bits.second = bits.first;
+packed ~i64 = bits.second as i64;
+fromValue ~~ @fn((v ~i32), i32, { return v; });
+returned ~i32 = fromValue(bits.first);
+(copy == 5) and (widened == 5) and (y == 6) and (x == 11)
+  and (arr[ri] == 12) and (packed == -3) and (returned == -3);
