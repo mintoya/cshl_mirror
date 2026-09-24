@@ -4,9 +4,6 @@
 #include "scope.h"
 #include "wheels/macros.h"
 
-sliceDef(typed_value);
-sliceDef(Type);
-
 //
 // cmp
 //
@@ -35,6 +32,7 @@ static cmpres typed_value_cmp_typed(Type ta, value_store av, Type tb, value_stor
       (c_int, _, BInt.cmp(av.c_int, bv.c_int)),
       (c_fun, _, (cmpres)(icmp(av.c_fun.fn, bv.c_fun.fn) ?: icmp(av.c_fun.spec, bv.c_fun.spec))),
       (c_type, _, icmp(av.c_type, bv.c_type)),
+      (c_typeinfo, _, icmp(av.c_type, bv.c_type)),
       // asts have no size, so memcmp below would call every ast equal
       (c_ast, _, icmp(av.c_ast, bv.c_ast)),
       (c_inlineast, _, icmp(av.c_ast, bv.c_ast)),
@@ -130,11 +128,12 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
 
   if_decl (let inst, moxmap_get(function_item->mp, key)) {
     let instance = &function_item->instances[*inst];
-    if (Type_is_comptime(instance->ret)) {
+    Type ret = function_instance_ret(ss, instance);
+    if (Type_is_comptime(ret)) {
       return try_err(lower_comptime_call_result, (ss, s, instance->spec, key), 0);
     }
     u32 callee = try_err(function_call_specialize, (ss, s, fnreg, *inst), 0);
-    let result = scope_add_value(ss, s, TV_of(ss, instance->ret));
+    let result = scope_add_value(ss, s, TV_of(ss, ret));
     try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_call, {.l = callee, .d = result, .r = rpos, .e = rpos + nargs})), 0);
     return result;
   }
@@ -170,15 +169,21 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
   let ret_value = try_err(temporary_interpret, (ss, spec, retT), 0);
   let ret = try_err(value_asType, (ss, ret_value), 0);
   function_item = &ss->functions[fn - 1];
-  function_item->instances[spec_number].ret = ret;
+  slice(typeidx) sig = slice_alloc(ss->alloc, typeidx, key.len + 1);
+  foreach (let i, range(0, key.len)) sig.ptr[i] = key.ptr[i].t;
+  sig.ptr[key.len] = ss_type_intern(ss, ret);
+  function_item->instances[spec_number].sig = sig;
 
   let body = function_item->body;
   try_err(lower, (ss, spec, body), 0);
-  ret = ss->functions[fn - 1].instances[spec_number].ret;
+  function_item = &ss->functions[fn - 1];
+  ret = function_instance_ret(ss, &function_item->instances[spec_number]);
   let fallback = scope_add_value(ss, spec, tu_is(c_any, ret.t) ? TV_void(ss) : TV_of(ss, ret));
   try_err(scope_add_inst, (ss, spec, (ir)tu_of(ir_ret, fallback)), 0);
   scope_finish(ss, spec);
-  ret = ss->functions[fn - 1].instances[spec_number].ret;
+  function_item = &ss->functions[fn - 1];
+  ret = function_instance_ret(ss, &function_item->instances[spec_number]);
+  function_instance_set_ret(ss, &function_item->instances[spec_number], ret);
 
   if (Type_is_comptime(ret)) {
     return try_err(lower_comptime_call_result, (ss, s, spec, key), 0);
@@ -236,10 +241,6 @@ u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astidx args,
   defer {
     if (nparams) slice_free(ss->alloc, regs);
   };
-  // A receiver parameter may ask for an AST. The receiver has already been lowered, so exposing its
-  // AST would re-evaluate it in the expansion; hand over an id bound to that one evaluation instead.
-  // `_` is spoken for by pipes, so this gets its own name, in a naming scope of its own, so it can
-  // neither collide with the caller's names nor leak past the call.
   bool receiver_named = false;
   usize idx = 0;
   if (lead) {
@@ -248,14 +249,12 @@ u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astidx args,
     if (TypeTree_is_ast(want0.t) && !TypeTree_is_ast(have.t)) {
       scope_push_named(ss, s);
       receiver_named = true;
-      try_err(scope_bind, (ss, s, scope_add_value(ss, s, *scope_find(ss, s, lead)), fp("#_")), 0);
+      try_err(scope_sbind, (ss, s, lead, fp("#_")), 0);
       regs.ptr[idx++] = scope_add_value(ss, s, TV_ast(ss, ast_make_id(ss, fp("#_"))));
     } else regs.ptr[idx++] = lead;
   }
   foreach (let a, span(alist.start, alist.len)) {
     let want = Type_at(env, type_run_at(env, generic_signature.start, idx));
-    // a comptime argument has to be a value here, not an instruction that would make one later,
-    // since the specialization it is part of is picked by that value
     regs.ptr[idx++] = TypeTree_is_ast(want.t) ? scope_add_value(ss, s, TV_ast(ss, a))
                       : Type_is_comptime(want)
                           ? scope_add_value(ss, s, try_err(temporary_interpret, (ss, s, a), 0))

@@ -194,7 +194,7 @@ typed_value intstate_pop(intstate is) {
     usize argc = fn->params.len;
 
     r = (typed_value){
-        .t = f.rt ? f.rt : ss_type_intern(is->ss, inst->ret),
+        .t = f.rt ? f.rt : ss_type_intern(is->ss, function_instance_ret(is->ss, inst)),
         .v = (*f.vals)[sn + argc],
     };
   } else {
@@ -220,7 +220,7 @@ void interpret_ret errs(intstate is, ir_ret r) {
   let s = msList_last(is->cs).sp;
   let fn = &is->ss->functions[s->instance.fn - 1];
   usize argc = fn->params.len;
-  if (fn->instances[s->instance.index].ret.ref_kind) {
+  if (function_instance_ret(is->ss, &fn->instances[s->instance.index]).ref_kind) {
     let slot = intstate_findslots_value(is, r);
     v = (typed_value){.t = scope_find(is->ss, s, r)->t, .v = *slot};
   }
@@ -261,6 +261,7 @@ void interpret_set errs(intstate is, ir_set c) {
       (c_inlineast, _, slot->c_ast = l.v.c_ast),
       (c_fun, _, slot->c_fun = l.v.c_fun),
       (c_type, _, slot->c_type = l.v.c_type),
+      (c_typeinfo, _, slot->c_type = l.v.c_type),
       (default, {
         intstate_store(is, place, l);
       })
@@ -440,6 +441,7 @@ void interpret_farg errs(intstate is, ir_farg c) {
       (c_inlineast, _, dv->c_ast = l->c_ast),
       (c_fun, _, dv->c_fun = l->c_fun),
       (c_type, _, dv->c_type = l->c_type),
+      (c_typeinfo, _, dv->c_type = l->c_type),
       (default, {
         Type dt = ss_type(is->ss, scope_find(is->ss, msList_last(is->cs).sp, c.d)->t);
         if_decl (let sz, Type_sizeof(dt, ss_typeenv(is->ss)))
@@ -466,10 +468,11 @@ void interpret_call errs(intstate is, ir_call c) {
     };
   }
 
+  Type ret = function_instance_ret(is->ss, inst);
   typeidx retT =
-      tu_is(r_null, inst->ret.t)
+      tu_is(r_null, ret.t)
           ? 0
-          : ss_type_intern(is->ss, inst->ret);
+          : ss_type_intern(is->ss, ret);
 
   intstate_pushs(
       is,

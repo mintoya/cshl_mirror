@@ -5,7 +5,6 @@
 #include <wheels/allocators/cballocator.h>
 #include <wheels/smap.h>
 
-sliceDef(u32);
 static struct {
   char buf[1024];
   usize len;
@@ -131,11 +130,17 @@ static inline void scope_add_inst errs(superscope *env, scope *s, ir i) {
   else if (tu_is(ir_blocke, i)) scope_pop_named(s);
   try_err(scope_add_inst_typecheck, (env, s, i));
 }
-static inline void scope_bind errs(superscope *env, scope *s, u32 idx, fptr name) {
+// the unguarded bind, for the names the compiler binds for itself and resolves by these exact bytes
+static inline void scope_sbind errs(superscope *env, scope *s, u32 idx, fptr name) {
   if (moxmap_get(mList_last(s->named), name)) return_err("SHADOWING_SAME_SCOPE");
   assertMessage(!moxmap_get(mList_last(s->named), name));
   assertMessage(idx <= msList_len(s->values) + s->start, "%zu <= %zu + %zu", idx, msList_len(s->values), s->start);
   moxmap_set(mList_last(s->named), name, idx);
+}
+// _ reserved for pipesand #_ reserved for function self
+static inline void scope_bind errs(superscope *env, scope *s, u32 idx, fptr name) {
+  if (fptr_eq(name, "_") || fptr_eq(name, "#_")) return_err("RESERVED_ID");
+  try_err(scope_sbind, (env, s, idx, name));
 }
 
 static u32 ss_get_named_failable_noref(superscope *env, scope *s, fptr n) {
@@ -215,6 +220,7 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
   res->t_bool = ss_type_intern(res, T(tu_of(r_bool, {})));
   res->t_ast = ss_type_intern(res, T(tu_of(c_ast, {})));
   res->t_type = ss_type_intern(res, T(tu_of(c_type, {})));
+  res->t_typeinfo = ss_type_intern(res, T(tu_of(c_typeinfo, {})));
   res->alloc = cba_init(allocator, nullptr, irb_cbb, res->pointers);
   res->outermost = scope_inferior(res, nullptr);
   struct {
@@ -253,6 +259,7 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
       {"@const", builtin_const},
       {"@comptime", builtin_comptime},
       {"@typeof", builtin_typeof},
+      {"@typeinfo", builtin_typeinfo},
       {"@arr", builtin_arrof},
       {"break", builtin_break},
       {"continue", builtin_continue},

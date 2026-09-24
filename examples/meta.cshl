@@ -43,11 +43,9 @@ while  ~~ @fn (a ~ast),@inlineast(),{
     };
   };
 };
-arr ~~ fn (i~int) any {
-  fn (T~type) type {
-    return @arrof(T,i);
-  } |> return _;
-};
+arr ~~ fn (i~int) any
+  (return fn (T~type) type 
+    (return @arrof(T,i)));
 
 
 ! ~~ fn (T~type) type {
@@ -70,7 +68,13 @@ arr ~~ fn (i~int) any {
   };
 };
 
-main ~~ fn () (! void) {
+f1 ~~ fn () (! void) {;};
+main ~~ fn (times ~int) (! void) {
+  @cif(
+    ( times ),
+    ( return main(times - 1) )
+  );
+  f1()
+    :try();
 };
-
-main():try();
+main(2);

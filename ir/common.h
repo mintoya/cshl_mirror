@@ -20,7 +20,8 @@ struct scope {
   } instance;
 };
 typedef struct {
-  Type ret;
+  // last item is the return, before is order of args
+  slice(typeidx) sig;
   scope *spec;
 } function_instance;
 
@@ -51,7 +52,7 @@ struct superscope {
   msList(function) functions;
   scope *outermost;
 
-  typeidx t_void, t_any, t_int, t_bool, t_ast, t_type;
+  typeidx t_void, t_any, t_int, t_bool, t_ast, t_type, t_typeinfo;
   u32 foldempty;
 };
 typedef struct {
@@ -122,6 +123,14 @@ u32 scope_add_value(superscope *env, scope *s, typed_value v);
 const scope *scope_owner(const scope *s, u32 idx);
 
 typeidx ss_type_intern(superscope *ss, Type t);
+static inline Type function_instance_ret(superscope *ss, function_instance *instance) {
+  assertMessage(instance->sig.len, "function instance has no return type");
+  return Type_at(ss_typeenv(ss), instance->sig.ptr[instance->sig.len - 1]);
+}
+static inline void function_instance_set_ret(superscope *ss, function_instance *instance, Type ret) {
+  assertMessage(instance->sig.len, "function instance has no return type");
+  instance->sig.ptr[instance->sig.len - 1] = ss_type_intern(ss, ret);
+}
 static inline Type *ss_getType(superscope *ss, Type t) {
   return &sglist_get(ss->tlist, ss_type_intern(ss, t) - 1);
 }
@@ -141,6 +150,7 @@ static inline Type ss_ast_type(superscope *ss) { return ss_type(ss, ss->t_ast); 
 static inline Type ss_bool_type(superscope *ss) { return ss_type(ss, ss->t_bool); }
 typed_value *scope_find(superscope *env, const scope *s, u32 idx);
 static inline void scope_bind errs(superscope *env, scope *s, u32 idx, fptr name);
+static inline void scope_sbind errs(superscope *env, scope *s, u32 idx, fptr name);
 
 u32 lower errs /*                      */ (superscope *ss, scope *s, astidx a);
 typed_value interpret errs /*          */ (superscope *ss, scope *s);
@@ -427,6 +437,15 @@ typePrinter(typed_value_full) {
       (c_type, _, {
         if (in.v.v.c_type) {
           USETYPEPRINTER(Type_full, ((Type_full){Type_at(in.env, in.v.v.c_type), in.env}));
+        } else {
+          PUTS("??");
+        }
+      }),
+      (c_typeinfo, _, {
+        if (in.v.v.c_type) {
+          PUTS("(info ");
+          USETYPEPRINTER(Type_full, ((Type_full){Type_at(in.env, in.v.v.c_type), in.env}));
+          PUTS(")");
         } else {
           PUTS("??");
         }

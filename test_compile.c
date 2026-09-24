@@ -1,4 +1,5 @@
 #include "ast.h"
+#include "cout.h"
 #include "ir/interpret.h"
 #include "ir/lower.h"
 #include "ir/scope.h"
@@ -28,25 +29,34 @@ static interp interpret_source(allocfn arena, fptr src, astidx_full *ctx_out) {
 }
 static Type tv_type(interp x) { return Type_at(x.env, x.t); }
 
-// a test whose program stands on its own lives in test/<name>.cshl and runs through this macro,
-// which requires the file's last expression to yield a plain, true bool
-#define test_file_1(filename)                             \
-  test_fn(filename) {                                     \
-    let arena = arena_new_ext(allocator, 1 << 16);        \
-    defer { arena_cleanup(arena); };                      \
-    let ct = parse_source(                                \
-        nullptr,                                          \
-        arena,                                            \
-        nullFptr,                                         \
-        "test/" #filename ".cshl"                         \
-    );                                                    \
-    let ctx = ss_init(arena, ct);                         \
-    lower(nullptr, ctx, ctx->outermost, ct.idx);          \
-    let result = interpret(nullptr, ctx, ctx->outermost); \
-    let rt = ss_type(ctx, result.t);                      \
-    test_assert(tu_is(r_bool, rt.t));                     \
-    test_assert(!rt.decorations);                         \
-    test_assert(*(bool *)result.v.value);                 \
+#define test_file_1(filename)                                                            \
+  test_fn(filename) {                                                                    \
+    let arena = arena_new_ext(allocator, 1 << 16);                                       \
+    defer { arena_cleanup(arena); };                                                     \
+    let ct = parse_source(                                                               \
+        nullptr,                                                                         \
+        arena,                                                                           \
+        nullFptr,                                                                        \
+        "test/" #filename ".cshl"                                                        \
+    );                                                                                   \
+    let ctx = ss_init(arena, ct);                                                        \
+    lower(nullptr, ctx, ctx->outermost, ct.idx);                                         \
+    scope_finish(ctx, ctx->outermost);                                                   \
+    char cpath[256], exe_path[256], command[1024];                                       \
+    snprintf(cpath, sizeof(cpath), "test/" #filename ".cshl.c");                         \
+    snprintf(exe_path, sizeof(exe_path), "%s.exe", cpath);                               \
+    FILE *out = fopen(cpath, "w");                                                       \
+    test_assert(out);                                                                    \
+    printerfunction_context pctx =                                                       \
+        {.put = fileprint, .arb = out, .allocator = arena};                              \
+    makeC(ctx, fileprint, pctx);                                                         \
+    test_inteq(0, fclose(out));                                                          \
+    snprintf(                                                                            \
+        command, sizeof(command), "clang -std=c23 -O0 -o \"%s\" \"%s\"", exe_path, cpath \
+    );                                                                                   \
+    test_inteq(0, system(command));                                                      \
+    snprintf(command, sizeof(command), "\"%s\"", exe_path);                              \
+    test_inteq(0, system(command));                                                      \
   };
 
 test_fn(interpret_literal_int) {
@@ -374,6 +384,32 @@ test_fn(lower_error_type_not_value) {
   let e = lower_source_err(arena, fp("@arr(2, 5);"));
   test_assert(e.err_code);
   test_streq(e.err_code, "TYPE_IS_NOT_VALUE");
+}
+
+// a return needs a function instance to hand its result to; a macro that expands to a return can
+// only be called from inside a function (this is what meta.cshl's `main():try()` trips over)
+test_fn(lower_error_return_outside_function) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(
+      arena,
+      fp(
+          "ret ~~ @fn((a ~@ast()), @inlineast(), { return @qot{ return @uqot(a); }; });\n"
+          "ret(1);\n"
+      )
+  );
+  test_assert(e.err_code);
+  test_streq(e.err_code, "RETURN_OUTSIDE_FUNCTION");
+  test_assert(e.line > 0);
+  test_assert(e.file != nullptr);
+}
+
+test_fn(lower_error_bare_top_level_return) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("return 1;"));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "RETURN_OUTSIDE_FUNCTION");
 }
 
 // @at is *l, so it takes a pointer. a referance to an int is not a pointer: reading the value
@@ -785,6 +821,156 @@ test_fn(interpret_packed_reads_bounded_memory) {
   arena_cleanup(is->reads);
   arena_cleanup(is->temp);
   if (is->scratch) arena_cleanup(is->scratch);
+}
+
+test_fn(typeinfo_reads_integer_widths) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(
+      arena,
+      fp("s ~~ @sint(12);\n"
+         "u ~~ @uint(20);\n"
+         "@typeinfo(s).sint.bits + @typeinfo(u).uint.bits;\n"),
+      nullptr
+  );
+  test_assert(tu_is(c_int, tv_type(r).t));
+  test_assert(!BInt.cmp(r.v.c_int, BInt.from.i64(arena, 32)));
+}
+
+// the struct kind reads members by position, and a member's type comes back as a usable type
+// annotation: the first of these two is a whole float, the second a byte
+static char *typeinfo_struct_source =
+    "S ~~ @struct{ a ~@sint(32); b ~@sint(8); };\n"
+    "@sizeof(@typeinfo(S).struct.0) + @sizeof(@typeinfo(S).struct.1);\n";
+
+// a function kind is its parameters and its return type, with the parameters numbered
+static char *typeinfo_fn_source =
+    "f ~~ @fn((a ~@sint(8)), @sint(64), { return a; });\n"
+    "(@typeinfo(@typeof(f)).fn.args * 10)\n"
+    "  + @sizeof(@typeinfo(@typeof(f)).fn.ret)\n"
+    "  + @sizeof(@typeinfo(@typeof(f)).fn.0);\n";
+
+test_fn(typeinfo_reads_struct_members) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(arena, fp(typeinfo_struct_source), nullptr);
+  test_assert(tu_is(c_int, tv_type(r).t));
+  test_assert(!BInt.cmp(r.v.c_int, BInt.from.i64(arena, 5)));
+}
+
+test_fn(typeinfo_reads_function_signature) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(arena, fp(typeinfo_fn_source), nullptr);
+  test_assert(tu_is(c_int, tv_type(r).t));
+  test_assert(!BInt.cmp(r.v.c_int, BInt.from.i64(arena, 19)));
+}
+
+// a selector keeps the info when the kind matches, so it can chain past its own kind
+static char *typeinfo_selector_source =
+    "ti ~@typeinfo() = @typeinfo(@sint(9));\n"
+    "ti.sint.sint.bits;\n";
+
+test_fn(typeinfo_selector_keeps_matching_kind) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(arena, fp(typeinfo_selector_source), nullptr);
+  test_assert(tu_is(c_int, tv_type(r).t));
+  test_assert(!BInt.cmp(r.v.c_int, BInt.from.i64(arena, 9)));
+}
+
+// a kind selector is a condition in its own right: it keeps the info when the kind matches and
+// an empty info is falsy, so the branch taken is the answer
+static char *typeinfo_kind_condition_source =
+    "r ~@sint(32) = 0;\n"
+    "@cif(@typeinfo(@sint(9)).sint, { r = 1; }, { r = 2; });\n"
+    "@cif(@typeinfo(@sint(9)).uint, { r = r + 10; }, { r = r + 20; });\n"
+    "r;\n";
+
+test_fn(typeinfo_kind_is_a_condition) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(arena, fp(typeinfo_kind_condition_source), nullptr);
+  // the source ends on a runtime variable, so the result is that variable's s32 storage rather
+  // than a compile-time integer
+  let rt = tv_type(r);
+  test_assert(tu_is(r_sint, rt.t));
+  test_inteq(tu_catch(r_sint, rt.t).bits, 32);
+  test_assert(*(i32 *)r.v.value == 21);
+}
+
+test_fn(lower_error_typeinfo_on_non_type) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("@typeinfo(5);"));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "TYPE_IS_NOT_VALUE");
+}
+
+test_fn(lower_error_typeinfo_arg_count) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("@typeinfo(@sint(8), @sint(8));"));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "WRONG_ARG_COUNT");
+}
+
+// an int has no parameters, so asking for the ones it does not have is an error rather than a
+// silently empty answer, the way asking an ast for a member is empty
+static char *typeinfo_error_sources[] = {
+    "@typeinfo(@sint(8)).fn.args;",
+    "@typeinfo(@struct{ x ~@sint(8); }).struct.bits;",
+    "@typeinfo(@sint(8)).sint.7;",
+    // selecting a kind the type is not empties the info, so its payloads are gone too
+    "@typeinfo(@sint(9)).uint.bits;",
+    "@typeinfo(@sint(9)).fn.ret;",
+};
+static char *typeinfo_error_codes[] = {
+    "TYPEINFO_NOT_FUNCTION",
+    "TYPEINFO_NOT_INTEGER",
+    "TYPEINFO_NO_MEMBER",
+    "TYPEINFO_NOT_INTEGER",
+    "TYPEINFO_NOT_FUNCTION",
+};
+
+test_fn(lower_error_typeinfo_missing_payload) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  foreach (let i, range(0, countof(typeinfo_error_sources))) {
+    let e = lower_source_err(arena, fp(typeinfo_error_sources[i]));
+    test_assert(e.err_code);
+    test_streq(e.err_code, typeinfo_error_codes[i]);
+  }
+}
+
+static char *reserved_id_sources[] = {
+    "_ ~@sint(32) = 1;",
+    "#_ ~@sint(32) = 1;",
+    "@id(\"_\") ~@sint(32) = 1;",
+    "@id(\"#_\") ~@sint(32) = 1;",
+    "f ~~ @fn((_ ~@sint(32)), @void(), {;});",
+    "S ~~ @struct{ #_ ~@sint(32) ~ 1; };",
+};
+
+test_fn(lower_error_binding_reserved_ids) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  foreach (let i, range(0, countof(reserved_id_sources))) {
+    let e = lower_source_err(arena, fp(reserved_id_sources[i]));
+    test_assert(e.err_code);
+    test_streq(e.err_code, "RESERVED_ID");
+    test_assert(e.line > 0);
+  }
+}
+
+// the guard is on user bindings only: the pipe still binds its own `_`
+test_fn(pipe_binds_its_own_underscore) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let result = interpret_source(arena, fp("double ~~ @fn((x ~@sint(32)), @sint(32), { return x * 2; });"
+                                          "3 |> double(_) == 6;"),
+                                nullptr);
+  test_assert(*(bool *)result.v.value);
 }
 
 test_fn(interpret_packed_return_survives_next_instruction) {

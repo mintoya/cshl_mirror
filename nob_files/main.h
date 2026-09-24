@@ -9,7 +9,7 @@
 #endif
 
 #if !defined CC
-  #define CC "clang"
+  #define CC "gcc"
 #endif
 
 #if defined(_WIN32)
@@ -24,7 +24,7 @@
 
 #define COMMON_CFLAGS                          \
   INPUT_FLAGS,                                 \
-      "-std=c23",                              \
+      "-std=c2x",                              \
       "-I", "deps", "-fno-sanitize=vla-bound", \
       "-g"
 
@@ -87,6 +87,9 @@ int build_main(int nargs, char **args) {
           "build/ts_adapt.o"
       ))) return 1;
 
+  // nothing was asked of the compiler, so there is nothing to run
+  if (!nargs) return 0;
+
   Cmd runcmd = {};
   cmd_append(&runcmd, "./build/compiler" EXTENSION);
   for (int i = 0; i < nargs; i++)
@@ -138,7 +141,12 @@ void usage(const char *program) {
 int actualmain(int argc, char **argv) {
   const char *program = shift_args(&argc, &argv);
 
-  if (!argc) return build_main(argc, argv);
+  // with no subcommand there is nothing to hand the compiler: build it, then say how to use it.
+  // Running the compiler with no arguments would only print its own usage and report failure.
+  if (!argc) {
+    if (build_main(0, argv)) return 1;
+    return (usage(program), 0);
+  }
 
   const char *subcmd = shift_args(&argc, &argv);
 
@@ -146,8 +154,11 @@ int actualmain(int argc, char **argv) {
 
   if (!strcmp(subcmd, "test"))
     return build_tests(argc, argv);
-  else if (!strcmp(subcmd, "run"))
-    return build_main(argc, argv);
+  else if (!strcmp(subcmd, "run")) {
+    if (argc) return build_main(argc, argv);
+    if (build_main(0, argv)) return 1;
+    return (usage(program), 0);
+  }
 
   nob_log(ERROR, "Unknown subcommand %s", subcmd);
   usage(program);

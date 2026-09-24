@@ -50,7 +50,7 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
       (enop_pipe, {
         let result = scope_add_value(ss, s, TV_any(ss));
         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_blocks, {})), 0);
-        try_err(scope_bind, (ss, s, left, fp("_")), 0);
+        try_err(scope_sbind, (ss, s, left, fp("_")), 0);
         try_err(lower, (ss, s, right), 0);
         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = result, .l = scope_last_item(ss, s)})), 0);
         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_blocke, {})), 0);

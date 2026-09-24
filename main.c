@@ -69,7 +69,7 @@ cmd_main(
     if (c_output) {
       let name = snprint(allocator, "{cstr}.c{c8}", args[1], (c8)0);
       defer { slice_free(allocator, name); };
-      let out = fopen(name.ptr, "w");
+      let out = fopen(name.ptr, "wb+");
       assertMessage(out);
       defer { assertMessage(fclose(out) == 0, "failed to close C output"); };
 

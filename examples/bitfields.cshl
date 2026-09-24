@@ -12,7 +12,6 @@ u8s~~ @union{
     @id("7")~u8:1;
   };
 };
-
 ia~u8s;
 ia.bits.0 = 1;
 ia.bits.1 = 1;
@@ -20,3 +19,9 @@ ia.bits.7 = 1;
 ia.full;
 
 
+
+somefunc ~~ @fn (ia~u8s),@void(),{
+ ia.full = 0;
+ ia.bits.0 = 1;
+};
+somefunc(ia);

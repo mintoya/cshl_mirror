@@ -276,6 +276,77 @@ static bool bitstruct_member_index(typeenv e, Type base, fptr name, u32 *idx) {
     }
   return false;
 }
+static void lower_typeinfo_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d) {
+  let tenv = ss_typeenv(ss);
+  let info = scope_find(ss, s, l);
+  let described = info->v.c_type ? Type_at(tenv, info->v.c_type) : T();
+  let name = value_to_fptr(ss, *scope_find(ss, s, r));
+  if (fptr_isNull(name)) return_err("DOT_NEEDS_NAME");
+  let dv = scope_find(ss, s, d);
+
+  bool is_fn = tu_is(c_fun, described.t);
+  bool is_sint = tu_is(r_sint, described.t);
+  bool is_uint = tu_is(r_uint, described.t);
+  c_fun sig = {};
+  usize params = 0;
+  if (is_fn) {
+    sig = tu_catch(c_fun, described.t);
+    if ((params = type_run_len(tenv, sig.start))) params--;
+  }
+  let st = TypeTree_inner_struct(described.t, tenv);
+
+  if (fptr_eq(name, "fn") || fptr_eq(name, "struct") || fptr_eq(name, "sint") ||
+      fptr_eq(name, "uint") || fptr_eq(name, "int")) {
+    bool matches = fptr_eq(name, "fn")     ? is_fn
+                   : fptr_eq(name, "sint") ? is_sint
+                   : fptr_eq(name, "uint") ? is_uint
+                   : fptr_eq(name, "int")  ? tu_is(c_int, described.t)
+                                           : !!st.start;
+    dv->t = ss->t_typeinfo;
+    dv->v = matches ? info->v : VS();
+    return;
+  }
+  if (fptr_eq(name, "args")) {
+    if (!is_fn) return_err("TYPEINFO_NOT_FUNCTION");
+    dv->t = ss->t_int;
+    dv->v = VS(.c_int = BInt.from.i64(ss->alloc, (i64)params));
+    return;
+  }
+  if (fptr_eq(name, "ret")) {
+    if (!is_fn || !params) return_err("TYPEINFO_NOT_FUNCTION");
+    dv->t = ss->t_type;
+    dv->v = VS(.c_type = ss_type_intern(ss, Type_at(tenv, (typeidx)(sig.start + params))));
+    return;
+  }
+  if (fptr_eq(name, "bits")) {
+    if (!is_sint && !is_uint) return_err("TYPEINFO_NOT_INTEGER");
+    dv->t = ss->t_int;
+    dv->v = VS(.c_int = BInt.from.i64(ss->alloc, (i64)(is_sint ? described.t.r_sint.bits : described.t.r_uint.bits)));
+    return;
+  }
+  bool digits = name.len != 0;
+  foreach (let i, range(0, name.len))
+    digits = digits && name.ptr[i] >= '0' && name.ptr[i] <= '9';
+  if (digits) {
+    usize at = 0;
+    foreach (let i, range(0, name.len))
+      at = at * 10 + (usize)(name.ptr[i] - '0');
+    if (is_fn && at < params) {
+      dv->t = ss->t_type;
+      dv->v = VS(.c_type = ss_type_intern(ss, Type_at(tenv, (typeidx)(sig.start + at))));
+      return;
+    }
+    if (st.start && at < type_struct_len(tenv, st)) {
+      dv->t = ss->t_type;
+      dv->v = VS(.c_type = ss_type_intern(ss, type_struct_item(tenv, st, at)->t));
+      return;
+    }
+    return_err("TYPEINFO_NO_MEMBER");
+  }
+  dv->t = ss->t_typeinfo;
+  dv->v = VS();
+}
+
 static void lower_dot_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d) {
   let tenv = ss_typeenv(ss);
   let lt = scope_reg_to_type_stripTag(ss, s, l);
@@ -290,6 +361,7 @@ static void lower_dot_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d)
     *scope_find(ss, s, d) = *scope_find(ss, m.owner, m.idx);
     return;
   }
+  if (tu_is(c_typeinfo, lt.t)) return (void)try_err(lower_typeinfo_member, (ss, s, l, r, d));
   if (TypeTree_is_ast(lt.t)) return (void)try_err(lower_ast_member, (ss, s, l, r, d));
 
   if (lt.ptr_level <= 1) {
@@ -450,6 +522,16 @@ static void tcheck_rawop errs(superscope *env, scope *s, ir_rawop op) {
   Type res = is_bool ? ss_bool_type(env) : Type_weaker(lt, rt, tenv);
   scope_set_type(env, scope_find(env, s, op.d), ss_type_intern(env, res));
   try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_rawop, op)));
+  if (tu_is(c_int, res.t)) {
+    let work = scope_inferior(env, s);
+    let l = scope_add_value(env, work, *scope_find(env, s, op.l));
+    let r = scope_add_value(env, work, *scope_find(env, s, op.r));
+    let d = scope_add_value(env, work, TV_of(env, res));
+    try_err(scope_emit_inst, (env, work, (ir)tu_of(ir_rawop, {.l = l, .r = r, .d = d, .o = op.o})));
+    typed_value value = catch_errcall((interpret, (env, work)), e, (err_panic(e), (typed_value){}));
+    *scope_find(env, s, op.d) = (typed_value){.t = scope_find(env, s, op.d)->t, .v = value.v};
+    msList_pop(s->instructions);
+  }
 }
 static void tcheck_set errs(superscope *env, scope *s, ir_set st) {
   let tenv = ss_typeenv(env);
@@ -511,6 +593,15 @@ static void tcheck_cast errs(superscope *env, scope *s, ir_cast cv) {
     let src = scope_add_value(env, s, TV_bool(env, truthy));
     return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_set, {.l = src, .d = cv.d})));
   }
+  // an info that describes nothing is falsy too, which is what lets a conditional pick a kind
+  // apart: "@cif(@typeinfo(T).sint, ...)" reads as "is T a signed integer"
+  if (tu_is(c_typeinfo, Type_stripTag(lt, tenv).t) && tu_is(r_bool, dt.t)) {
+    let src = P$(
+        scope_find(env, s, cv.l),
+        scope_add_value(env, s, TV_bool(env, !!$->v.c_type))
+    );
+    return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_set, {.l = src, .d = cv.d})));
+  }
   if (!(Type_is_integer_like(lt, tenv) && Type_is_integer_like(Type_stripTag(dt, tenv), tenv)))
     return_err("CANNOT_CAST");
   return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_cast, cv)));
@@ -520,10 +611,13 @@ static void tcheck_ret errs(superscope *env, scope *s, u32 r) {
       s->instance.fn
           ? &env->functions[s->instance.fn - 1].instances[s->instance.index]
           : nullptr;
-  if (inst) {
-    Type vt = ss_type(env, scope_find(env, s, r)->t);
-    if (!Type_adopt_any(&inst->ret, vt)) r = try_err(scope_cast_value, (env, s, r, inst->ret));
-  }
+  if (!inst) return_err("RETURN_OUTSIDE_FUNCTION");
+  // an `any` return type takes the type of whatever is handed back, so it is adopted then and
+  // the other returns are checked against it
+  Type vt = ss_type(env, scope_find(env, s, r)->t);
+  Type ret = function_instance_ret(env, inst);
+  if (!Type_adopt_any(&ret, vt)) r = try_err(scope_cast_value, (env, s, r, ret));
+  function_instance_set_ret(env, inst, ret);
   try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_ret, r)));
 }
 // fn call and struct with a "()" function
@@ -534,7 +628,7 @@ static void tcheck_call errs(superscope *env, scope *s, ir_call call) {
   if (tu_is(c_fun, lt.t)) {
     u32 fn = lv->v.c_fun.fn;
     if (!fn || fn > msList_len(env->functions)) return_err("UNSUPPORTED_CALL");
-    Type ret = env->functions[fn - 1].instances[lv->v.c_fun.spec].ret;
+    Type ret = function_instance_ret(env, &env->functions[fn - 1].instances[lv->v.c_fun.spec]);
     let dv = scope_find(env, s, call.d);
     scope_adopt_any(env, dv, ret);
     try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_call, call)));

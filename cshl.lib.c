@@ -4,20 +4,23 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <assert.h>
+
+typedef struct {
+} void_t;
 
 typedef struct {
   unsigned char *ptr;
   unsigned char bit_offset; // :4
   unsigned int width;
 } double_offset;
-/*
-#define double_offset_item(T) \
-  union {                     \
-    T *ptjr;                  \
-    double_offset of;         \
+
+#define double_offset_t(T)                                                                      \
+  union {                                                                                       \
+    /*dont use this, it's here for type info, and pointer sized cause that's garunteed to fit*/ \
+    T *data_type;                                                                               \
+    double_offset data;                                                                         \
   }
-  no need for macros but you getthe point
-  */
 
 static inline int cshl_bits_load(double_offset o, unsigned char *dest) {
   unsigned int bytes = (o.width + 7) / 8;
@@ -60,6 +63,11 @@ static inline int cshl_read(double_offset p, unsigned char *dest, size_t capacit
     if (capacity > used) memset(bytes + used, 0xff, capacity - used);
   }
   return 0;
+}
+static inline uint64_t cshl_load(double_offset p, unsigned sign_bits) {
+  uint64_t value = 0;
+  cshl_read(p, (unsigned char *)&value, sizeof(value), sizeof(value), sign_bits);
+  return value;
 }
 static inline int cshl_write(double_offset p, const unsigned char *src, size_t size) {
   if (p.width) cshl_bits_store(p, src);

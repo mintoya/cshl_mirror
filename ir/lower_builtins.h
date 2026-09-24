@@ -301,6 +301,13 @@ static u32 lower_builtin_intty errs(superscope *ss, scope *s, astidx args, bool 
 static u32 lower_builtin_typeof errs(superscope *ss, scope *s, astidx args) {
   return scope_add_value(ss, s, Type_asValue(ss, ss_type(ss, scope_find(ss, s, try_err(lower, (ss, s, args), 0))->t)));
 }
+static u32 lower_builtin_typeinfo errs(superscope *ss, scope *s, astidx args) {
+  let list = builtin_arg_list(ss, args);
+  if (!list.len) return scope_add_value(ss, s, TV_type(ss, ss->t_typeinfo));
+  if (list.len != 1) return_err("WRONG_ARG_COUNT", 0);
+  let t = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 0), 0)), 0);
+  return scope_add_value(ss, s, TV(ss->t_typeinfo, VS(.c_type = ss_type_intern(ss, t))));
+}
 static u32 lower_builtin_arrof errs(superscope *ss, scope *s, astidx args) {
   builtin_args(ss, args, 2);
   let count_tv = int_as_bigint(ss->alloc, try_err(temporary_interpret, (ss, s, list.start + 0), 0), ss_typeenv(ss));
@@ -542,6 +549,7 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
       (builtin_sint, /*    */ try_err(lower_builtin_intty, (ss, s, args, true), 0)),
       (builtin_uint, /*    */ try_err(lower_builtin_intty, (ss, s, args, false), 0)),
       (builtin_typeof, /*  */ try_err(lower_builtin_typeof, (ss, s, args), 0)),
+      (builtin_typeinfo, /**/ try_err(lower_builtin_typeinfo, (ss, s, args), 0)),
       (builtin_arrof, /*   */ try_err(lower_builtin_arrof, (ss, s, args), 0)),
       (builtin_ptrof, /*   */ try_err(lower_builtin_ptrof, (ss, s, args), 0)),
       (builtin_sizeof, /*  */ try_err(lower_builtin_sizeof, (ss, s, args), 0)),
