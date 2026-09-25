@@ -34,68 +34,22 @@ static u32 lower_builtin_cinclude errs(superscope *ss, scope *s, astidx args) {
   return scope_add_value(ss, s, TV_void(ss));
 }
 
-static astidx import_ast(superscope *ss, astidx_full parsed) {
-  u32 ao = ss->asts.len, po = ss->plist.len, fo = ss->flist.len;
-  foreach (let i, range(0, parsed.flist.len))
-    sglist_push(ss->flist, sglist_get(parsed.flist, i));
-  foreach (let i, range(0, parsed.plist.len)) {
-    let pos = sglist_get(parsed.plist, i);
-    if (pos.fidx) pos.fidx += fo;
-    sglist_push(ss->plist, pos);
-  }
-  foreach (let i, range(0, parsed.alist.len)) {
-    let node = sglist_get(parsed.alist, i);
-    switch (node.tag) {
-      case TU_TAG(astId):
-        if (node.astId) node.astId += po;
-        break;
-      case TU_TAG(astString):
-        if (node.astString) node.astString += po;
-        break;
-      case TU_TAG(astNumber):
-        if (node.astNumber) node.astNumber += po;
-        break;
-      case TU_TAG(astEmpty):
-        if (node.astEmpty) node.astEmpty += po;
-        break;
-      case TU_TAG(astDecl):
-        node.astDecl.name_type_value += ao;
-        break;
-      case TU_TAG(astOp):
-        node.astOp.left_right += ao;
-        break;
-      case TU_TAG(astBBlock):
-        if (node.astBBlock.pos) node.astBBlock.pos += po;
-        if (node.astBBlock.start) node.astBBlock.start += ao;
-        break;
-      case TU_TAG(astABlock):
-        if (node.astABlock.pos) node.astABlock.pos += po;
-        if (node.astABlock.start) node.astABlock.start += ao;
-        break;
-      case TU_TAG(astPBlock):
-        if (node.astPBlock.pos) node.astPBlock.pos += po;
-        if (node.astPBlock.start) node.astPBlock.start += ao;
-        break;
-      default:
-        break;
-    }
-    sglist_push(ss->asts, node);
-  }
-  let root = parsed.idx + ao;
-  sglist_deinit(parsed.alist);
-  sglist_deinit(parsed.plist);
-  sglist_deinit(parsed.flist);
-  return root;
-}
-
 static u32 lower_builtin_import errs(superscope *ss, scope *s, astidx args) {
   builtin_args(ss, args, 1);
+  astidx_full parse_relative errs(astidx_full res, astidx origin, const char *filename);
   let path = value_to_fptr(ss, try_err(temporary_interpret, (ss, s, list.start), 0));
   if (fptr_isNull(path)) return_err("IMPORT_NOT_STRING", 0);
 
   let spath = acreate(ss->alloc, u8[path.len + 1]);
-  let parsed = try_err(parse_source, (ss->alloc, nullFptr, memcpy(spath, path.ptr, path.len)), 0);
-  let root = import_ast(ss, parsed);
+  let root = P$(
+      ((astidx_full){0, ss->asts, ss->plist, ss->flist}),
+      try_err(parse_relative, ($, list.start, memcpy(spath, path.ptr, path.len)), 0),
+      (ss->asts = $.alist,
+       ss->plist = $.plist,
+       ss->flist = $.flist,
+       $),
+      $.idx
+  );
 
   let ns = scope_inferior(ss, ss->prelude);
   let stmts = ast_block_children(ss, root);
@@ -103,7 +57,6 @@ static u32 lower_builtin_import errs(superscope *ss, scope *s, astidx args) {
     try_err(lower, (ss, ns, stmt), 0);
   scope_finish(ss, ns);
 
-  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_scope, ns)), 0);
   return scope_add_value(ss, s, TV_with(ss, T(tu_of(c_namespace, {})), VS(.c_namespace = ns)));
 }
 static u32 lower_builtin_using errs(superscope *ss, scope *s, astidx args) {

@@ -24,11 +24,9 @@ void scope_finish(superscope *ss, scope *s) {
     u32 destination = tu_match_exp(
         inst,
         (ir_set, op, op.d),
-        (ir_read, op, op.d),
         (ir_cast, op, op.d),
         (ir_ptrcast, op, op.d),
         (ir_getref, op, op.d),
-        (ir_scoperef, op, op.d),
         (ir_getptr, op, op.d),
         (ir_putptr, op, op.d),
         (ir_field, op, op.d),

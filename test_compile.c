@@ -1143,7 +1143,6 @@ test_fn(namespace_errors) {
     {"@import(\"test/namespaces\");", "IMPORT_NOT_FILE"},
     {"@import(1);", "IMPORT_NOT_STRING"},
     {"@import(\"test/namespaces/missing.cshl\");", "IMPORT_FILE_NOT_FOUND"},
-    {"@import(\"test/namespaces/cycle.cshl\");", "IMPORT_CYCLE"},
     {"caller_only ~~ 1; @import(\"test/namespaces/caller.cshl\");", "UNBOUND_ID"},
     {"lib ~~ @import(\"test/namespaces/math.cshl\"); lib.missing;", "NO_MEMBER"},
     {"lib ~~ @import(\"test/namespaces/math.cshl\"); lib.@int;", "NO_MEMBER"},

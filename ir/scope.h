@@ -6,7 +6,7 @@
 #include <wheels/smap.h>
 
 const scope *scope_owner(const scope *s, u32 idx) {
-  while (!(idx > s->start && idx <= s->start + msList_len(s->values)))
+  while (s && !(idx > s->start && idx <= s->start + msList_len(s->values)))
     s = s->parent;
   return s;
 }
@@ -160,6 +160,27 @@ static scope_binding scope_lookup errs(superscope *env, scope *s, fptr n, u32 li
   }
   return (scope_binding){};
 }
+// Register a lowered, zero-argument function using the normal call machinery.
+static typed_value scope_function(superscope *ss, scope *body, typeidx ret) {
+  u32 fn = msList_len(ss->functions) + 1;
+  typeidx start = ss_type_reserve(ss, 1);
+  sglist_get(ss->tlist, start - 1) = ss_type(ss, ret);
+  let signature = ss_type_intern(ss, T(tu_of(c_fun, {.start = start, .origin = fn})));
+  let sig = slice_alloc(ss->alloc, typeidx, 1);
+  sig.ptr[0] = ret;
+  let instances = msList_init(ss->alloc, function_instance);
+  msList_push(ss->alloc, instances, ((function_instance){.spec = body, .sig = sig}));
+  msList_push(ss->alloc, ss->functions, ((function){
+      .signature = signature,
+      .defscope = body->parent,
+      .namespace = body,
+      .instances = instances,
+  }));
+  // Namespace storage is global, not a lexical function's local frame.
+  if (!body->module_id) body->instance.fn = fn;
+  return TV(signature, VS(.c_fun = {.fn = fn}));
+}
+
 // Keep the owner when a runtime binding lives on a different namespace branch.
 static void scope_import_binding errs(superscope *ss, scope *s, scope_binding binding, u32 d) {
   let value = *scope_find(ss, binding.owner, binding.idx);
@@ -171,7 +192,13 @@ static void scope_import_binding errs(superscope *ss, scope *s, scope_binding bi
   if (!type.ref_kind) type = try_err(Type_ref, (type));
   scope_find(ss, s, d)->t = ss_type_intern(ss, type);
   scope_resize_value(ss, scope_find(ss, s, d));
-  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_scoperef, {.owner = binding.owner, .l = binding.idx, .d = d})));
+  // Resolve the address in its defining namespace instead of copying its storage.
+  let accessor = scope_inferior(ss, binding.owner);
+  let result = scope_add_value(ss, accessor, TV_of(ss, type));
+  try_err(scope_add_inst, (ss, accessor, (ir)tu_of(ir_getref, {.l = binding.idx, .d = result})));
+  let callee = scope_add_value(ss, s, scope_function(ss, accessor, ss_type_intern(ss, type)));
+  try_err(scope_add_inst, (ss, accessor, (ir)tu_of(ir_ret, result)));
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_call, {.l = callee, .d = d})));
 }
 static inline u32 ss_get_named errs(superscope *env, scope *s, fptr n) {
   let found = try_err(scope_lookup, (env, s, n, s->start + msList_len(s->values), true), 0);

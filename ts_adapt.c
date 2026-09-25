@@ -4,6 +4,9 @@
 #include "wheels/macros.h"
 #include <assert.h>
 #include <stdio.h>
+#include <libgen.h>
+#include <stdlib.h>
+#include <sys/stat.h>
 #include <string.h>
 #include <tree-sitter/lib/include/tree_sitter/api.h>
 
@@ -19,9 +22,7 @@ static srcpos register_pos(poslist *plist, u32 fileIndex, TSNode n) {
 
 static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, filelist *flist, u32 fileIndex, const u8 *source, TSNode ts_node) {
   if (ts_node_is_null(ts_node) || !ts_node_is_named(ts_node) || ts_node_is_error(ts_node) || ts_node_is_missing(ts_node))
-    pass_err(error_loc_add(allocator,
-        ((err_t){.err_code = "PARSE_ERROR", .file = __FILE__, .line = __LINE__, .function = __FUNCTION__}),
-        ((srcpos_full){register_pos(plist, fileIndex, ts_node), *plist, *flist})), (ast){});
+    pass_err(error_loc_add(allocator, ((err_t){.err_code = "PARSE_ERROR", .file = __FILE__, .line = __LINE__, .function = __FUNCTION__}), ((srcpos_full){register_pos(plist, fileIndex, ts_node), *plist, *flist})), (ast){});
 
   if (ts_node_has_error(ts_node)) {
     TSNode bad = ts_node;
@@ -37,9 +38,7 @@ static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, fi
       if (ts_node_is_null(next)) break;
       bad = next;
     }
-    pass_err(error_loc_add(allocator,
-        ((err_t){.err_code = "PARSE_ERROR", .file = __FILE__, .line = __LINE__, .function = __FUNCTION__}),
-        ((srcpos_full){register_pos(plist, fileIndex, bad), *plist, *flist})), (ast){});
+    pass_err(error_loc_add(allocator, ((err_t){.err_code = "PARSE_ERROR", .file = __FILE__, .line = __LINE__, .function = __FUNCTION__}), ((srcpos_full){register_pos(plist, fileIndex, bad), *plist, *flist})), (ast){});
   }
 
   let type = ts_node_type(ts_node);
@@ -120,19 +119,12 @@ static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, fi
 
   assertMessage(false, "unhandled node %s", type);
 }
-
-astidx_full parse_source errs(allocfn out_allocator, fptr input, const char *filename) {
-  assertMessage(!filename + fptr_isNull(input) == 1);
-  astidx_full res = {
-      .alist = out_allocator,
-      .plist = out_allocator,
-      .flist = out_allocator,
-  };
+astidx_full parse errs(astidx_full res, fptr input, const char *filename) {
   let const fileit =
       filename
           ? (fileItem){
                 .filename = filename,
-                .filecontent = read_file(out_allocator, filename),
+                .filecontent = read_file(res.alist.allocator, filename),
             }
           : (fileItem){
                 .filecontent = input,
@@ -149,8 +141,38 @@ astidx_full parse_source errs(allocfn out_allocator, fptr input, const char *fil
   TSTree *tree = ts_parser_parse_string(parser, NULL, (const char *)content.ptr, content.len);
   defer { ts_tree_delete(tree); };
 
-  let root = try_err(ts_to_ast2, (out_allocator, &res.alist, &res.plist, &res.flist, fileIndex, content.ptr, ts_tree_root_node(tree)), (astidx_full){});
+  let root = try_err(ts_to_ast2, (res.alist.allocator, &res.alist, &res.plist, &res.flist, fileIndex, content.ptr, ts_tree_root_node(tree)), (astidx_full){});
   sglist_push(res.alist, root); // the root is referenced by no parent slot
   res.idx = (astidx)res.alist.len;
   return res;
+}
+astidx_full parse_source errs(allocfn out_allocator, fptr input, const char *filename) {
+  assertMessage(!filename + !!fptr_isNull(input) == 1);
+  astidx_full res = {
+      .alist = out_allocator,
+      .plist = out_allocator,
+      .flist = out_allocator,
+  };
+  return try_err(parse, (res, input, filename), res);
+}
+
+// Imports use the directory of their source file; source strings use the cwd.
+astidx_full parse_relative errs(astidx_full res, astidx origin, const char *filename) {
+  if (filename[0] == '/') return_err("IMPORT_ABSOLUTE_PATH", res);
+  const char *source = ".";
+  let pos = srcpos_ast(sglist_get(res.alist, origin - 1), res.alist);
+  if (pos) {
+    let file = sglist_get(res.plist, pos - 1).fidx;
+    if (file) source = sglist_get(res.flist, file - 1).filename ?: ".";
+  }
+  char *parent = strdup(source);
+  defer { free(parent); };
+  const char *directory = dirname(parent);
+  int length = snprintf(nullptr, 0, "%s/%s", directory, filename);
+  char *relative = *acreate(res.alist.allocator, char[length + 1]);
+  snprintf(relative, length + 1, "%s/%s", directory, filename);
+  struct stat info;
+  if (stat(relative, &info)) return_err("IMPORT_FILE_NOT_FOUND", res);
+  if (!S_ISREG(info.st_mode)) return_err("IMPORT_NOT_FILE", res);
+  return try_err(parse, (res, nullFptr, relative), res);
 }

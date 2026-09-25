@@ -178,8 +178,10 @@ static inline Type scope_reg_to_type_stripTag(superscope *env, scope *s, u32 idx
 
 static u32 scope_read_value errs(superscope *env, scope *s, u32 source) {
   if (!scope_reg_type(env, s, source).ref_kind) return source;
-  u32 result = scope_add_value(env, s, TV_any(env));
-  try_err(scope_add_inst, (env, s, (ir)tu_of(ir_read, {.l = source, .d = result})), 0);
+  Type type = scope_reg_type(env, s, source);
+  type.ref_kind = ref_none;
+  u32 result = scope_add_value(env, s, TV_of(env, type));
+  try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_set, {.l = source, .d = result})), 0);
   return result;
 }
 
@@ -423,18 +425,6 @@ static void lower_dot_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d)
   if (!found && !in_bitfield) return_err("NO_MEMBER");
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_field, {.l = l, .d = d, .i = idx})));
   return;
-}
-
-static void tcheck_read errs(superscope *env, scope *s, ir_read read) {
-  Type value = scope_reg_type(env, s, read.l);
-  value.ref_kind = ref_none;
-  let dest = scope_find(env, s, read.d);
-  if (!scope_adopt_any(env, dest, value) &&
-      Type_cmp_ndecor(value, ss_type(env, dest->t), ss_typeenv(env)))
-    return_err("READ_TYPE");
-  if (Type_is_comptime(value))
-    scope_find(env, s, read.d)->v = scope_find(env, s, read.l)->v;
-  try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_read, read)));
 }
 
 static void tcheck_ifs errs(superscope *env, scope *s, u32 r) {
@@ -821,8 +811,6 @@ static void tcheck_field errs(superscope *env, scope *s, ir_field fld) {
 static inline void scope_add_inst_typecheck errs(superscope *env, scope *s, ir i) {
   tu_match_void(
       i,
-      (ir_scope, _, try_err(scope_emit_inst, (env, s, i))),
-      (ir_scoperef, _, try_err(scope_emit_inst, (env, s, i))),
       (ir_farg /*  */, _, try_err(scope_emit_inst, (env, s, i))), // checked elsewhere
       (ir_loops /* */, _, try_err(scope_emit_inst, (env, s, i))),
       (ir_loope /* */, _, try_err(scope_emit_inst, (env, s, i))),
@@ -836,7 +824,6 @@ static inline void scope_add_inst_typecheck errs(superscope *env, scope *s, ir i
       (ir_putptr, pp, try_err(tcheck_putptr, (env, s, pp))),
       (ir_getptr, gp, try_err(tcheck_getptr, (env, s, gp))),
       (ir_getref, gp, try_err(tcheck_getref, (env, s, gp))),
-      (ir_read, read, try_err(tcheck_read, (env, s, read))),
       (ir_rawdot, rd, try_err(tcheck_rawdot, (env, s, rd))),
       (ir_rawop, op, try_err(tcheck_rawop, (env, s, op))),
       (ir_set, st, try_err(tcheck_set, (env, s, st))),

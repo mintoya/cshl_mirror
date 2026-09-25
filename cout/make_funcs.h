@@ -80,11 +80,9 @@ static bool scope_register_written(scope *s, u32 reg) {
     u32 destination = tu_match_exp(
         *instruction,
         (ir_set, op, op.d),
-        (ir_read, op, op.d),
         (ir_cast, op, op.d),
         (ir_ptrcast, op, op.d),
         (ir_getref, op, op.d),
-        (ir_scoperef, op, op.d),
         (ir_getptr, op, op.d),
         (ir_putptr, op, op.d),
         (ir_field, op, op.d),
@@ -686,7 +684,6 @@ static void makeCast(superscope *ss, printerfunction_context _ctx, scope *s, ity
 }
 
 static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx, scope *s, ir inst) {
-  if (tu_is(ir_read, inst)) inst = (ir)tu_of(ir_set, {.l = inst.ir_read.l, .d = inst.ir_read.d});
   if (tu_is(ir_set, inst) &&
       (Type_is_comptime(function_register_type(ss, s, inst.ir_set.d)) ||
        function_is_non_int_comptime(function_register_type(ss, s, inst.ir_set.l))))
@@ -707,20 +704,6 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
   if (tu_is(ir_rawdot, inst)) PUTS("  // ir_rawdot");
   tu_match_void(
       inst,
-      (ir_scope, child, {
-        PUTS("  cshl_ns_init"), USETYPEPRINTER(u32, child->module_id), PUTS("();");
-      }),
-      (ir_scoperef, ref, {
-        PUTS("  ");
-        makeVariable(_ctx, s, ref.d);
-        let type = function_register_type(ss, ref.owner, ref.l);
-        if (type.ref_kind == ref_dref) PUTS(".data");
-        PUTS(" = ");
-        if (!type.ref_kind) PUTS("&");
-        makeVariable(_ctx, ref.owner, ref.l);
-        if (type.ref_kind == ref_dref) PUTS(".data");
-        PUTS(";");
-      }),
       (ir_getref, op, makeReference(ss, _ctx, s, op)),
       (ir_getptr, op, {
         PUTS("  ");
@@ -921,9 +904,12 @@ static void makeVariables(superscope *ss, printerfunction_context _ctx, scope *s
 }
 
 static void makeFunctionBody(superscope *ss, printerfunction_context _ctx, function_instance *instance) {
-  makeVariables(ss, _ctx, instance->spec);
+  if (instance->spec->module_id)
+    PUTS("  static int initialized;\n  if (initialized) return (void_t){0};\n  initialized = 1;\n");
+  else makeVariables(ss, _ctx, instance->spec);
   foreach (let inst, span(instance->spec->instructions, msList_len(instance->spec->instructions)))
     makeFunctionInstruction(ss, _ctx, instance->spec, *inst);
+  if (instance->spec->module_id) PUTS("  return (void_t){0};\n");
 }
 
 static void makeFunctionSignature(
@@ -986,17 +972,5 @@ void makeFuncs(superscope *ss, printerfunction_context _ctx) {
       makeFunctionBody(ss, _ctx, instance);
       PUTS("}\n");
     }
-  }
-}
-
-// Child scope instructions run in source order, once per imported namespace.
-static void makeNamespaces(superscope *ss, printerfunction_context _ctx) {
-  foreach (let entry, span(ss->imports, msList_len(ss->imports))) {
-    let ns = entry->ns;
-    PUTS("static void cshl_ns_init"), USETYPEPRINTER(u32, ns->module_id), PUTS("(void){\n");
-    PUTS("  static int initialized;\n  if (initialized) return;\n  initialized = 1;\n");
-    foreach (let inst, span(ns->instructions, msList_len(ns->instructions)))
-      makeFunctionInstruction(ss, _ctx, ns, *inst);
-    PUTS("}\n");
   }
 }

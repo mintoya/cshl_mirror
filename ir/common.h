@@ -536,12 +536,6 @@ typePrinter(scope_full) {
           PUTS(" -> "), USETYPEPRINTER(u32, op.d);
           PUTS(")");
         }),
-        (ir_scope, _, PUTS("(scope)")),
-        (ir_scoperef, iv, {
-          PUTS("(scoperef ");
-          USETYPEPRINTER(u32, iv.l), PUTS(" -> "), USETYPEPRINTER(u32, iv.d);
-          PUTS(")");
-        }),
         (ir_getref, iv, {
           PUTS("(getref ");
           USETYPEPRINTER(u32, iv.l), PUTS(" -> "), USETYPEPRINTER(u32, iv.d);
@@ -565,11 +559,6 @@ typePrinter(scope_full) {
         (ir_cast, cv, {
           PUTS("(cast ");
           USETYPEPRINTER(u32, cv.l), PUTS(" -> "), USETYPEPRINTER(u32, cv.d);
-          PUTS(")");
-        }),
-        (ir_read, rd, {
-          PUTS("(read ");
-          USETYPEPRINTER(u32, rd.l), PUTS(" -> "), USETYPEPRINTER(u32, rd.d);
           PUTS(")");
         }),
         (ir_set, sv, {

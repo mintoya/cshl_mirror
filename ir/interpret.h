@@ -455,6 +455,8 @@ void interpret_call errs(intstate is, ir_call c) {
   let fn = &is->ss->functions[fv.fn - 1];
   if (fn->isextern) return_err("EXTERN_CALL");
   let inst = &fn->instances[fv.spec];
+  // An imported namespace keeps its frame for the entire interpretation.
+  if (inst->spec->module_id && mxmap_get(is->vmap, (const scope *)inst->spec)) return;
 
   usize nargs = c.e - c.r;
   typed_value *args =
@@ -501,7 +503,6 @@ static void intstate_inst errs(intstate is, usize at, ir inst) {
       (ir_break /**/, _, f->pc = intstate_seek(f, at, +1, +1, ir_loops_enum, 0, ir_loope_enum)),
       (ir_ret /*   */, c, try_err(interpret_ret, (is, c))),
       (ir_set /*   */, c, try_err(interpret_set, (is, c))),
-      (ir_read, c, try_err(interpret_set, (is, ((ir_set){.l = c.l, .d = c.d})))),
       (ir_farg /*  */, c, try_err(interpret_farg, (is, c))),
       (ir_cast /*  */, c, try_err(interpret_cast, (is, c))),
       (ir_ptrcast, c, {
@@ -515,19 +516,6 @@ static void intstate_inst errs(intstate is, usize at, ir inst) {
       (ir_getref /**/, c, try_err(interpret_getref, (is, c))),
       (ir_getptr /**/, c, try_err(interpret_getptr, (is, c))),
       (ir_putptr /**/, c, try_err(interpret_putptr, (is, c))),
-      (ir_scope, child, {
-        if (!mxmap_get(is->vmap, (const scope *)child)) intstate_pushs(is, child, (slice(typed_value)){}, 0);
-      }),
-      (ir_scoperef, ref, {
-        let source = scope_find(is->ss, ref.owner, ref.l);
-        let frames = mxmap_get(is->vmap, (const scope *)ref.owner);
-        value_store value = source->v;
-        if (frames) value = (*msList_last(*frames))[ref.l - ref.owner->start - 1];
-        let dest = intstate_findslots_value(is, ref.d);
-        let type = ss_type(is->ss, source->t);
-        if (type.ref_kind == ref_dref) memcpy(dest->value, value.value, sizeof(dref));
-        else *(void **)dest->value = type.ref_kind ? *(void **)value.value : value.value;
-      }),
       (ir_call, c, try_err(interpret_call, (is, c))),
       (ir_rawdot /**/, _, assertMessage(false, "unreachable")),
       (default, assertMessage(false, "unhandled instruction")),
@@ -543,7 +531,6 @@ static void intstate_run errs(intstate is) {
       is->rsig = intstate_normal;
       let caller = &msList_last(is->cs);
       let instruction = caller->sp->instructions[caller->pc - 1];
-      if (tu_is(ir_scope, instruction)) continue;
       let call = tu_catchr(ir_call, instruction);
       let d = intstate_findslots_value(is, call.d);
       let dst = d;

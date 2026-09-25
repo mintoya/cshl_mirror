@@ -1,4 +1,4 @@
-@using @include("macros.cshl");
+@using @include "examples/macros.cshl";
 
 ! ~~ fn (T~type) type {
   return @struct{
