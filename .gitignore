@@ -22,3 +22,4 @@ a.pdb
 /.tsconfig.json
 /nob.old.exe
 *.cshl.c
+*.cshl.c.*
