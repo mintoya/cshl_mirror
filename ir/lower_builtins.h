@@ -90,65 +90,31 @@ static astidx import_ast(superscope *ss, astidx_full parsed) {
 
 static u32 lower_builtin_import errs(superscope *ss, scope *s, astidx args) {
   builtin_args(ss, args, 1);
-  let value = try_err(temporary_interpret, (ss, s, list.start), 0);
-  let requested = value_to_fptr(ss, value);
-  if (fptr_isNull(requested)) return_err("IMPORT_NOT_STRING", 0);
-  if (!requested.len || memchr(requested.ptr, 0, requested.len)) return_err("IMPORT_BAD_PATH", 0);
-  const char *base = "";
-  let pos = srcpos_ast(ast_at(ss, args), ss->asts);
-  if (pos) {
-    let file = sglist_get(ss->plist, pos - 1).fidx;
-    if (file) base = sglist_get(ss->flist, file - 1).filename ?: "";
-  }
-  const char *slash = strrchr(base, '/');
-  usize prefix = requested.ptr[0] == '/' || !slash ? 0 : slash - base + 1;
-  char path[prefix + requested.len + 1];
-  memcpy(path, base, prefix);
-  memcpy(path + prefix, requested.ptr, requested.len);
-  path[prefix + requested.len] = 0;
-  char *realpath(const char *restrict path, char *restrict resolved_path);
-  char *canonical = realpath(path, nullptr);
-  if (!canonical) return_err("IMPORT_FILE_NOT_FOUND", 0);
-  defer { free(canonical); };
-  struct stat info;
-  if (stat(canonical, &info) || !S_ISREG(info.st_mode)) return_err("IMPORT_NOT_FILE", 0);
-  foreach (let entry, span(ss->imports, msList_len(ss->imports))) {
-    if (!fptr_eq(entry->path, fp(canonical))) continue;
-    if (!entry->ns) return_err("IMPORT_CYCLE", 0);
-    try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_scope, entry->ns)), 0);
-    return scope_add_value(ss, s, TV_with(ss, T(tu_of(c_namespace, {})), VS(.c_namespace = entry->ns)));
-  }
-  let name = *acreate(ss->alloc, char[strlen(canonical) + 1]);
-  strcpy(name, canonical);
-  let filename = fp(name);
-  usize cache = msList_len(ss->imports);
-  msList_push(ss->alloc, ss->imports, ((scope_import){filename, nullptr}));
-  let parsed = try_err(parse_source, (ss->alloc, nullFptr, name), 0);
+  let path = value_to_fptr(ss, try_err(temporary_interpret, (ss, s, list.start), 0));
+  if (fptr_isNull(path)) return_err("IMPORT_NOT_STRING", 0);
+
+  let spath = acreate(ss->alloc, u8[path.len + 1]);
+  let parsed = try_err(parse_source, (ss->alloc, nullFptr, memcpy(spath, path.ptr, path.len)), 0);
   let root = import_ast(ss, parsed);
+
   let ns = scope_inferior(ss, ss->prelude);
-  ns->module_id = cache + 1;
-  let statements = ast_block_children(ss, root);
-  foreach (let stmt, span(statements.start, statements.len))
+  let stmts = ast_block_children(ss, root);
+  foreach (let stmt, span(stmts.start, stmts.len))
     try_err(lower, (ss, ns, stmt), 0);
   scope_finish(ss, ns);
-  ss->imports[cache].ns = ns;
+
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_scope, ns)), 0);
   return scope_add_value(ss, s, TV_with(ss, T(tu_of(c_namespace, {})), VS(.c_namespace = ns)));
-}
-
-static u32 scope_use_namespace errs(superscope *ss, scope *s, typed_value value) {
-  if (!tu_is(c_namespace, ss_type(ss, value.t).t)) return_err("USING_NOT_NAMESPACE", 0);
-  if (!value.v.c_namespace) return_err("UNKNOWN_NAMESPACE", 0);
-  // A new register marks when the link became visible to child scopes.
-  let at = scope_add_value(ss, s, TV_void(ss));
-  msList_push(ss->alloc, s->using, ((scope_use){value.v.c_namespace, at, mList_len(s->named)}));
-  return at;
 }
 static u32 lower_builtin_using errs(superscope *ss, scope *s, astidx args) {
   builtin_args(ss, args, 1);
   let index = try_err(lower, (ss, s, list.start), 0);
   let value = *scope_find(ss, s, index);
-  return try_err(scope_use_namespace, (ss, s, value), 0);
+  if (!tu_is(c_namespace, ss_type(ss, value.t).t)) return_err("USING_NOT_NAMESPACE", 0);
+  if (!value.v.c_namespace) return_err("UNKNOWN_NAMESPACE", 0);
+  let at = scope_add_value(ss, s, TV_void(ss));
+  msList_push(ss->alloc, s->using, ((scope_use){value.v.c_namespace, at, mList_len(s->named)}));
+  return at;
 }
 
 static u32 lower_builtin_opaque errs(superscope *ss, scope *s, astidx args) {
