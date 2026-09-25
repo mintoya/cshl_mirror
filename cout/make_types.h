@@ -1,7 +1,7 @@
 #pragma once
 #include "../ast.h"
-#include "../ir/common.h"
 #include "../ir/coerce.h"
+#include "../ir/common.h"
 #include "../srcpos.h"
 #include "../type.h"
 #include "wheels/macros.h"
@@ -18,7 +18,8 @@ typePrinter(id_str) {
         PUTC((char)((((*it) & 0xf0) >> 4) + 'a'));
 }
 static bool out_integerIsWide(typeenv e, Type t) {
-  while (tu_is(r_tag, t.t)) t = Type_at(e, tu_catch(r_tag, t.t).t);
+  while (tu_is(r_tag, t.t))
+    t = Type_at(e, tu_catch(r_tag, t.t).t);
   usize bits = tu_match_exp(
       t.t,
       (r_sint, v, (usize)v.bits),
@@ -30,17 +31,17 @@ static bool out_integerIsWide(typeenv e, Type t) {
 }
 
 static void makeInt(printerfunction_context _ctx, usize bits) {
-  switch_tuple(
-      bits,
-      (sizeof(char) * CHAR_BIT, PUTS("char")),
-      (sizeof(short) * CHAR_BIT, PUTS("short")),
-      (sizeof(int) * CHAR_BIT, PUTS("int")),
-      (sizeof(long) * CHAR_BIT, PUTS("long")),
-      (default, {
-        PUTS("cshl_int_");
-        USETYPEPRINTER(usize, bits);
-      })
-  );
+  if (bits == (sizeof(char) * CHAR_BIT)) {
+    PUTS("char");
+  } else if (bits == (sizeof(short) * CHAR_BIT)) {
+    PUTS("short");
+  } else if (bits == (sizeof(int) * CHAR_BIT)) {
+    PUTS("int");
+  } else if (bits == (sizeof(long) * CHAR_BIT)) {
+    PUTS("long");
+  } else if (bits == (sizeof(long long) * CHAR_BIT)) {
+    PUTS("long");
+  } else PUTS("cshl_int_"), USETYPEPRINTER(usize, bits);
 }
 void makeType(superscope *ss, printerfunction_context _ctx, Type t);
 void makeTypeTree(superscope *ss, printerfunction_context _ctx, TypeTree t);
@@ -53,14 +54,12 @@ static void makeTypedefName(printerfunction_context _ctx, typeidx idx) {
 bool out_structIsUnnatural(typeenv e, r_struct s);
 static bool out_structIsUnion(typeenv e, r_struct s);
 static usize out_integerCAlign(u16 bits) {
-  return switch_exp(
-      bits,
-      (sizeof(char) * CHAR_BIT, alignof(char)),
-      (sizeof(short) * CHAR_BIT, alignof(short)),
-      (sizeof(int) * CHAR_BIT, alignof(int)),
-      (sizeof(long) * CHAR_BIT, alignof(long)),
-      (default, 0),
-  );
+  if (bits == sizeof(char) * CHAR_BIT) return alignof(char);
+  else if (bits == sizeof(short) * CHAR_BIT) return alignof(short);
+  else if (bits == sizeof(int) * CHAR_BIT) return alignof(int);
+  else if (bits == sizeof(long) * CHAR_BIT) return alignof(long);
+  else if (bits == sizeof(long long) * CHAR_BIT) return alignof(long);
+  return 0;
 }
 
 static bool out_typeIsNaturalC(typeenv e, Type t) {
@@ -348,16 +347,14 @@ void makeTypeTree(superscope *ss, printerfunction_context _ctx, TypeTree t) {
       (c_inlineast, _, ),
       (r_bool, _, PUTS("_Bool")),
       (r_void, _, PUTS("void_t")),
-      (r_sint, s, out_integerIsWide(ss_typeenv(ss), T(t)) ? (PUTS("cshl_int_"), USETYPEPRINTER(usize, (usize)s.bits))
-                                                          : (PUTS("signed   "), makeInt(_ctx, s.bits))),
-      (r_uint, u, out_integerIsWide(ss_typeenv(ss), T(t)) ? (PUTS("cshl_int_"), USETYPEPRINTER(usize, (usize)u.bits))
-                                                          : (PUTS("unsigned "), makeInt(_ctx, u.bits))),
+      (r_sint, s, out_integerIsWide(ss_typeenv(ss), T(t)) ? (PUTS("cshl_int_"), USETYPEPRINTER(usize, (usize)s.bits)) : (PUTS("signed   "), makeInt(_ctx, s.bits))),
+      (r_uint, u, out_integerIsWide(ss_typeenv(ss), T(t)) ? (PUTS("cshl_int_"), USETYPEPRINTER(usize, (usize)u.bits)) : (PUTS("unsigned "), makeInt(_ctx, u.bits))),
       (r_tag, it, ({
-        Type target = Type_at(ss_typeenv(ss), it.t);
-        fptr name = type_name(ss_typeenv(ss), it.name);
-        if (tu_is(c_type, target.t)) PUTS(*VLAP((const c8 *)name.ptr, name.len + 1));
-        else USETYPEPRINTER(id_str, name);
-      })),
+         Type target = Type_at(ss_typeenv(ss), it.t);
+         fptr name = type_name(ss_typeenv(ss), it.name);
+         if (tu_is(c_type, target.t)) PUTS(*VLAP((const c8 *)name.ptr, name.len + 1));
+         else USETYPEPRINTER(id_str, name);
+       })),
       // Named array types avoid incompatible anonymous struct pointers.
       (r_arr, _, {
         PUTS("struct ");
@@ -389,7 +386,8 @@ static void makeWideTypes(superscope *ss, printerfunction_context _ctx) {
     u16 candidate_bits = tu_is(r_sint, candidate.t) ? candidate.t.r_sint.bits : candidate.t.r_uint.bits;
     bool seen = false;
     usize wide_count = msList_len(wide_bits);
-    for (usize i = 0; i < wide_count; i++) seen |= wide_bits[i] == candidate_bits;
+    for (usize i = 0; i < wide_count; i++)
+      seen |= wide_bits[i] == candidate_bits;
     if (!seen) msList_push(_ctx.allocator, wide_bits, candidate_bits);
   }
   usize wide_count = msList_len(wide_bits);
@@ -423,7 +421,8 @@ static void makeTypeDeclarations(superscope *ss, printerfunction_context _ctx) {
       if (out_isAggregate(target)) {
         fptr name = type_name(e, tag.name);
         bool declared = false;
-        foreach (let it, span(declared_tags, msList_len(declared_tags))) declared |= !!fptr_eq(*it, name);
+        foreach (let it, span(declared_tags, msList_len(declared_tags)))
+          declared |= !!fptr_eq(*it, name);
         if (declared) continue;
         msList_push(_ctx.allocator, declared_tags, name);
         out_printTypeComment(ss, _ctx, t);
