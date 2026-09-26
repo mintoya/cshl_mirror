@@ -92,7 +92,7 @@ test_fn(cout_layout_declarations) {
   test_assert(pipe);
   printerfunction_context pctx = {.put = fileprint, .arb = pipe, .allocator = arena};
   out_runtime(pctx);
-  makeTypes(ss, fileprint, pctx);
+  makeTypes(ss, pctx);
   test_inteq(0, pclose(pipe));
 }
 
