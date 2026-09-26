@@ -1,3 +1,4 @@
+#pragma once
 #include "ast.h"
 #include "wheels/allocator.h"
 #include "wheels/fptr.h"
@@ -7,10 +8,12 @@
 #include <string.h>
 #include <tree-sitter/lib/include/tree_sitter/api.h>
 // TODO: i will write an actual parser but if i ever want to change the way the ast works that would be pulling teeth
+//
+// or maybe i use lexx and yacc
 
 extern const TSLanguage *tree_sitter_cshl(void);
 
-static ast null_ast() { return (ast)tu_of(astNull, {}); }
+static constexpr ast nullast = (ast)tu_of(astNull, {});
 
 static char *printerr_point(void *userdata) {
   static char ebuff[100] = {};
@@ -73,9 +76,9 @@ static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u3
     TSNode value_node = ts_node_child_by_field_name(ts_node, "value", 5);
     TSNode assign_op = ts_node_child_by_field_name(ts_node, "assignment_op", 13);
 
-    ast name = !ts_node_is_null(name_node) ? try_err(ts_to_ast2, (allocator, alist, plist, fileIndex, source, name_node), (ast){}) : null_ast();
-    ast type_ = !ts_node_is_null(type_node) ? try_err(ts_to_ast2, (allocator, alist, plist, fileIndex, source, type_node), (ast){}) : null_ast();
-    ast value = !ts_node_is_null(value_node) ? try_err(ts_to_ast2, (allocator, alist, plist, fileIndex, source, value_node), (ast){}) : null_ast();
+    ast name = !ts_node_is_null(name_node) ? try_err(ts_to_ast2, (allocator, alist, plist, fileIndex, source, name_node), (ast){}) : nullast;
+    ast type_ = !ts_node_is_null(type_node) ? try_err(ts_to_ast2, (allocator, alist, plist, fileIndex, source, type_node), (ast){}) : nullast;
+    ast value = !ts_node_is_null(value_node) ? try_err(ts_to_ast2, (allocator, alist, plist, fileIndex, source, value_node), (ast){}) : nullast;
 
     // name, type and value all next to each other starting at off
     astidx off = (astidx)alist->len + 1;
@@ -91,8 +94,8 @@ static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u3
     TSNode right_node = ts_node_child_by_field_name(ts_node, "right", 5);
     TSNode op_node = ts_node_child_by_field_name(ts_node, "operator", 8);
 
-    ast left = !ts_node_is_null(left_node) ? try_err(ts_to_ast2, (allocator, alist, plist, fileIndex, source, left_node), (ast){}) : null_ast();
-    ast right = !ts_node_is_null(right_node) ? try_err(ts_to_ast2, (allocator, alist, plist, fileIndex, source, right_node), (ast){}) : null_ast();
+    ast left = !ts_node_is_null(left_node) ? try_err(ts_to_ast2, (allocator, alist, plist, fileIndex, source, left_node), (ast){}) : nullast;
+    ast right = !ts_node_is_null(right_node) ? try_err(ts_to_ast2, (allocator, alist, plist, fileIndex, source, right_node), (ast){}) : nullast;
 
     // left and right next to each other
     astidx off = (astidx)alist->len + 1;
@@ -124,7 +127,7 @@ static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u3
     astidx start = (astidx)alist->len + 1;
     for (u32 i = 0; i < rc; i++)
       sglist_push(*alist, roots[i]);
-    sglist_push(*alist, null_ast());
+    sglist_push(*alist, nullast);
 
     let pos = register_pos(plist, fileIndex, ts_node);
     return (ast)(!strcmp(type, "program") || !strcmp(type, "bblock") ? (ast)tu_of(astBBlock, {.pos = pos, .start = start})
@@ -135,18 +138,13 @@ static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u3
   assertMessage(false, "unhandled node %s", type);
 }
 
-astidx_full parse_source errs(allocfn out_allocator, fptr input, const char *filename) {
-  assertMessage(!filename + fptr_isNull(input) == 1);
-  astidx_full res = {
-      .alist = out_allocator,
-      .plist = out_allocator,
-      .flist = out_allocator,
-  };
+// TODO: make astidx_full contina pointers, then thiswill return an astidx instead
+astidx_full parse errs(astidx_full res, fptr input, const char *filename) {
   let const fileit =
       filename
           ? (fileItem){
                 .filename = filename,
-                .filecontent = read_file(out_allocator, filename),
+                .filecontent = read_file(res.flist.allocator, filename),
             }
           : (fileItem){
                 .filecontent = input,
@@ -163,8 +161,17 @@ astidx_full parse_source errs(allocfn out_allocator, fptr input, const char *fil
   TSTree *tree = ts_parser_parse_string(parser, NULL, (const char *)content.ptr, content.len);
   defer { ts_tree_delete(tree); };
 
-  let root = try_err(ts_to_ast2, (out_allocator, &res.alist, &res.plist, fileIndex, content.ptr, ts_tree_root_node(tree)), (astidx_full){});
+  let root = try_err(ts_to_ast2, (res.alist.allocator, &res.alist, &res.plist, fileIndex, content.ptr, ts_tree_root_node(tree)), (astidx_full){});
   sglist_push(res.alist, root); // the root is referenced by no parent slot
   res.idx = (astidx)res.alist.len;
   return res;
+}
+astidx_full parse_source errs(allocfn out_allocator, fptr input, const char *filename) {
+  assertMessage(!filename + fptr_isNull(input) == 1);
+  astidx_full res = {
+      .alist = out_allocator,
+      .plist = out_allocator,
+      .flist = out_allocator,
+  };
+  return try_err(parse, (res, input, filename), res);
 }

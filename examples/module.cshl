@@ -1,0 +1,99 @@
+type ~~ @type();
+ast  ~~ @ast();
+any  ~~ @any();
+int ~~ @int();
+inline ~~ @inlineast();
+i8  ~~ @sint 8;
+i16 ~~ @sint 16;
+i32 ~~ @sint 32;
+i64 ~~ @sint 64;
+u8  ~~ @uint 8;
+u16 ~~ @uint 16;
+u32 ~~ @uint 32;
+u64 ~~ @uint 64;
+void ~~ @void();
+fn  ~~ @fn (a ~ast),inline,{
+  return 
+    @qot @fn(
+      @uqot(a."()".opleft),
+      @uqot(a."()".opright."()".opleft),
+      @uqot(a."()".opright."()".opright),
+    );
+};
+if  ~~ fn (a ~ast) inline {
+  call ~ast~ a."()";
+  cond ~ast~ call.opleft;
+  rest ~ast~ call.opright;
+
+  @cif((rest."()".opright."()".opleft == "else"), {
+    then ~ast~ rest.opleft;
+    else ~ast~ rest.opright."()".opright;
+
+    return @qot @if(
+      @uqot(cond),
+      @uqot(then),
+      @uqot(else)
+    );
+  });
+
+  return @qot @if(
+    @uqot(cond),
+    @uqot(rest)
+  );
+};
+cif  ~~ fn (a ~ast) inline {
+  call ~ast~ a."()";
+  cond ~ast~ call.opleft;
+  rest ~ast~ call.opright;
+
+  @cif((rest."()".opright."()".opleft == "else"), {
+    then ~ast~ rest.opleft;
+    else ~ast~ rest.opright."()".opright;
+
+    return @qot @cif(
+      @uqot(cond),
+      @uqot(then),
+      @uqot(else)
+    );
+  });
+
+  return @qot @cif(
+    @uqot(cond),
+    @uqot(rest)
+  );
+};
+while ~~ fn (a ~ast) inline {
+  cond ~ast~ a."()".opleft;
+  body ~ast~ a."()".opright;
+  return @qot @loop{
+    @if (@uqot(cond)),
+      (@uqot(body)),
+      (break());
+  };
+};
+some_state ~~ @sint(32);
+getstate ~~ fn () (@typeof(some_state)) 
+  return (some_state = some_state + 1);
+
+@struct{
+  inline  ~~ inline;
+  type  ~~ type;
+  ast ~~ ast ;
+  any ~~ any ;
+  int ~~ int;
+  i8  ~~ i8;
+  i16 ~~ i16;
+  i32 ~~ i32;
+  i64 ~~ i64;
+  u8  ~~ u8;
+  u16 ~~ u16;
+  u32 ~~ u32;
+  u64 ~~ u64;
+  void  ~~ void;
+  getstate ~~ getstate;
+
+  fn ~~ fn;
+  if ~~ if;
+  while ~~ while;
+  cif ~~ cif;
+};
