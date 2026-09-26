@@ -79,6 +79,24 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
          try_err(lower_math, (ss, s, left, try_err(lower, (ss, s, right), 0), opNumber), 0);
        })),
   );
-  assertMessage(res, "should be non-zero");
+  assertMessage(
+      res,
+      "should be non-zero , %s",
+      snprint(
+          stdAlloc,
+          "\n\t{Type_full}\n"
+          "\t{u32}\n"
+          "\t{astidx_full}\n",
+          ss_typeF(ss, ss_type(ss, scope_find(ss, s, left)->t)),
+          op_as_enum(opNumber),
+          ((astidx_full){
+              .alist = ss->asts,
+              .flist = ss->flist,
+              .plist = ss->plist,
+              .idx = right
+          })
+      )
+          .ptr
+  );
   return res;
 }

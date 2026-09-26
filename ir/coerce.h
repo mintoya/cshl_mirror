@@ -283,6 +283,51 @@ static void lower_dot_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d)
   let name = value_to_fptr(ss, *scope_find(ss, s, r));
   if (fptr_isNull(name)) return_err("DOT_NEEDS_NAME");
 
+  if (tu_is(c_typeinfo, lt.t)) {
+    let info = scope_find(ss, s, l)->v.c_typeinfo;
+    if (!info) return_err("NO_MEMBER");
+    let subject_type = ss_type(ss, info->subject.t);
+    if (info->view == typeinfo_fn) {
+      if (!fptr_eq(name, "0") && !fptr_eq(name, "1")) return_err("NO_MEMBER");
+      let identity = fptr_eq(name, "0") ? info->subject.v.c_fun.fn : info->subject.v.c_fun.spec;
+      *scope_find(ss, s, d) = TV_bigint(ss, BInt.from.i64(ss->alloc, identity));
+      return;
+    }
+    if (info->view == typeinfo_struct) {
+      if (!fptr_eq(name, "namespace")) return_err("NO_MEMBER");
+      let target = ss_type(ss, info->subject.v.c_type);
+      scope *owner = nullptr;
+      if (tu_is(r_tag, target.t)) {
+        let found = moxmap_get(ss->type_info, type_name(tenv, target.t.r_tag.name));
+        if (found) owner = *found;
+      }
+      if (!owner) return_err("TYPE_HAS_NO_NAMESPACE");
+      *scope_find(ss, s, d) = TV_with(ss, T(tu_of(c_namespace, {})), VS(.c_namespace = owner));
+      return;
+    }
+    typeinfo_value next = *info;
+    if (fptr_eq(name, "fn") && tu_is(c_fun, subject_type.t)) next.view = typeinfo_fn;
+    else if (fptr_eq(name, "struct") && tu_is(c_type, subject_type.t) &&
+             TypeTree_inner_struct(ss_type(ss, info->subject.v.c_type).t, tenv).start)
+      next.view = typeinfo_struct;
+    else return_err("NO_MEMBER");
+    *scope_find(ss, s, d) = TV_with(ss, T(tu_of(c_typeinfo, {})), VS(.c_typeinfo = avalue(ss->alloc, next)));
+    return;
+  }
+
+  if (tu_is(c_namespace, lt.t)) {
+    if (!fptr_eq(name, "fn")) return_err("NO_MEMBER");
+    scope *owner = scope_find(ss, s, l)->v.c_namespace;
+    while (owner && !owner->instance.fn) owner = owner->parent;
+    if (!owner) return_err("NAMESPACE_HAS_NO_FUNCTION");
+    let fn = owner->instance.fn;
+    let subject = TV(ss->functions[fn - 1].signature,
+                     VS(.c_fun = {.fn = fn, .spec = owner->instance.index}));
+    *scope_find(ss, s, d) = TV_with(ss, T(tu_of(c_typeinfo, {})),
+        VS(.c_typeinfo = avalue(ss->alloc, ((typeinfo_value){.subject = subject, .view = typeinfo_fn}))));
+    return;
+  }
+
   if (tu_is(c_type, lt.t)) {
     let target = try_err(value_asType, (ss, *scope_find(ss, s, l)));
     let m = ss_tag_named(ss, target.t, name);

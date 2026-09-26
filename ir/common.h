@@ -1,11 +1,17 @@
 #pragma once
 #include "../type.h"
 #include "ir.h"
+sliceDef(fptr);
+sliceDef(typed_value);
 
 typedef struct {
   astidx start;
   u32 len;
 } astidx_span;
+typedef struct typeinfo_value {
+  typed_value subject;
+  enum { typeinfo_root, typeinfo_struct, typeinfo_fn } view;
+} typeinfo_value;
 typedef struct superscope superscope;
 typedef struct scope scope;
 typedef struct name_env name_env;
@@ -35,6 +41,7 @@ typedef struct function {
   astidx body;
   scope *defscope;
   name_env *defnames;
+  typeidx signature;
   msList(function_instance) instances;
   moxmap(sliceDef(typed_value), u32) mp;
 } function;

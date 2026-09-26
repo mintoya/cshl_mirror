@@ -35,6 +35,15 @@ static cmpres typed_value_cmp_typed(Type ta, value_store av, Type tb, value_stor
       (c_int, _, BInt.cmp(av.c_int, bv.c_int)),
       (c_fun, _, (cmpres)(icmp(av.c_fun.fn, bv.c_fun.fn) ?: icmp(av.c_fun.spec, bv.c_fun.spec))),
       (c_type, _, icmp(av.c_type, bv.c_type)),
+      (c_namespace, _, icmp((usize)av.c_namespace, (usize)bv.c_namespace)),
+      (c_typeinfo, _, ({
+        let a = av.c_typeinfo;
+        let b = bv.c_typeinfo;
+        (cmpres)(!a || !b ? icmp((usize)a, (usize)b) :
+            (icmp(a->view, b->view) ?: typed_value_cmp_typed(
+                Type_at(e, a->subject.t), a->subject.v,
+                Type_at(e, b->subject.t), b->subject.v, e)));
+      })),
       // asts have no size, so memcmp below would call every ast equal
       (c_ast, _, icmp(av.c_ast, bv.c_ast)),
       (c_inlineast, _, icmp(av.c_ast, bv.c_ast)),
@@ -86,6 +95,7 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
       .body = body,
       .defscope = s,
       .defnames = s->named,
+      .signature = ss_type_intern(ss, T(tu_of(c_fun, signature))),
       .instances = msList_init(ss->alloc, function_instance),
       .mp = moxmap_init(ss->alloc, slice(typed_value), u32, (oxmap_cmp){slice_typed_value_cmp_hash, ss}),
   });
@@ -192,8 +202,6 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
   return result;
 }
 
-// coerce every argument to the generic signature, then lay them out as one consecutive run of
-// slots so ir_call can name the whole argument list with [r, e)
 static u32 lower_function_call_args errs(superscope *ss, scope *s, u32 fn, slice(u32) aargs) {
   let function_value = *scope_find(ss, s, fn);
   let generic_signature = tu_catchr(c_fun, ss_type(ss, function_value.t).t);
@@ -239,11 +247,8 @@ u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astidx args,
   defer {
     if (nparams) slice_free(ss->alloc, regs);
   };
-  // A receiver parameter may ask for an AST. The receiver has already been lowered, so exposing its
-  // AST would re-evaluate it in the expansion; hand over an id bound to that one evaluation instead.
-  // `_` is spoken for by pipes, so this gets its own name, in a naming scope of its own, so it can
-  // neither collide with the caller's names nor leak past the call.
   bool receiver_named = false;
+  defer { if (receiver_named) scope_pop_named(s); };
   usize idx = 0;
   if (lead) {
     let want0 = Type_at(env, type_run_at(env, generic_signature.start, 0));
@@ -251,21 +256,18 @@ u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astidx args,
     if (TypeTree_is_ast(want0.t) && !TypeTree_is_ast(have.t)) {
       scope_push_named(ss, s);
       receiver_named = true;
-      try_err(scope_bind, (ss, s, scope_add_value(ss, s, *scope_find(ss, s, lead)), fp("#_")), 0);
+      try_err(scope_bind, (ss, s, lead, fp("#_")), 0);
       regs.ptr[idx++] = scope_add_value(ss, s, TV_ast(ss, ast_make_id(ss, fp("#_"))));
     } else regs.ptr[idx++] = lead;
   }
   foreach (let a, span(alist.start, alist.len)) {
     let want = Type_at(env, type_run_at(env, generic_signature.start, idx));
-    // a comptime argument has to be a value here, not an instruction that would make one later,
-    // since the specialization it is part of is picked by that value
     regs.ptr[idx++] = TypeTree_is_ast(want.t) ? scope_add_value(ss, s, TV_ast(ss, a))
                       : Type_is_comptime(want)
                           ? scope_add_value(ss, s, try_err(temporary_interpret, (ss, s, a), 0))
                           : try_err(lower, (ss, s, a), 0);
   }
   let res = try_err(lower_function_call_args, (ss, s, fn, regs), 0);
-  if (receiver_named) scope_pop_named(s);
   return res;
 }
 u32 lower_function_call errs(superscope *ss, scope *s, u32 fn, u32 ofirst, astidx args) {

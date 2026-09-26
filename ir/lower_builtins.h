@@ -355,6 +355,24 @@ static u32 lower_builtin_intty errs(superscope *ss, scope *s, astidx args, bool 
       scope_add_value(ss, s, Type_asValue(ss, $))
   );
 }
+static u32 lower_builtin_typeinfo errs(superscope *ss, scope *s, astidx args) {
+  let list = builtin_args(ss, args, 0, 1);
+  let t = T(tu_of(c_typeinfo, {}));
+  if (!list.len) return scope_add_value(ss, s, Type_asValue(ss, t));
+  let subject = try_err(temporary_interpret, (ss, s, list.start), 0);
+  let st = ss_type(ss, subject.t);
+  if (!tu_is(c_type, st.t) && !tu_is(c_fun, st.t)) return_err("TYPEINFO_NEEDS_TYPE_OR_FUNCTION", 0);
+  return scope_add_value(ss, s, TV_with(ss, t, VS(.c_typeinfo = avalue(ss->alloc, ((typeinfo_value){.subject = subject})))));
+}
+static u32 lower_builtin_returntype errs(superscope *ss, scope *s, astidx args) {
+  let list = builtin_args(ss, args, 0);
+  scope *owner = s;
+  while (owner && !owner->instance.fn) owner = owner->parent;
+  if (!owner) return_err("RETURNTYPE_OUTSIDE_FUNCTION", 0);
+  let ret = ss->functions[owner->instance.fn - 1].instances[owner->instance.index].ret;
+  if (!ret.t.tag) return_err("RETURNTYPE_NOT_RESOLVED", 0);
+  return scope_add_value(ss, s, Type_asValue(ss, ret));
+}
 static u32 lower_builtin_typeof errs(superscope *ss, scope *s, astidx args) {
   return scope_add_value(ss, s, Type_asValue(ss, ss_type(ss, scope_find(ss, s, try_err(lower, (ss, s, args), 0))->t)));
 }
@@ -593,6 +611,7 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
       (builtin_using, /*   */ try_err(lower_builtin_using, (ss, s, args), 0)),
       (builtin_sint, /*    */ try_err(lower_builtin_intty, (ss, s, args, true), 0)),
       (builtin_uint, /*    */ try_err(lower_builtin_intty, (ss, s, args, false), 0)),
+      (builtin_returntype, /**/ try_err(lower_builtin_returntype, (ss, s, args), 0)),
       (builtin_typeof, /*  */ try_err(lower_builtin_typeof, (ss, s, args), 0)),
       (builtin_arrof, /*   */ try_err(lower_builtin_arrof, (ss, s, args), 0)),
       (builtin_ptrof, /*   */ try_err(lower_builtin_ptrof, (ss, s, args), 0)),
@@ -619,6 +638,7 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
       (builtin_void, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(r_void, {}))), 0)),
       (builtin_type, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_type, {}))), 0)),
       (builtin_inlineast, /**/ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_inlineast, {}))), 0)),
+      (builtin_typeinfo, /**/ try_err(lower_builtin_typeinfo, (ss, s, args), 0)),
   );
   assertMessage(false, "unhandled builtin %u", builtin);
 }

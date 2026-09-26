@@ -263,6 +263,8 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
       {"@const", builtin_const},
       {"@comptime", builtin_comptime},
       {"@typeof", builtin_typeof},
+      {"@returntype", builtin_returntype},
+      {"@typeinfo", builtin_typeinfo},
       {"@arr", builtin_arrof},
       {"break", builtin_break},
       {"continue", builtin_continue},

@@ -1,5 +1,4 @@
 #pragma once
-#include "../cshl.lib.h" // the bit run helpers the C output uses, so both read and write bits the same way
 #include "common.h"
 #include "scope.h"
 #include "simplify.h"
@@ -261,6 +260,8 @@ void interpret_set errs(intstate is, ir_set c) {
       (c_inlineast, _, slot->c_ast = l.v.c_ast),
       (c_fun, _, slot->c_fun = l.v.c_fun),
       (c_type, _, slot->c_type = l.v.c_type),
+      (c_namespace, _, slot->c_namespace = l.v.c_namespace),
+      (c_typeinfo, _, slot->c_typeinfo = l.v.c_typeinfo),
       (default, {
         intstate_store(is, place, l);
       })

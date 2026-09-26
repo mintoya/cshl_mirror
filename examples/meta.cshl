@@ -63,7 +63,15 @@ arr ~~ fn (i~int) any {
       return @qot{
         this ~~ @uqot(self);
         if this.has_err {
-          return this;
+          Return ~type~ @returntype();
+          @cif(@typeinfo(Return).struct.namespace.fn.0 == @typeinfo(!).fn.0, {
+            error ~Return;
+            error.has_err = 1 as bool;
+            error.data.err_text = this.data.err_text;
+            return error;
+          }, {
+            // TODO: handle errors when the enclosing function does not return a ! type.
+          });
         };
         this.data.result;
       };

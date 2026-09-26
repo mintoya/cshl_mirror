@@ -30,6 +30,7 @@ typedef enum : u8 {
   builtin_comptime,  // @comptime(T) set the compile-time decoration
   builtin_sint,      // @sint(N) integer with N bits
   builtin_uint,      // @uint(N) unsigned integer with N bits
+  builtin_returntype, // @returntype() return type of the enclosing function
   builtin_typeof,    // @typeof(V) type of argument
   builtin_typeinfo,  // @typeinfo(T) what a type is made of, @typeinfo() being that type
   builtin_arrof,     // @arrof(N,t) array of N t's
@@ -94,6 +95,7 @@ tu_def( // type
     (c_type /*       */, struct {}),
     (c_ast /*        */, struct {}),
     (c_typeinfo /*   */, struct {}),
+    (c_namespace /*  */, struct {}),
     (c_inlineast /*  */, struct {}),
     // something else
     // a run of Type slots, the return type last, terminated by a null
@@ -144,6 +146,8 @@ typedef union {
   bigint c_int;
   astidx c_ast;   // index into the ast arena, 0 = null
   typeidx c_type; // index into the typelist, 0 = null
+  struct scope *c_namespace;
+  struct typeinfo_value *c_typeinfo;
 } value_store;
 static_assert(sizeof(value_store) == sizeof(itypeof(value_store, value)));
 
@@ -234,6 +238,7 @@ static inline bool Type_is_comptime(Type t) {
          tu_is(c_any, t.t) ||
          tu_is(c_type, t.t) ||
          tu_is(c_typeinfo, t.t) ||
+         tu_is(c_namespace, t.t) ||
          tu_is(c_ast, t.t) || tu_is(c_inlineast, t.t);
 }
 static usize TypeTree_alignof(TypeTree t, typeenv e) {
@@ -249,6 +254,7 @@ static usize TypeTree_alignof(TypeTree t, typeenv e) {
       (c_any, _, (usize)1),
       (c_type, _, (usize)1),
       (c_typeinfo, _, (usize)1),
+      (c_namespace, _, (usize)1),
       (c_ast, _, (usize)1),
       (c_inlineast, _, (usize)1),
       // own reason
@@ -284,6 +290,7 @@ static usize TypeTree_sizeof(TypeTree t, typeenv e) {
       (builtin, _, (usize)0),
       (c_type, _, (usize)0),
       (c_typeinfo, _, (usize)0),
+      (c_namespace, _, (usize)0),
       (c_ast, _, (usize)0),
       (c_inlineast, _, (usize)0),
       (c_int, _, (usize)0),
@@ -377,6 +384,7 @@ cmpres TypeTree_cmp(typeenv e, TypeTree a, TypeTree b) {
       (c_inlineast, _, return 0),
       (c_type, _, return 0),
       (c_typeinfo, _, return 0),
+      (c_namespace, _, return 0),
 
       (r_arr, ai, {
         let bi = tu_catch(r_arr, b);
@@ -477,6 +485,7 @@ typePrinter(builtin_id) {
       (builtin_union, /*   */ PUTS("union")),
       (builtin_bitstruct, /**/ PUTS("bitstruct")),
       (builtin_return, /*  */ PUTS("return")),
+      (builtin_returntype, /**/ PUTS("returntype")),
       (builtin_typeof, /*  */ PUTS("typeof")),
       (builtin_typeinfo, /**/ PUTS("typeinfo")),
       (builtin_alignof, /* */ PUTS("alignof")),
@@ -519,6 +528,7 @@ void typeTreePrinterWorker(TypeTree in, moxmap(TypeTree, u32) visitedmap, typeen
       (c_int, /* */ _, PUTS("int")),
       (c_type, /**/ _, PUTS("type")),
       (c_typeinfo, _, PUTS("typeinfo")),
+      (c_namespace, _, PUTS("namespace")),
       (c_ast, /* */ _, PUTS("ast")),
       (c_inlineast, _, PUTS("inlineast")),
       (c_any, /* */ _, PUTS("any")),

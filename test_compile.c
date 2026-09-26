@@ -332,6 +332,7 @@ test_file_1(cout_non_power_alignment);
 test_file_1(cout_union_bool);
 test_file_1(interpret_import);
 test_file_1(interpret_using);
+test_file_1(namespace_enclosing_function);
 
 //
 // error tests
@@ -370,22 +371,19 @@ test_fn(using_rejects_non_struct) {
 test_fn(escaped_function_keeps_block_names) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let r = interpret_source(arena, fp(
-      "f ~~ { result_type ~~ @sint(32); value ~~ 5;"
-      "  { @fn((), result_type, { return value; }); }; };"
-      "{ result_type ~~ @bool(); value ~~ 9; f() == 5; };"
-  ), nullptr);
+  let r = interpret_source(arena, fp("f ~~ { result_type ~~ @sint(32); value ~~ 5;"
+                                     "  { @fn((), result_type, { return value; }); }; };"
+                                     "{ result_type ~~ @bool(); value ~~ 9; f() == 5; };"),
+                           nullptr);
   test_assert(*(bool *)r.v.value);
 }
 
 test_fn(escaped_function_does_not_expose_block_names) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let e = lower_source_err(arena, fp(
-      "f ~~ { result_type ~~ @sint(32);"
-      "  @fn((), result_type, { return 5; }); };"
-      "f(); result_type;"
-  ));
+  let e = lower_source_err(arena, fp("f ~~ { result_type ~~ @sint(32);"
+                                     "  @fn((), result_type, { return 5; }); };"
+                                     "f(); result_type;"));
   test_assert(e.err_code);
   test_streq(e.err_code, "UNBOUND_ID");
 }
@@ -845,4 +843,77 @@ test_fn(interpret_packed_return_survives_next_instruction) {
                                           "(f(0 - 3) + f(7)) == 4;"),
                                 nullptr);
   test_assert(*(bool *)result.v.value);
+}
+
+
+test_fn(typeinfo_stored_and_specialized) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(arena, fp(
+      "f ~~ @fn((), @sint(32), { return 1; });"
+      "g ~~ @fn((), @sint(32), { return 2; });"
+      "identity ~~ @fn((info ~ @typeinfo()), @int(), { return info.fn.0; });"
+      "info ~ @typeinfo() ~ @typeinfo(f);"
+      "(identity(info) == identity(@typeinfo(f))) and"
+      "(identity(info) != identity(@typeinfo(g)));"), nullptr);
+  test_assert(*(bool *)r.v.value);
+}
+
+test_fn(namespace_outside_function_reports_error) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp(
+      "T ~~ @struct { x ~ @sint(32); }; @typeinfo(T).struct.namespace.fn;"));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "NAMESPACE_HAS_NO_FUNCTION");
+}
+
+test_fn(typeinfo_rejects_wrong_member) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("@typeinfo(@sint(32)).struct;"));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "NO_MEMBER");
+}
+
+test_file_1(returntype);
+
+test_fn(returntype_outside_function) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("{ @returntype(); };"));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "RETURNTYPE_OUTSIDE_FUNCTION");
+}
+
+test_fn(returntype_rejects_arguments) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("@returntype(@sint(32));"));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "WRONG_ARG_COUNT");
+}
+
+test_fn(meta_try_propagates_to_enclosing_result_type) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let meta = read_file(arena, "examples/meta.cshl");
+  let exercise = fp(
+      "Input ~~ ! i32; Output ~~ ! void;"
+      "propagate ~~ fn (input ~Input) Output {"
+      "  input:try();"
+      "  ok ~Output; ok.has_err = 0 as bool; return ok;"
+      "};"
+      "message ~@sint(8) = 42;"
+      "bad ~Input; bad.has_err = 1 as bool; bad.data.err_text = @where(message);"
+      "failed ~~ propagate(bad);"
+      "good ~Input; good.has_err = 0 as bool; good.data.result = 17;"
+      "passed ~~ propagate(good);"
+      "failed.has_err and (@at(failed.data.err_text) == 42) and (passed.has_err == (0 as bool));"
+  );
+  let source = slice_alloc(arena, u8, meta.len + exercise.len);
+  memcpy(source.ptr, meta.ptr, meta.len);
+  memcpy(source.ptr + meta.len, exercise.ptr, exercise.len);
+  let r = interpret_source(arena, fp(source), nullptr);
+  test_assert(*(bool *)r.v.value);
 }
