@@ -1,55 +1,9 @@
-type ~~ @type();
-bool ~~ @bool();
-void ~~ @void();
-ast ~~ @ast();
-any ~~ @any();
-int ~~ @int();
-inline ~~ @inlineast();
-i32 ~type~ @sint(32);
-fn  ~~ @fn (a ~ast),@inlineast(),{
-  return 
-    @qot @fn(
-      @uqot(a."()".opleft),
-      @uqot(a."()".opright."()".opleft),
-      @uqot(a."()".opright."()".opright),
-    );
-};
-if  ~~ @fn (a ~ast),@inlineast(),{
-  call ~ast~ a."()";
-  cond ~ast~ call.opleft;
-  rest ~ast~ call.opright;
+@using @import "module.cshl";
 
-  @cif((rest."()".opright."()".opleft == "else"), {
-    then ~ast~ rest.opleft;
-    else ~ast~ rest.opright."()".opright;
-
-    return @qot @if(
-      @uqot(cond),
-      @uqot(then),
-      @uqot(else)
-    );
-  });
-
-  return @qot @if(
-    @uqot(cond),
-    @uqot(rest)
-  );
-};
-while  ~~ @fn (a ~ast),@inlineast(),{
-  cond ~ast~ a."()".opleft;
-  rest ~ast~ a."()".opright;
-  return @qot{
-    @loop{
-      @if(@uqot(cond) , @uqot(rest),break());
-    };
-  };
-};
-arr ~~ fn (i~int) any {
-  fn (T~type) type {
-    return @arrof(T,i);
-  } |> return _;
-};
-
+arr ~~ fn (i~int) any 
+  return (fn (T~type) type 
+    return (@arr(i,T)));
+arr(3) i8;
 
 ! ~~ fn (T~type) type {
   return @struct{
@@ -63,14 +17,14 @@ arr ~~ fn (i~int) any {
       return @qot{
         this ~~ @uqot(self);
         if this.has_err {
-          Return ~type~ @returntype();
-          @cif(@typeinfo(Return).struct.namespace.fn.0 == @typeinfo(!).fn.0, {
-            error ~Return;
+          RT ~type~ @returntype();
+          @cif(@typeinfo(RT).struct.namespace.fn.0 == @typeinfo(!).fn.0, {
+            error ~RT;
             error.has_err = 1 as bool;
             error.data.err_text = this.data.err_text;
             return error;
           }, {
-            // TODO: handle errors when the enclosing function does not return a ! type.
+            // TODO: do something about it
           });
         };
         this.data.result;
@@ -78,5 +32,14 @@ arr ~~ fn (i~int) any {
     };
   };
 };
-main ~~ fn () (! void) {;};
+otherfn ~~ fn () (! i32) {
+  result ~@returntype();
+  result.has_err = 1;
+  result.data.err_text = @where "error"[0];
+  return result;
+};
+main ~~ fn () (! void) {otherfn():try();};
+it ~~ main();
+// it.data.err_text;
+it.has_err;
 

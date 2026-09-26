@@ -3,6 +3,7 @@
 #include "scope.h"
 #include "wheels/fptr.h"
 #include "wheels/macros.h"
+// TODO: check up on @id(=) and as
 
 static inline Type Type_stripTag(Type t, typeenv e) {
   while (tu_is(r_tag, t.t))
@@ -10,7 +11,6 @@ static inline Type Type_stripTag(Type t, typeenv e) {
   return t;
 }
 
-// a member of a tagged struct: where it lives, and which register it is
 struct type_named {
   scope *owner;
   u32 idx;
@@ -92,7 +92,6 @@ static inline bigint int_as_bigint(allocfn allocator, typed_value t, typeenv e) 
       (r_sint, si, BInt.from.bits(allocator, t.v.value, si.bits, 1)),
       (r_uint, si, BInt.from.bits(allocator, t.v.value, si.bits, 0)),
       (r_bool, _, BInt.from.i64(allocator, !!*(u8 *)t.v.value)),
-      // the tag's child index is already interned, so no lookup is needed here
       (r_tag, tg, int_as_bigint(allocator, (typed_value){.t = tg.t, .v = t.v}, e)),
       (default,
        (({
@@ -157,10 +156,6 @@ static u32 scope_cast_value errs(superscope *ss, scope *s, u32 left, Type to) {
   let e = ss_typeenv(ss);
   let ot = ss_type(ss, scope_find(ss, s, left)->t);
   if (!scope_cast_would_change(ot, to, e)) return left;
-  // A comptime destination has no runtime slot, so the converted value has to exist now:
-  // consumers such as function specialization keys read .v directly instead of running
-  // the scope. Emitting the cast into the caller would hide it behind an instruction that
-  // only the interpreter would ever execute.
   if (Type_is_comptime(to) && Type_is_comptime(ot)) {
     let work = scope_inferior(ss, s);
     let input = scope_add_value(ss, work, *scope_find(ss, s, left));
@@ -177,7 +172,6 @@ u32 lower_condition errs(superscope *ss, scope *s, astidx a) {
   return try_err(scope_cast_value, (ss, s, l, T(tu_of(r_bool, {}))), 0);
 }
 static inline Type scope_reg_type(superscope *env, scope *s, u32 idx) { return ss_type(env, scope_find(env, s, idx)->t); }
-// the type most instructions actually look at
 static inline Type scope_reg_to_type_stripTag(superscope *env, scope *s, u32 idx) {
   return Type_stripTag(scope_reg_type(env, s, idx), ss_typeenv(env));
 }
@@ -338,8 +332,6 @@ static void lower_dot_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d)
   if (TypeTree_is_ast(lt.t)) return (void)try_err(lower_ast_member, (ss, s, l, r, d));
 
   if (lt.ptr_level <= 1) {
-    // the tag is what carries the namespace, so look it up before stripping: a comptime
-    // member such as a method has no storage and must be copied rather than addressed
     let m = ss_tag_named(ss, scope_reg_type(ss, s, l).t, name);
     if (m.owner) {
       *scope_find(ss, s, d) = *scope_find(ss, m.owner, m.idx);
@@ -441,7 +433,6 @@ static void tcheck_rawop errs(superscope *env, scope *s, ir_rawop op) {
             (astString, str, ast_text(env, str)),
             (default, (fptr){})
         );
-        // a string node's text is quoted and escaped, the way it is written
         if (tu_is(astString, ast_at(env, self))) word = string_escape(env->alloc, word);
         res = fptr_eq(word, ((fptr){arr.count, (u8 *)other->v.value}));
       }
@@ -459,7 +450,6 @@ static void tcheck_rawop errs(superscope *env, scope *s, ir_rawop op) {
   if (Type_stripTag(lt, tenv).ptr_level <= 1) {
     char sym[sizeof(u32) + 1] = {};
     memcpy(sym, &op.o, sizeof(u32));
-    // the spelling is a string, not the whole padded array, so the length has to be measured
     let m = ss_tag_named(env, lt.t, (fptr){strlen(sym), (u8 *)sym});
     if (m.owner) {
       let method = scope_add_value(env, s, *scope_find(env, m.owner, m.idx));
@@ -472,9 +462,7 @@ static void tcheck_rawop errs(superscope *env, scope *s, ir_rawop op) {
       return;
     }
   }
-  // `.` is overloadable like the rest, so a dot nothing claimed is the member access
   if (op.o == opNumbers.dot) return (void)try_err(lower_dot_member, (env, s, op.l, op.r, op.d));
-  // `as` with no overload member names a type to coerce to
   if (op.o == opNumbers.as) {
     Type to = try_err(value_asType, (env, *scope_find(env, s, op.r)));
     Type from = Type_stripTag(lt, tenv);
@@ -511,7 +499,6 @@ static void tcheck_set errs(superscope *env, scope *s, ir_set st) {
     try_err(lower_function_call_values, (env, s, method, ((slice(u32)){2, (u32[2]){self, st.l}})));
     return;
   }
-  // Assigning a reference member binds its stored reference.
   if (lt.ref_kind && dt.ref_kind && !Type_cmp_ndecor(lt, dt, tenv)) {
     foreach (let inst, span(s->instructions, msList_len(s->instructions))) {
       if (!tu_is(ir_field, *inst) || inst->ir_field.d != st.d) continue;
@@ -712,21 +699,16 @@ static inline void scope_add_inst_typecheck errs(superscope *env, scope *s, ir i
       (ir_blocks /**/, _, ), // nothing but namespace stuff
       (ir_blocke /**/, _, ),
       (ir_ifs /*   */, r, try_err(tcheck_ifs, (env, s, r))),
-      // d = *l
       (ir_putptr, pp, try_err(tcheck_putptr, (env, s, pp))),
       (ir_getptr, gp, try_err(tcheck_getptr, (env, s, gp))),
-      // d is a reference to l
       (ir_getref, gp, try_err(tcheck_getref, (env, s, gp))),
       (ir_rawdot, rd, try_err(tcheck_rawdot, (env, s, rd))),
       (ir_rawop, op, try_err(tcheck_rawop, (env, s, op))),
       (ir_set, st, try_err(tcheck_set, (env, s, st))),
       (ir_cast, cv, try_err(tcheck_cast, (env, s, cv))),
       (ir_ret, r, try_err(tcheck_ret, (env, s, r))),
-      // fn call and struct with a "()" function
       (ir_call, call, try_err(tcheck_call, (env, s, call))),
-      // ref to n-th arral elment
       (ir_array, arr, try_err(tcheck_array, (env, s, arr))),
-      // ref to n-th member, exept comptime
       (ir_field, fld, try_err(tcheck_field, (env, s, fld))),
   );
 }

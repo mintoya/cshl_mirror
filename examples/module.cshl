@@ -12,6 +12,7 @@ u8  ~~ @uint 8;
 u16 ~~ @uint 16;
 u32 ~~ @uint 32;
 u64 ~~ @uint 64;
+bool ~~ @bool();
 void ~~ @void();
 fn  ~~ @fn (a ~ast),inline,{
   return 
@@ -78,6 +79,7 @@ getstate ~~ fn () (@typeof(some_state))
 
 @struct{
   inline  ~~ inline;
+  bool  ~~ bool;
   type  ~~ type;
   ast ~~ ast ;
   any ~~ any ;
