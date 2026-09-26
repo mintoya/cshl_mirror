@@ -369,9 +369,12 @@ static inline astidx_span builtin_arg_list(superscope *ss, astidx args) {
   iflet_tu (let block, astPBlock, ast_at(ss, args)) return ast_run(ss, block.start);
   return (astidx_span){args, 1};
 }
-#define builtin_args(ss, args, ...)      \
-  let list = builtin_arg_list(ss, args); \
-  if (!EQUAL_ANY(list.len, __VA_ARGS__)) return_err("WRONG_ARG_COUNT", 0)
+#define builtin_args(ss, args, ...)                                          \
+  ({                                                                         \
+    let list = builtin_arg_list(ss, args);                                   \
+    if (!EQUAL_ANY(list.len, __VA_ARGS__)) return_err("WRONG_ARG_COUNT", 0); \
+    list;                                                                    \
+  })
 #define builtin_no_args(ss, args) \
   if (builtin_arg_list(ss, args).len) return_err("WRONG_ARG_COUNT", 0)
 static inline astidx_full ss_ast_full(superscope *ss, astidx idx) {
