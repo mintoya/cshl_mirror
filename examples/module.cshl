@@ -1,3 +1,4 @@
+{
 type ~~ @type();
 ast  ~~ @ast();
 any  ~~ @any();
@@ -96,4 +97,5 @@ getstate ~~ fn () (@typeof(some_state))
   if ~~ if;
   while ~~ while;
   cif ~~ cif;
+};
 };

@@ -330,6 +330,7 @@ test_file_1(cout_signed_shifts);
 test_file_1(cout_packed_return);
 test_file_1(cout_non_power_alignment);
 test_file_1(cout_union_bool);
+test_file_1(interpret_import);
 
 //
 // error tests

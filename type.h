@@ -53,6 +53,7 @@ typedef enum : u8 {
   builtin_reft,      // @reft(value) produces the type of a referance to a value
   builtin_at,        // @at(arg) dereference arg
   builtin_where,     // @where(arg) referance to arg
+  builtin_import,    // @import(path) evaluate another file in its own scope and yield its result
 } builtin_id;
 //{type
 // one based index into a typelist, 0 means null. same as astidx but for types
@@ -482,6 +483,7 @@ typePrinter(builtin_id) {
       (builtin_offsetof, /**/ PUTS("offsetof")),
       (builtin_rawget, /*   */ PUTS("rawget")),
       (builtin_volatile, /**/ PUTS("volatile")),
+      (builtin_import, /*   */ PUTS("import")),
   );
 }
 void typePrinterWorker(Type in, moxmap(TypeTree, u32) visitedmap, typeenv e, printerfunction_context _ctx) {

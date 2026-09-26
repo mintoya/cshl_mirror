@@ -512,6 +512,46 @@ static void intstate_inst errs(intstate is, usize at, ir inst) {
   );
 }
 
+// Execute against the lowering slots directly, without creating runtime copies.
+static bool scope_exec_comptime errs(superscope *env, scope *s, ir i) {
+  u32 l = 0, r = 0, d = 0;
+  tu_match_void(
+      i,
+      (ir_set, op, (l = op.l, d = op.d)),
+      (ir_cast, op, (l = op.l, d = op.d)),
+      (ir_rawop, op, (l = op.l, r = op.r, d = op.d)),
+      (ir_call, op, {
+        let t = scope_reg_type(env, s, op.d);
+        assertMessage(!Type_is_comptime(t) || tu_is(c_any, t.t), "comptime calls must be handled during function lowering");
+        return false;
+      }),
+      (default, return false),
+  );
+  let lt = Type_stripTag(scope_reg_type(env, s, l), ss_typeenv(env));
+  if (lt.ref_kind || !Type_is_comptime(lt) || tu_is(c_any, lt.t)) return false;
+  if (r) {
+    let rt = Type_stripTag(scope_reg_type(env, s, r), ss_typeenv(env));
+    if (rt.ref_kind || !Type_is_comptime(rt) || tu_is(c_any, rt.t)) return false;
+  }
+  // A set into runtime storage must still happen at runtime.
+  let dt = Type_stripTag(scope_reg_type(env, s, d), ss_typeenv(env));
+  if (dt.ref_kind || tu_is(c_any, dt.t)) return false;
+  if (tu_is(ir_set, i) && !Type_is_comptime(dt)) return false;
+
+  let is = intstate_new(env);
+  defer {
+    mxmap_deinit(is->vmap);
+    msList_deInit(env->alloc, is->cs);
+    arena_cleanup(is->temp);
+    arena_cleanup(is->reads);
+    if (is->scratch) arena_cleanup(is->scratch);
+    adestroy(env->alloc, is);
+  };
+  msList_push(env->alloc, is->cs, ((intframe){.sp = s}));
+  try_err(intstate_inst, (is, 0, i), false);
+  return true;
+}
+
 static void intstate_run errs(intstate is) {
   while (true) {
     let f = &msList_last(is->cs);

@@ -1,0 +1,2 @@
+lib ~= @import("import_lib.cshl");
+lib.add(2, 3);

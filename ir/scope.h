@@ -119,7 +119,11 @@ static inline cmpres Type_cmp_ndecor(Type a, Type b, typeenv e) {
       P$(b, ($.decorations &= x, $))
   );
 }
-static inline void scope_emit_inst errs(superscope *env, scope *s, ir i) { msList_push(env->alloc, s->instructions, i); }
+static bool scope_exec_comptime errs(superscope *env, scope *s, ir i);
+static inline void scope_emit_inst errs(superscope *env, scope *s, ir i) {
+  if (try_err(scope_exec_comptime, (env, s, i))) return;
+  msList_push(env->alloc, s->instructions, i);
+}
 
 static bool Type_ncmp_nptr(Type a, Type b, typeenv e) { return a.ptr_level == b.ptr_level && !TypeTree_cmp(e, a.t, b.t); }
 static inline bool Type_isnull(Type t) { return tu_is(r_null, t.t); }
@@ -261,6 +265,7 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
       {"@comptime_if", builtin_cif},
       {"@if", builtin_if},
       {"@loop", builtin_loop},
+      {"@import", builtin_import},
   };
   foreach (let i, vla(builtins))
     catch_errcall(
