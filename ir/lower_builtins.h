@@ -3,6 +3,7 @@
 #include "common.h"
 #include "function.h"
 #include "wheels/fptr.h"
+#include "wheels/print/print_pre.h"
 #include <string.h>
 
 // static fptr interpret_string(superscope *ss, scope *s, u32 idx) {}
@@ -86,16 +87,20 @@ static u32 lower_builtin_import errs(superscope *ss, scope *s, astidx args) {
   let arr = tu_catchr(r_arr, ss_type(ss, str.t).t, return_err("ID_TYPE_ERROR", 0));
   if (tu_catchr(r_sint, type_tree(ss_typeenv(ss), arr.t), return_err("ID_TYPE_ERROR", 0)).bits != 8)
     return_err("ID_TYPE_ERROR", 0);
-  let path = SPath.init(ss->alloc, "..");
+  let name = sglist_get(ss->flist, sglist_get(ss->plist, srcpos_ast(ast_at(ss, args), ss->asts) - 1).fidx - 1).filename;
+  let path = SPath.init(ss->alloc, (char *)name);
   defer { SPath.deinit(path); };
 
   char buf[arr.count + 1];
   memset(buf, 0, sizeof(buf));
 
+  SPath.join(path, "..");
   SPath.join(path, memcpy(buf, str.v.value, arr.count));
   SPath.normalize(path);
 
   astidx_full parse errs(astidx_full, fptr, const char *);
+  let pathstr = SPath.tostr(ss->alloc, path);
+  println("parsing file {cstr}", pathstr);
   return P$(
       ((astidx_full){
           .idx = 0,
@@ -103,7 +108,7 @@ static u32 lower_builtin_import errs(superscope *ss, scope *s, astidx args) {
           .flist = ss->flist,
           .plist = ss->plist,
       }),
-      try_err(parse, ($, nullFptr, SPath.tostr(ss->alloc, path)), 0),
+      try_err(parse, ($, nullFptr, pathstr), 0),
       (
           ss->asts = $.alist,
           ss->flist = $.flist,
