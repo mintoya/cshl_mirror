@@ -331,6 +331,7 @@ test_file_1(cout_packed_return);
 test_file_1(cout_non_power_alignment);
 test_file_1(cout_union_bool);
 test_file_1(interpret_import);
+test_file_1(interpret_using);
 
 //
 // error tests
@@ -340,6 +341,53 @@ static err_t lower_source_err(allocfn arena, fptr src) {
   let ctx = catch_errcall((parse_source, (arena, src, nullptr)), e, (({ return e; }), (astidx_full){}));
   let env = ss_init(arena, ctx);
   return call_err(lower, (env, env->outermost, ctx.idx)).err;
+}
+
+test_fn(using_rejects_duplicate_names) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("x ~~ 1; @using(@struct { x ~~ 2; });"));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "SHADOWING_SAME_SCOPE");
+}
+
+test_fn(using_names_stay_in_block) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("{ @using(@struct { x ~~ 2; }); }; x;"));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "UNBOUND_ID");
+}
+
+test_fn(using_rejects_non_struct) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("@using(3);"));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "USING_EXPECTS_STRUCT");
+}
+
+test_fn(escaped_function_keeps_block_names) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(arena, fp(
+      "f ~~ { result_type ~~ @sint(32); value ~~ 5;"
+      "  { @fn((), result_type, { return value; }); }; };"
+      "{ result_type ~~ @bool(); value ~~ 9; f() == 5; };"
+  ), nullptr);
+  test_assert(*(bool *)r.v.value);
+}
+
+test_fn(escaped_function_does_not_expose_block_names) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp(
+      "f ~~ { result_type ~~ @sint(32);"
+      "  @fn((), result_type, { return 5; }); };"
+      "f(); result_type;"
+  ));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "UNBOUND_ID");
 }
 
 test_fn(lower_error_too_many_args) {

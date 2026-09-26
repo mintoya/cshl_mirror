@@ -34,8 +34,9 @@ typed_value *scope_find(superscope *env, const scope *s, u32 idx) {
   return &owner->values[idx - owner->start - 1];
 }
 scope *scope_inferior(superscope *b, scope *s) {
-  let named = mList_init(b->alloc, moxmap(fptr, u32));
-  mList_push(named, moxmap_init(b->alloc, fptr, u32, (oxmap_cmp){cmpfptr}));
+  let named = avalue(b->alloc, ((name_env){
+      .bindings = moxmap_init(b->alloc, fptr, u32, (oxmap_cmp){cmpfptr}),
+  }));
   let res = avalue(
       b->alloc,
       ((scope){
@@ -43,6 +44,7 @@ scope *scope_inferior(superscope *b, scope *s) {
           .instructions = msList_init(b->alloc, ir),
           .values = msList_init(b->alloc, typed_value),
           .named = named,
+          .parent_named = s ? s->named : nullptr,
           .start = s ? s->start + msList_len(s->values) : 0,
       })
   );
@@ -50,10 +52,14 @@ scope *scope_inferior(superscope *b, scope *s) {
   return res;
 }
 static inline void scope_push_named(superscope *b, scope *s) {
-  mList_push(s->named, moxmap_init(b->alloc, fptr, u32, (oxmap_cmp){cmpfptr}));
+  s->named = avalue(b->alloc, ((name_env){
+      .parent = s->named,
+      .bindings = moxmap_init(b->alloc, fptr, u32, (oxmap_cmp){cmpfptr}),
+  }));
 }
 static inline void scope_pop_named(scope *s) {
-  if (mList_len(s->named) > 1) moxmap_deinit(mList_pop(s->named));
+  // Functions may still refer to this environment after the block exits.
+  if (s->named->parent) s->named = s->named->parent;
 }
 // only any is 'resizable'
 // TODO: wierd
@@ -136,20 +142,19 @@ static inline void scope_add_inst errs(superscope *env, scope *s, ir i) {
   try_err(scope_add_inst_typecheck, (env, s, i));
 }
 static inline void scope_bind errs(superscope *env, scope *s, u32 idx, fptr name) {
-  if (moxmap_get(mList_last(s->named), name)) return_err("SHADOWING_SAME_SCOPE");
-  assertMessage(!moxmap_get(mList_last(s->named), name));
+  if (moxmap_get(s->named->bindings, name)) return_err("SHADOWING_SAME_SCOPE");
+  assertMessage(!moxmap_get(s->named->bindings, name));
   assertMessage(idx <= msList_len(s->values) + s->start, "%zu <= %zu + %zu", idx, msList_len(s->values), s->start);
-  moxmap_set(mList_last(s->named), name, idx);
+  moxmap_set(s->named->bindings, name, idx);
 }
 
 static u32 ss_get_named_failable_noref(superscope *env, scope *s, fptr n) {
   let limit = s->start + msList_len(s->values);
   bool crossed_function = false;
+  let names = s->named;
   while (s) {
-    let maps = mList_len(s->named);
-    foreach (let i, range(0, maps)) {
-      let map = mList_arr(s->named)[maps - 1 - i];
-      if_decl (let val, moxmap_get(map, n))
+    for (let map = names; map; map = map->parent) {
+      if_decl (let val, moxmap_get(map->bindings, n))
         if (*val <= limit) {
           let t = ss_type(env, scope_find(env, s, *val)->t);
           if (crossed_function && s->instance.fn && !Type_is_comptime(t))
@@ -159,6 +164,7 @@ static u32 ss_get_named_failable_noref(superscope *env, scope *s, fptr n) {
     }
     limit = s->start;
     crossed_function |= !!s->instance.fn;
+    names = s->parent_named;
     s = s->parent;
   }
   return 0;
@@ -266,6 +272,7 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
       {"@if", builtin_if},
       {"@loop", builtin_loop},
       {"@import", builtin_import},
+      {"@using", builtin_using},
   };
   foreach (let i, vla(builtins))
     catch_errcall(

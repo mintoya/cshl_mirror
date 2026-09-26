@@ -119,6 +119,23 @@ static u32 lower_builtin_import errs(superscope *ss, scope *s, astidx args) {
   );
 }
 
+static u32 lower_builtin_using errs(superscope *ss, scope *s, astidx args) {
+  let list = builtin_args(ss, args, 1);
+  let value = try_err(lower, (ss, s, list.start), 0);
+  let tv = *scope_find(ss, s, value);
+  let type = ss_type(ss, tv.t);
+  if (tu_is(c_type, type.t)) type = try_err(value_asType, (ss, tv), 0);
+  if (!tu_is(r_tag, type.t) || !TypeTree_inner_struct(type.t, ss_typeenv(ss)).start)
+    return_err("USING_EXPECTS_STRUCT", 0);
+  let owner = moxmap_get(ss->type_info, type_name(ss_typeenv(ss), type.t.r_tag.name));
+  if (!owner) return_err("USING_EXPECTS_STRUCT", 0);
+  foreach (let member, moxmap_iter((*owner)->named->bindings, fptr, u32)) {
+    let copy = scope_add_value(ss, s, *scope_find(ss, *owner, *member.val));
+    try_err(scope_bind, (ss, s, copy, member.key), 0);
+  }
+  return scope_add_value(ss, s, TV_void(ss));
+}
+
 static astidx_span ast_list_span(superscope *ss, astidx a) {
   if (!a) return (astidx_span){};
   return tu_match_exp(
@@ -573,6 +590,7 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
       (builtin_volatile, /**/ try_err(lower_builtin_decor, (ss, s, args, 0, 1, 0), 0)),
       (builtin_comptime, /**/ try_err(lower_builtin_decor, (ss, s, args, 0, 0, 1), 0)),
       (builtin_import, /*  */ try_err(lower_builtin_import, (ss, s, args), 0)),
+      (builtin_using, /*   */ try_err(lower_builtin_using, (ss, s, args), 0)),
       (builtin_sint, /*    */ try_err(lower_builtin_intty, (ss, s, args, true), 0)),
       (builtin_uint, /*    */ try_err(lower_builtin_intty, (ss, s, args, false), 0)),
       (builtin_typeof, /*  */ try_err(lower_builtin_typeof, (ss, s, args), 0)),

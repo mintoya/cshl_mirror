@@ -85,6 +85,7 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
       .retT = retT,
       .body = body,
       .defscope = s,
+      .defnames = s->named,
       .instances = msList_init(ss->alloc, function_instance),
       .mp = moxmap_init(ss->alloc, slice(typed_value), u32, (oxmap_cmp){slice_typed_value_cmp_hash, ss}),
   });
@@ -106,6 +107,7 @@ bool function_complete_declaration errs(superscope *ss, scope *s, u32 declared, 
   item->retT = definition->retT;
   item->body = definition->body;
   item->defscope = definition->defscope;
+  item->defnames = definition->defnames;
   return true;
 }
 
@@ -146,6 +148,7 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
       item->v.c_int = BInt.copy(ss->alloc, item->v.c_int);
 
   let spec = scope_inferior(ss, function_item->defscope);
+  spec->parent_named = function_item->defnames;
   let instance = (function_instance){.spec = spec};
   u32 spec_number = (u32)msList_len(function_item->instances);
   moxmap_set(function_item->mp, stable_key, spec_number);

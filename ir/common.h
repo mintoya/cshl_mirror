@@ -8,12 +8,17 @@ typedef struct {
 } astidx_span;
 typedef struct superscope superscope;
 typedef struct scope scope;
+typedef struct name_env name_env;
+struct name_env {
+  name_env *parent;
+  moxmap(fptr, u32) bindings;
+};
 struct scope {
   scope *parent;
   msList(ir) instructions;
   msList(typed_value) values;
-  // TODO: keep names around for debugging
-  mList(moxmap(fptr, u32)) named;
+  name_env *named;
+  name_env *parent_named;
   u32 start;
   struct {
     u32 fn, index;
@@ -29,6 +34,7 @@ typedef struct function {
   astidx retT;
   astidx body;
   scope *defscope;
+  name_env *defnames;
   msList(function_instance) instances;
   moxmap(sliceDef(typed_value), u32) mp;
 } function;

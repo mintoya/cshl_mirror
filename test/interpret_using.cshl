@@ -1,0 +1,6 @@
+@using(@import "../examples/module.cshl");
+main ~~ fn (i ~i32) i32 {
+  return i + 5;
+};
+@using(@import "import_dep.cshl");
+(main(2) == 7) and (add(2, 3) == 5);

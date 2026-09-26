@@ -18,7 +18,7 @@ struct type_named {
 static inline struct type_named ss_tag_named(superscope *ss, TypeTree t, fptr name) {
   iflet_tu (let tag, r_tag, t)
     if_decl (let info, moxmap_get(ss->type_info, type_name(ss_typeenv(ss), tag.name)))
-      if_decl (let idx, moxmap_get(mList_last((*info)->named), name)) return (struct type_named){*info, *idx};
+      if_decl (let idx, moxmap_get((*info)->named->bindings, name)) return (struct type_named){*info, *idx};
   return (struct type_named){};
 }
 static inline struct type_named tag_set_member(superscope *ss, Type t) {
