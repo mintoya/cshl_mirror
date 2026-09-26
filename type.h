@@ -8,53 +8,53 @@
 
 cmpres fptr_cmp_hash(void *, const void *a, const void *b) { return fptr_cmp(*(fptr *)a, *(fptr *)b); }
 typedef enum : u8 {
-  builtin_fn,        // @fn((decl|type...) ,decl|type,body) c_func of this type,
-  builtin_if,        // @if(cnd , then ,)
-  builtin_cif,       // @cif same as if, comptime, produces only one branch
-  builtin_loop,      // @loop(body)
-  builtin_return,    // return(x?)
-  builtin_break,     // break()
-  builtin_continue,  // continue()
-                     //
-  builtin__id,       // @id(str) an id which corresponds to this string, **evaluates it**
-                     //
-  builtin_ast,       // @ast() type of ast
-  builtin_inlineast, // @inlineast() AST result expanded at the call site
-  builtin_any,       // @any() type of any
-  builtin_void,      // @void() the void type
-  builtin_bool,      // @bool() the bool type
-  builtin_int,       // @int() compile time bigint
-  builtin_type,      // @type() the type of a type
-  builtin_const,     // @const(T) constant
-  builtin_volatile,  // @volatile(T) volatile
-  builtin_comptime,  // @comptime(T) set the compile-time decoration
-  builtin_sint,      // @sint(N) integer with N bits
-  builtin_uint,      // @uint(N) unsigned integer with N bits
+  builtin_fn,         // @fn((decl|type...) ,decl|type,body) c_func of this type,
+  builtin_if,         // @if(cnd , then ,)
+  builtin_cif,        // @cif same as if, comptime, produces only one branch
+  builtin_loop,       // @loop(body)
+  builtin_return,     // return(x?)
+  builtin_break,      // break()
+  builtin_continue,   // continue()
+                      //
+  builtin__id,        // @id(str) an id which corresponds to this string, **evaluates it**
+                      //
+  builtin_ast,        // @ast() type of ast
+  builtin_inlineast,  // @inlineast() AST result expanded at the call site
+  builtin_any,        // @any() type of any
+  builtin_void,       // @void() the void type
+  builtin_bool,       // @bool() the bool type
+  builtin_int,        // @int() compile time bigint
+  builtin_type,       // @type() the type of a type
+  builtin_const,      // @const(T) constant
+  builtin_volatile,   // @volatile(T) volatile
+  builtin_comptime,   // @comptime(T) set the compile-time decoration
+  builtin_sint,       // @sint(N) integer with N bits
+  builtin_uint,       // @uint(N) unsigned integer with N bits
   builtin_returntype, // @returntype() return type of the enclosing function
-  builtin_typeof,    // @typeof(V) type of argument
-  builtin_typeinfo,  // @typeinfo(T) what a type is made of, @typeinfo() being that type
-  builtin_arrof,     // @arrof(N,t) array of N t's
-  builtin_ptrof,     // @ptrof(t) pionter to t
-                     //
-  builtin_sizeof,    // @sizeof(T) comptime size of T in bytes
-  builtin_alignof,   // @alignof(T) comptime alignment of T
-  builtin_offsetof,  // @offsetof(T,member) comptime offset of member in T
-  builtin_rawget,    // @rawget(v,name) member v.name itself, ignoring a overload
-                     //
-  builtin_struct,    // @struct{} struct of declarations
-  builtin_union,     // @union{} union of declarations, all members share offset 0
-  builtin_bitstruct, // @bitstruct{} bitfield of declarations, each one with a bit width
-  builtin__this,     // @this() inside of struct, this is the result type
-                     //
-  builtin_qot,       // @qot(arg) ast of arg
-  builtin_uqot,      // @unqot(arg) evaluate arg
-  builtin_ast_op,    // @ast_op(sym,a,b) build the ast of "a sym b", sym a comptime string
-  builtin_apply,     // @apply(f,args...) call f with evaluated args (ast params get values)
-  builtin_ref,       // @ref(value) produces a referance to value
-  builtin_reft,      // @reft(value) produces the type of a referance to a value
-  builtin_at,        // @at(arg) dereference arg
-  builtin_where,     // @where(arg) referance to arg
-  builtin_import,    // @import(path) evaluate another file in its own scope and yield its result
+  builtin_typeof,     // @typeof(V) type of argument
+  builtin_typeinfo,   // @typeinfo(T) what a type is made of, @typeinfo() being that type
+  builtin_arrof,      // @arrof(N,t) array of N t's
+  builtin_ptrof,      // @ptrof(t) pionter to t
+                      //
+  builtin_sizeof,     // @sizeof(T) comptime size of T in bytes
+  builtin_alignof,    // @alignof(T) comptime alignment of T
+  builtin_offsetof,   // @offsetof(T,member) comptime offset of member in T
+  builtin_rawget,     // @rawget(v,name) member v.name itself, ignoring a overload
+                      //
+  builtin_struct,     // @struct{} struct of declarations
+  builtin_union,      // @union{} union of declarations, all members share offset 0
+  builtin_bitstruct,  // @bitstruct{} bitfield of declarations, each one with a bit width
+  builtin__this,      // @this() inside of struct, this is the result type
+                      //
+  builtin_qot,        // @qot(arg) ast of arg
+  builtin_uqot,       // @unqot(arg) evaluate arg
+  builtin_ast_op,     // @ast_op(sym,a,b) build the ast of "a sym b", sym a comptime string
+  builtin_apply,      // @apply(f,args...) call f with evaluated args (ast params get values)
+  builtin_ref,        // @ref(value) produces a referance to value
+  builtin_reft,       // @reft(value) produces the type of a referance to a value
+  builtin_at,         // @at(arg) dereference arg
+  builtin_where,      // @where(arg) referance to arg
+  builtin_import,     // @import(path) evaluate another file in its own scope and yield its result
   builtin_using,
 } builtin_id;
 //{type
@@ -129,11 +129,11 @@ struct Type {
   union {
     u32 decorations;
     struct {
-      u32 ptr_level : 27; // 134217728, a tag can make a higher pointer if needed for some weird reason
-      reference_kind ref_kind : 2;
-      u32 isconst : 1;
-      u32 iscomptime : 1; // meaningless for int,type,ast
-      u32 isvolatile : 1;
+      u32 ptr_level /* */ : 27; // 134217728, a tag can make a higher pointer if needed for some weird reason
+      u32 ref_kind /*  */ : 2;
+      u32 isconst /*   */ : 1;
+      u32 iscomptime /**/ : 1; // meaningless for int,type,ast
+      u32 isvolatile /**/ : 1;
     };
   };
 };

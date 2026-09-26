@@ -2,6 +2,10 @@
 #define TESTS_SUBPROCESSES (1)
 #include <wheels/tests.h>
 
+#if __has_include(<windows.h>)
+  #define popen _popen
+  #define pclose _pclose
+#endif
 // so output survives a crash mid-test
 __attribute__((constructor)) static void unbuffer_test_output(void) {
   setvbuf(stdout, nullptr, _IONBF, 0);
@@ -70,11 +74,15 @@ test_fn(cout_layout_declarations) {
   foreach (let offset, range(0, 5)) {
     let start = ss_member_reserve(ss, 2);
     sglist_get(ss->sitems, start - 1) = (r_struct_item){
-      .t = word, .name = ss_srcpos_of_text(ss, fp("word")), .alignment = 4,
+        .t = word,
+        .name = ss_srcpos_of_text(ss, fp("word")),
+        .alignment = 4,
     };
     sglist_get(ss->sitems, start) = (r_struct_item){
-      .t = T(tu_of(r_void, {})), .name = ss_srcpos_of_text(ss, fp("empty")),
-      .alignment = 1, .offset = offset,
+        .t = T(tu_of(r_void, {})),
+        .name = ss_srcpos_of_text(ss, fp("empty")),
+        .alignment = 1,
+        .offset = offset,
     };
     let t = T(tu_of(r_struct, {.start = start}));
     test_assert(!out_structIsUnnatural(ss_typeenv(ss), t.t.r_struct));

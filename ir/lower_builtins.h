@@ -88,6 +88,7 @@ static u32 lower_builtin_import errs(superscope *ss, scope *s, astidx args) {
   if (tu_catchr(r_sint, type_tree(ss_typeenv(ss), arr.t), return_err("ID_TYPE_ERROR", 0)).bits != 8)
     return_err("ID_TYPE_ERROR", 0);
   let name = sglist_get(ss->flist, sglist_get(ss->plist, srcpos_ast(ast_at(ss, args), ss->asts) - 1).fidx - 1).filename;
+  if (!name) return_err("IMPORT_FROM_UNNAMED_SOURCE", 0);
   let path = SPath.init(ss->alloc, (char *)name);
   defer { SPath.deinit(path); };
 

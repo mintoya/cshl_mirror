@@ -140,15 +140,12 @@ static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u3
 
 // TODO: make astidx_full contina pointers, then thiswill return an astidx instead
 astidx_full parse errs(astidx_full res, fptr input, const char *filename) {
-  let const fileit =
-      filename
-          ? (fileItem){
-                .filename = filename,
-                .filecontent = read_file(res.flist.allocator, filename),
-            }
-          : (fileItem){
-                .filecontent = input,
-            };
+  let const fileit = (fileItem){
+      .filename = filename,
+      .filecontent = fptr_isNull(input)
+                         ? read_file(res.flist.allocator, filename)
+                         : input,
+  };
   // clang-format off
   sglist_push(res.flist, fileit);
   // clang-format on
@@ -167,7 +164,7 @@ astidx_full parse errs(astidx_full res, fptr input, const char *filename) {
   return res;
 }
 astidx_full parse_source errs(allocfn out_allocator, fptr input, const char *filename) {
-  assertMessage(!filename + fptr_isNull(input) == 1);
+  assertMessage(filename || !fptr_isNull(input), "parse_source needs a filename or input");
   astidx_full res = {
       .alist = out_allocator,
       .plist = out_allocator,

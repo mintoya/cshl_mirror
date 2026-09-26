@@ -15,8 +15,9 @@ typedef struct {
   typeenv env;
 } interp;
 
-static interp interpret_source(allocfn arena, fptr src, astidx_full *ctx_out) {
-  let ctx = catch_errcall((parse_source, (arena, src, nullptr)), e, (err_panic(e), (astidx_full){}));
+// in-memory source with a path, so @import can resolve relative to it
+static interp interpret_source_named(allocfn arena, fptr src, const char *filename, astidx_full *ctx_out) {
+  let ctx = catch_errcall((parse_source, (arena, src, filename)), e, (err_panic(e), (astidx_full){}));
   let env = ss_init(arena, ctx);
   catch_errcall((lower, (env, env->outermost, ctx.idx)), e, (err_panic(e), (u32)0));
   let res = catch_errcall((interpret, (env, env->outermost)), e, (err_panic(e), (typed_value){}));
@@ -26,10 +27,11 @@ static interp interpret_source(allocfn arena, fptr src, astidx_full *ctx_out) {
   }
   return (interp){.t = res.t, .v = res.v, .env = ss_typeenv(env)};
 }
+static interp interpret_source(allocfn arena, fptr src, astidx_full *ctx_out) {
+  return interpret_source_named(arena, src, nullptr, ctx_out);
+}
 static Type tv_type(interp x) { return Type_at(x.env, x.t); }
 
-// a test whose program stands on its own lives in test/<name>.cshl and runs through this macro,
-// which requires the file's last expression to yield a plain, true bool
 #define test_file_1(filename)                             \
   test_fn(filename) {                                     \
     let arena = arena_new_ext(allocator, 1 << 16);        \
@@ -366,6 +368,15 @@ test_fn(using_rejects_non_struct) {
   let e = lower_source_err(arena, fp("@using(3);"));
   test_assert(e.err_code);
   test_streq(e.err_code, "USING_EXPECTS_STRUCT");
+}
+
+// an in-memory source has no path, so an import cannot resolve against it
+test_fn(import_rejects_sourceless_text) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("@import \"nothing.cshl\";"));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "IMPORT_FROM_UNNAMED_SOURCE");
 }
 
 test_fn(escaped_function_keeps_block_names) {
@@ -914,6 +925,8 @@ test_fn(meta_try_propagates_to_enclosing_result_type) {
   let source = slice_alloc(arena, u8, meta.len + exercise.len);
   memcpy(source.ptr, meta.ptr, meta.len);
   memcpy(source.ptr + meta.len, exercise.ptr, exercise.len);
-  let r = interpret_source(arena, fp(source), nullptr);
+  // attribute the combined source to the meta file so `@import "module.cshl"`
+  // resolves inside examples/
+  let r = interpret_source_named(arena, fp(source), "examples/meta.cshl", nullptr);
   test_assert(*(bool *)r.v.value);
 }

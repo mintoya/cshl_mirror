@@ -1,13 +1,7 @@
 #pragma once
 #include "wheels/mylist.h"
 typedef mList(cstr) spath;
-constexpr char joiner =
-#if __has_include(<windows.h>)
-    '\\'
-#else
-    '/'
-#endif
-    ;
+static inline bool spath_isSep(char c) { return c == '/' || c == '\\'; }
 cstr spath_strldup(allocfn allocator, const cstr seg, usize len) {
   let res = acreate(allocator, char[len + 1]);
   memcpy(*res, seg, len);
@@ -19,6 +13,7 @@ void spath_join(spath path, const cstr name) {
   mList_push(path, spath_strldup(mList_allocator(path), name, strlen(name)));
 }
 cstr spath_tostr(allocfn allocator, spath path) {
+  constexpr char joiner = '/';
   let len = mList_len(path);
   bool absolute = len && mList_arr(path)[0][0] == 0;
   usize size = absolute;
@@ -53,7 +48,7 @@ void spath_normalize(spath path) {
     cstr element = mList_arr(path)[i];
     cstr begin = element;
     for (cstr p = element;; p++) {
-      if (*p && *p != joiner)
+      if (*p && !spath_isSep(*p))
         continue;
       bool done = *p == 0;
       if (p > begin)
@@ -98,4 +93,3 @@ NAMESPACE_STRUCT(
     (deinit, &spath_deinit),
     (normalize, &spath_normalize),
 );
-
