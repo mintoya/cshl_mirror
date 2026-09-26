@@ -1,7 +1,13 @@
 #pragma once
 #include "wheels/mylist.h"
 typedef mList(cstr) spath;
-constexpr char joiner = '/';
+constexpr char joiner =
+#if __has_include(<windows.h>)
+    '\\'
+#else
+    '/'
+#endif
+    ;
 cstr spath_strldup(allocfn allocator, const cstr seg, usize len) {
   let res = acreate(allocator, char[len + 1]);
   memcpy(*res, seg, len);
@@ -92,3 +98,4 @@ NAMESPACE_STRUCT(
     (deinit, &spath_deinit),
     (normalize, &spath_normalize),
 );
+
