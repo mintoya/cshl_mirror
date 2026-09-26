@@ -187,14 +187,14 @@ test_fn(ast_dot_operation_members) {
   test_assert(tu_is(c_ast, tv_type(l).t));
   let lnode = ast_at_list(lctx.alist, l.v.c_ast);
   test_assert(tu_is(astNumber, lnode));
-  test_fpeq(fp_from_srcpos((srcpos_full){.pidx = tu_catch(astNumber, lnode), .plist = lctx.plist, .flist = lctx.flist}), "1");
+  test_fpeq(fp_from_srcpos((srcpos_full){.pidx = tu_catch(astNumber, lnode), .plist = &lctx.plist, .flist = &lctx.flist}), "1");
 
   astidx_full rctx = {};
   let rr = ast_probe(arena, fp("a.opright"), fp("1 + 2"), &rctx);
   test_assert(tu_is(c_ast, tv_type(rr).t));
   let rnode = ast_at_list(rctx.alist, rr.v.c_ast);
   test_assert(tu_is(astNumber, rnode));
-  test_fpeq(fp_from_srcpos((srcpos_full){.pidx = tu_catch(astNumber, rnode), .plist = rctx.plist, .flist = rctx.flist}), "2");
+  test_fpeq(fp_from_srcpos((srcpos_full){.pidx = tu_catch(astNumber, rnode), .plist = &rctx.plist, .flist = &rctx.flist}), "2");
 }
 
 test_fn(ast_dot_member_check_on_non_op) {
@@ -216,7 +216,7 @@ test_fn(ast_dot_kind_check) {
   test_assert(tu_is(c_ast, tv_type(i).t));
   let inode = ast_at_list(ictx.alist, i.v.c_ast);
   test_assert(tu_is(astId, inode));
-  test_fpeq(fp_from_srcpos((srcpos_full){tu_catch(astId, inode), ictx.plist, ictx.flist}), "foo");
+  test_fpeq(fp_from_srcpos((srcpos_full){tu_catch(astId, inode), &ictx.plist, &ictx.flist}), "foo");
 
   astidx_full octx = {};
   let o = ast_probe(arena, fp("a.op"), fp("1 + 2"), &octx);

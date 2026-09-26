@@ -174,7 +174,7 @@ static u32 scope_cast_value errs(superscope *ss, scope *s, u32 left, Type to) {
 }
 u32 lower_condition errs(superscope *ss, scope *s, astidx a) {
   let l = try_err(lower, (ss, s, a), 0);
-  return try_err(scope_cast_value, (ss, s, l, ss_bool_type(ss)), 0);
+  return try_err(scope_cast_value, (ss, s, l, T(tu_of(r_bool, {}))), 0);
 }
 static inline Type scope_reg_type(superscope *env, scope *s, u32 idx) { return ss_type(env, scope_find(env, s, idx)->t); }
 // the type most instructions actually look at
@@ -447,7 +447,7 @@ static void tcheck_rawop errs(superscope *env, scope *s, ir_rawop op) {
   bool is_bool = op.o == opNumbers.mor || op.o == opNumbers.les || op.o == opNumbers.moq ||
                  op.o == opNumbers.leq || op.o == opNumbers.eq || op.o == opNumbers.neq ||
                  op.o == opNumbers.oand || op.o == opNumbers.oor;
-  Type res = is_bool ? ss_bool_type(env) : Type_weaker(lt, rt, tenv);
+  Type res = is_bool ? T(tu_of(r_bool, {})) : Type_weaker(lt, rt, tenv);
   scope_set_type(env, scope_find(env, s, op.d), ss_type_intern(env, res));
   try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_rawop, op)));
 }

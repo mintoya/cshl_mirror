@@ -4,6 +4,7 @@ void ~~ @void();
 ast ~~ @ast();
 any ~~ @any();
 int ~~ @int();
+inline ~~ @inlineast();
 i32 ~type~ @sint(32);
 fn  ~~ @fn (a ~ast),@inlineast(),{
   return 
@@ -69,8 +70,5 @@ arr ~~ fn (i~int) any {
     };
   };
 };
+main ~~ fn () (! void) {;};
 
-main ~~ fn () (! void) {
-};
-
-main():try();

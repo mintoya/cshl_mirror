@@ -74,9 +74,9 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
   let signature = (c_fun){.start = ss_type_reserve(ss, params.len + 1)};
   let env = ss_typeenv(ss);
   foreach (let p, span(params.start, params.len))
-    sglist_get(env.tlist, signature.start - 1 + (p - params.start)) =
+    sglist_get(*env.tlist, signature.start - 1 + (p - params.start)) =
         try_err(function_item_type, (ss, arg_scope, p), 0);
-  sglist_get(env.tlist, signature.start + params.len - 1) =
+  sglist_get(*env.tlist, signature.start + params.len - 1) =
       try_err(value_asType, (ss, try_err(temporary_interpret, (ss, arg_scope, retT), 0)), 0);
 
   // clang-format off

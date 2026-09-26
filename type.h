@@ -12,9 +12,9 @@ typedef enum : u8 {
   builtin_if,        // @if(cnd , then ,)
   builtin_cif,       // @cif same as if, comptime, produces only one branch
   builtin_loop,      // @loop(body)
-  builtin_return,    // return x return
-  builtin_break,     // @break()
-  builtin_continue,  // @continue()
+  builtin_return,    // return(x?)
+  builtin_break,     // break()
+  builtin_continue,  // continue()
                      //
   builtin__id,       // @id(str) an id which corresponds to this string, **evaluates it**
                      //
@@ -164,16 +164,16 @@ typedef sglist(r_struct_item) typestructlist;
 typedef sglist(r_bitf_item) typebitflist;
 
 typedef struct typeenv {
-  typelist tlist;
-  typestructlist sitems;
-  typebitflist bitems;
-  poslist plist;
-  filelist flist;
+  typelist *tlist;
+  typestructlist *sitems;
+  typebitflist *bitems;
+  poslist *plist;
+  filelist *flist;
 } typeenv;
 
 static inline Type Type_at(typeenv e, typeidx idx) {
-  if (idx > e.tlist.len) return (Type){};
-  return sglist_get(e.tlist, idx - 1);
+  if (idx > e.tlist->len) return (Type){};
+  return sglist_get(*e.tlist, idx - 1);
 }
 static inline TypeTree type_tree(typeenv e, typeidx idx) { return Type_at(e, idx).t; }
 static inline fptr type_name(typeenv e, srcpos p) {
@@ -189,26 +189,26 @@ static inline u32 type_run_len(typeenv e, typeidx start) {
 static inline u32 type_struct_len(typeenv e, r_struct s) {
   if (!s.start) return 0;
   u32 n = 0;
-  while (s.start - 1 + n < e.sitems.len &&
-         !tu_is(r_null, sglist_get(e.sitems, s.start - 1 + n).t.t))
+  while (s.start - 1 + n < e.sitems->len &&
+         !tu_is(r_null, sglist_get(*e.sitems, s.start - 1 + n).t.t))
     n++;
   return n;
 }
 static inline u32 type_bitf_len(typeenv e, r_bitfield b) {
   if (!b.start) return 0;
   u32 n = 0;
-  while (b.start - 1 + n < e.bitems.len &&
-         !tu_is(r_null, sglist_get(e.bitems, b.start - 1 + n).t.t))
+  while (b.start - 1 + n < e.bitems->len &&
+         !tu_is(r_null, sglist_get(*e.bitems, b.start - 1 + n).t.t))
     n++;
   return n;
 }
 static inline r_struct_item *type_struct_item(typeenv e, r_struct r, usize i) {
-  assertMessage(r.start - 1 + i < e.sitems.len, "struct member out of range");
-  return &sglist_get(e.sitems, r.start - 1 + i);
+  assertMessage(r.start - 1 + i < e.sitems->len, "struct member out of range");
+  return &sglist_get(*e.sitems, r.start - 1 + i);
 }
 static inline r_bitf_item *type_bitf_item(typeenv e, r_bitfield b, usize i) {
-  assertMessage(b.start - 1 + i < e.bitems.len, "bitfield member out of range");
-  return &sglist_get(e.bitems, b.start - 1 + i);
+  assertMessage(b.start - 1 + i < e.bitems->len, "bitfield member out of range");
+  return &sglist_get(*e.bitems, b.start - 1 + i);
 }
 static inline typeidx type_run_at(typeenv e, typeidx start, usize i) {
   assertMessage(start, "null type run");
@@ -356,7 +356,7 @@ cmpres Type_cmp(typeenv e, Type a, Type b) {
 }
 
 cmpres TypeTree_cmp(typeenv e, TypeTree a, TypeTree b) {
-  if (!mcmp(a, b)) return cmp_eq;
+  if (!memcmp(&a, &b, sizeof(b))) return cmp_eq;
   if_decl (let cmp, icmp(a.tag, b.tag)) return cmp;
 
   tu_match_void(
@@ -636,7 +636,7 @@ test_fn(type_linked_list) {
     .offset = offsetof(struct analog, next),
   });
   sglist_push(sitems, (r_struct_item){
-    .t = Type_at((typeenv){.tlist = tlist, .sitems = sitems, .bitems = bitems}, elementIdx),
+    .t = Type_at((typeenv){.tlist = &tlist, .sitems = &sitems, .bitems = &bitems}, elementIdx),
     .alignment = alignof(itypeof(struct analog, element)),
     .offset = offsetof(struct analog, element),
   });
@@ -646,7 +646,7 @@ test_fn(type_linked_list) {
   let _final = T(tu_of(r_struct, members));
   sglist_get(tlist, structIdx - 1) = _final;
   // typeenv snapshots the lists, so it is built once the lists stop growing
-  typeenv e = {.tlist = tlist, .sitems = sitems, .bitems = bitems};
+  typeenv e = {.tlist = &tlist, .sitems = &sitems, .bitems = &bitems};
   foreach (let i, range(0, type_run_len(e, signature.t.c_fun.start)))
     sglist_get(tlist, signatureStart - 1 + i) = _final;
 

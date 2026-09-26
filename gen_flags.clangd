@@ -1,14 +1,41 @@
 #!/bin/nu
-{
-  CompileFlags : { Add:[
-    "-x","c",
-    "-std=c2y",
-    "-fdefer-ts",
-    "-I",("deps" | path expand),
-    "-D","CLANGD_EDITING"
-  ],
-  Compiler : "clang"
+[
+  {
+    CompileFlags : { 
+      Compiler : "clang"
+    },
   },
-} 
-| to yaml 
+  {
+    If : {
+      PathMatch :".*\\.(cpp|hpp)$"
+    },
+    CompileFlags: {
+      Add : [
+        "-x",
+        "c++",
+        "-std=c++26",
+        "-I",("deps" | path expand),
+        "-D","CLANGD_EDITING"
+      ]
+    }
+
+  },
+  {
+    If : {
+      PathMatch :".*\\.(c|h)$"
+    },
+    CompileFlags: {
+      Add : [
+        "-x","c",
+        "-std=c2y",
+        "-fdefer-ts",
+        "-I",("deps" | path expand),
+        "-D","CLANGD_EDITING"
+      ]
+    }
+
+  }
+]
+| each { to yaml } 
+| str join "---\n" 
 | save -f .clangd;

@@ -147,9 +147,9 @@ typePrinter(astidx_full) {
       sglist_get(in.alist, in.idx - 1),
       (astNull, _, PUTS("(null)")),
       (astEmpty, _, PUTS("(empty)")),
-      (astId, id, PUTS("(Id "), USENAMEDPRINTER("slice(c8)", fp_from_srcpos((srcpos_full){id, in.plist, in.flist})), PUTS(")");),
-      (astString, id, PUTS("(Str "), USENAMEDPRINTER("slice(c8)", fp_from_srcpos((srcpos_full){id, in.plist, in.flist})), PUTS(")");),
-      (astNumber, id, PUTS("(Num "), USENAMEDPRINTER("slice(c8)", fp_from_srcpos((srcpos_full){id, in.plist, in.flist})), PUTS(")");),
+      (astId, id, PUTS("(Id "), USENAMEDPRINTER("slice(c8)", fp_from_srcpos((srcpos_full){id, &in.plist, &in.flist})), PUTS(")");),
+      (astString, id, PUTS("(Str "), USENAMEDPRINTER("slice(c8)", fp_from_srcpos((srcpos_full){id, &in.plist, &in.flist})), PUTS(")");),
+      (astNumber, id, PUTS("(Num "), USENAMEDPRINTER("slice(c8)", fp_from_srcpos((srcpos_full){id, &in.plist, &in.flist})), PUTS(")");),
       (astDecl, decl, {
         PUTS("(Dcl");
         if (decl.isconst) PUTS(" :const");

@@ -20,24 +20,24 @@ typedef sglist(posItem) poslist;
 typedef u32 srcpos; // one based indexing for null
 typedef struct {
   srcpos pidx;
-  poslist plist;
-  filelist flist;
+  const poslist *const plist;
+  const filelist *const flist;
 } srcpos_full;
 
 static inline fptr fp_from_srcpos(srcpos_full pos) {
-  if (!pos.pidx || pos.pidx > pos.plist.len) return nullFptr;
-  let p = sglist_get(pos.plist, pos.pidx - 1);
-  if (!p.fidx || p.fidx > pos.flist.len) return nullFptr;
-  let content = sglist_get(pos.flist, p.fidx - 1).filecontent;
+  if (!pos.pidx || pos.pidx > pos.plist->len) return nullFptr;
+  let p = sglist_get(*pos.plist, pos.pidx - 1);
+  if (!p.fidx || p.fidx > pos.flist->len) return nullFptr;
+  let content = sglist_get(*pos.flist, p.fidx - 1).filecontent;
   if (!content.ptr || p.offset > content.len || p.length > content.len - p.offset)
     return nullFptr;
   return (fptr){p.length, content.ptr + p.offset};
 }
 typePrinter(srcpos_full) {
-  if (!in.pidx || in.pidx > in.plist.len) return PUTS("(pos!!)");
-  let pos = sglist_get(in.plist, in.pidx - 1);
-  if (!pos.fidx || pos.fidx > in.flist.len) return PUTS("(file!!)");
-  let file = sglist_get(in.flist, pos.fidx - 1);
+  if (!in.pidx || in.pidx > in.plist->len) return PUTS("(pos!!)");
+  let pos = sglist_get(*in.plist, in.pidx - 1);
+  if (!pos.fidx || pos.fidx > in.flist->len) return PUTS("(file!!)");
+  let file = sglist_get(*in.flist, pos.fidx - 1);
   u32 line = 1;
   u32 col = 1;
   if (file.filecontent.ptr) {

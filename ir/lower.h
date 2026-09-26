@@ -18,17 +18,12 @@ u32 lower_op_wrap errs(superscope *ss, scope *s, astidx left, astidx right, u32 
   }
   return try_err(lower_op, (ss, s, try_err(lower, (ss, s, left), 0), right, number), 0);
 }
-// `[a, b = 2, c ~@s32 = 3]` is a value of a fresh anonymous struct. An element written
-// `name = value` names its member and one written `name ~type ...` also fixes that member's
-// type; anything else is numbered by its position. A member whose type is comptime has no
-// storage, so it joins the type's namespace the way a comptime @struct member does.
 static u32 lower_anon_struct errs(superscope *ss, scope *s, astidx a) {
   let elems = ast_block_children(ss, a);
   let n = elems.len;
 
   let members = (r_struct){.start = ss_member_reserve(ss, n)};
   let _this = T(tu_of(r_tag, {ss_type_intern(ss, T(tu_of(r_struct, members))), unique_type_name(ss)}));
-  // comptime members are values rather than storage, so they need a namespace to live in
   let ns = scope_inferior(ss, s);
   moxmap_set(ss->type_info, type_name(ss_typeenv(ss), _this.t.r_tag.name), ns);
 
@@ -155,7 +150,7 @@ u32 lower errs(superscope *ss, scope *s, astidx a) {
       (lower_low, (ss, s, a)), e, ({
         static thread_local char ns[sizeof(errors_buffer.buf)] = {};
 
-        let full = ((srcpos_full){srcpos_ast(ast_at(ss, a), ss->asts), ss->plist, ss->flist});
+        let full = ((srcpos_full){srcpos_ast(ast_at(ss, a), ss->asts), &ss->plist, &ss->flist});
         pass_err(P$(e, ($.fn = print_ebuff("{cstr}:{srcpos_full}", strcpy(ns, errors_buffer.buf), full), $)), 0);
         0;
       })

@@ -228,7 +228,6 @@ static u32 lower_builtin_ast_op errs(superscope *ss, scope *s, astidx args) {
   let b = try_err(temporary_interpret, (ss, s, list.start + 2), 0);
   if (!TypeTree_is_ast(ss_type(ss, a.t).t) || !TypeTree_is_ast(ss_type(ss, b.t).t)) return_err("AST_OP_TYPE_ERROR", 0);
   if (!a.v.c_ast || !b.v.c_ast) return_err("AST_OP_UNKNOWN", 0);
-  // a spelling is up to 4 bytes packed into a u32, so pack it the same way the parser does
   Type st = ss_type(ss, sym.t);
   if (!tu_is(r_arr, st.t) || st.ptr_level || st.ref_kind || !st.iscomptime) return_err("AST_OP_SYM_NOT_STRING", 0);
   let arr = tu_catch(r_arr, st.t);
@@ -529,13 +528,6 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
       (builtin_break, /*   */ try_err(lower_builtin_break, (ss, s, args), 0)),
       (builtin_continue, /**/ try_err(lower_builtin_continue, (ss, s, args), 0)),
       (builtin__id, /*     */ try_err(lower_builtin_id, (ss, s, args), 0)),
-      (builtin_ast, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_ast, {}))), 0)),
-      (builtin_inlineast, /**/ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_inlineast, {}))), 0)),
-      (builtin_any, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_any, {}))), 0)),
-      (builtin_bool, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, ss_bool_type(ss)), 0)),
-      (builtin_void, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(r_void, {}))), 0)),
-      (builtin_int, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_int, {}))), 0)),
-      (builtin_type, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_type, {}))), 0)),
       (builtin_const, /*   */ try_err(lower_builtin_decor, (ss, s, args, 1, 0, 0), 0)),
       (builtin_volatile, /**/ try_err(lower_builtin_decor, (ss, s, args, 0, 1, 0), 0)),
       (builtin_comptime, /**/ try_err(lower_builtin_decor, (ss, s, args, 0, 0, 1), 0)),
@@ -560,6 +552,13 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
       (builtin_where, /*   */ try_err(lower_builtin_where, (ss, s, args), 0)),
       (builtin_ref, /*     */ try_err(lower_builtin_ref, (ss, s, args), 0)),
       (builtin_reft, /*    */ try_err(lower_builtin_reft, (ss, s, args), 0)),
+      (builtin_ast, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_ast, {}))), 0)),
+      (builtin_any, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_any, {}))), 0)),
+      (builtin_int, /*     */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_int, {}))), 0)),
+      (builtin_bool, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(r_bool, {}))), 0)),
+      (builtin_void, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(r_void, {}))), 0)),
+      (builtin_type, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_type, {}))), 0)),
+      (builtin_inlineast, /**/ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_inlineast, {}))), 0)),
   );
   assertMessage(false, "unhandled builtin %u", builtin);
 }

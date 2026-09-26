@@ -60,11 +60,11 @@ typedef struct {
 } scope_full;
 static inline typeenv ss_typeenv(superscope *ss) {
   return (typeenv){
-      .tlist = ss->tlist,
-      .sitems = ss->sitems,
-      .bitems = ss->bitems,
-      .plist = ss->plist,
-      .flist = ss->flist,
+      .tlist = &ss->tlist,
+      .sitems = &ss->sitems,
+      .bitems = &ss->bitems,
+      .plist = &ss->plist,
+      .flist = &ss->flist,
   };
 }
 static inline Type_full ss_tf(superscope *ss, Type t) { return (Type_full){t, ss_typeenv(ss)}; }
@@ -95,7 +95,7 @@ static inline ast ast_at_list(astlist al, astidx idx) {
 static inline ast ast_at(superscope *ss, astidx idx) { return ast_at_list(ss->asts, idx); }
 static inline astidx ast_child(superscope *ss, astidx slot) { return tu_is(astNull, ast_at(ss, slot)) ? 0 : slot; }
 static inline fptr ast_text(superscope *ss, srcpos p) {
-  return fp_from_srcpos((srcpos_full){.pidx = p, .plist = ss->plist, .flist = ss->flist});
+  return fp_from_srcpos((srcpos_full){.pidx = p, .plist = &ss->plist, .flist = &ss->flist});
 }
 static inline usize ast_loc(superscope *ss, astidx idx) {
   let p = srcpos_ast(ast_at(ss, idx), ss->asts);
@@ -138,7 +138,6 @@ static inline typed_value TV_ast /*   */ (superscope *ss, astidx a) { return (ty
 static inline typed_value TV_type /*  */ (superscope *ss, typeidx t) { return (typed_value){.t = ss->t_type, .v = {.c_type = t}}; }
 static inline typed_value TV_bool /*  */ (superscope *ss, bool v) { return (typed_value){.t = ss->t_bool, .v = VS(avalue(ss->alloc, v))}; }
 static inline Type ss_ast_type(superscope *ss) { return ss_type(ss, ss->t_ast); }
-static inline Type ss_bool_type(superscope *ss) { return ss_type(ss, ss->t_bool); }
 typed_value *scope_find(superscope *env, const scope *s, u32 idx);
 static inline void scope_bind errs(superscope *env, scope *s, u32 idx, fptr name);
 

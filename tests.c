@@ -20,7 +20,7 @@ test_fn(cout_struct_layout) {
   sglist_push(items, (r_struct_item){.t = word, .alignment = 4, .offset = 8});
   sglist_push(items, (r_struct_item){.t = word, .alignment = 4, .offset = 0});
   sglist_push(items, (r_struct_item){.t = T(tu_of(c_type, {})), .offset = 1});
-  typeenv e = {.sitems = items};
+  typeenv e = {.sitems = &items};
   r_struct s = {.start = 1};
   let a = type_struct_item(e, s, 0);
   let b = type_struct_item(e, s, 1);

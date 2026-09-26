@@ -58,7 +58,7 @@ void out_memberName(fptr name, printerfunction_context _ctx) {
 // Each interned type gets an alias. Pointer aliases do not require a complete
 // pointee, which permits recursive structures.
 static typeidx out_typeIndex(typeenv e, Type t) {
-  foreach (let i, range(0, e.tlist.len))
+  foreach (let i, range(0, e.tlist->len))
     if (!Type_cmp(e, Type_at(e, i + 1), t)) return i + 1;
   assertMessage(false, "C output: member type was not interned");
   return 0;
@@ -75,7 +75,7 @@ static TypeTree out_stripTree(typeenv e, TypeTree t) {
 }
 static typeidx out_typeIndexOf(typeenv e, TypeTree t) {
   let probe = out_stripTree(e, t);
-  foreach (let i, range(0, e.tlist.len)) {
+  foreach (let i, range(0, e.tlist->len)) {
     let o = Type_at(e, i + 1);
     // Only the entries the type section actually defines can name a C type.
     if (o.ref_kind || o.ptr_level || out_noCType(o)) continue;
@@ -226,11 +226,11 @@ static void out_typeDefinition(superscope *ss, typeidx idx, u8 *state, printerfu
 }
 void makeTypes(superscope *ss, outputFunction out, printerfunction_context _ctx) {
   let e = ss_typeenv(ss);
-  let memory = slice_alloc(ss->alloc, u8, e.tlist.len + 1);
+  let memory = slice_alloc(ss->alloc, u8, e.tlist->len + 1);
   defer { slice_free(ss->alloc, memory); };
   let state = memory.ptr;
   memset(state, 0, memory.len);
-  foreach (let i, range(0, e.tlist.len)) {
+  foreach (let i, range(0, e.tlist->len)) {
     let t = Type_at(e, i + 1);
     if (!t.ref_kind && !t.ptr_level && !out_noCType(t) && tu_is(r_struct, t.t)) {
       if (out_isUnion(e, t.t.r_struct)) PUTS("typedef union ");
@@ -238,7 +238,7 @@ void makeTypes(superscope *ss, outputFunction out, printerfunction_context _ctx)
       out_typeName(i + 1, _ctx), PUTS(" "), out_typeName(i + 1, _ctx), PUTS(";\n");
     }
   }
-  foreach (let i, range(0, e.tlist.len))
+  foreach (let i, range(0, e.tlist->len))
     out_typeDefinition(ss, i + 1, state, _ctx);
 }
 
