@@ -572,6 +572,7 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
       (builtin_const, /*   */ try_err(lower_builtin_decor, (ss, s, args, 1, 0, 0), 0)),
       (builtin_volatile, /**/ try_err(lower_builtin_decor, (ss, s, args, 0, 1, 0), 0)),
       (builtin_comptime, /**/ try_err(lower_builtin_decor, (ss, s, args, 0, 0, 1), 0)),
+      (builtin_import, /*  */ try_err(lower_builtin_import, (ss, s, args), 0)),
       (builtin_sint, /*    */ try_err(lower_builtin_intty, (ss, s, args, true), 0)),
       (builtin_uint, /*    */ try_err(lower_builtin_intty, (ss, s, args, false), 0)),
       (builtin_typeof, /*  */ try_err(lower_builtin_typeof, (ss, s, args), 0)),
