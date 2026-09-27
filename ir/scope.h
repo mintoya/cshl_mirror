@@ -110,6 +110,11 @@ static inline Type value_asType errs(superscope *ss, typed_value t) {
   if (!t.v.c_type) return_err("UNKNOWN_TYPE", T());
   return Type_at(ss_typeenv(ss), t.v.c_type);
 }
+Type lower_asType errs(superscope *ss, scope *s, astidx a) {
+  let work = scope_inferior(ss, s);
+  let reg = try_err(lower, (ss, work, a), T());
+  return try_err(value_asType, (ss, *scope_find(ss, work, reg)), T());
+}
 
 u32 scope_last_item(superscope *, scope *s) { return s->start + msList_len(s->values); }
 
@@ -263,6 +268,7 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
       {"@const", builtin_const},
       {"@comptime", builtin_comptime},
       {"@typeof", builtin_typeof},
+      {"@isref", builtin_isref},
       {"@returntype", builtin_returntype},
       {"@typeinfo", builtin_typeinfo},
       {"@arr", builtin_arrof},

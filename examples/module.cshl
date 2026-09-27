@@ -122,6 +122,7 @@ while ~~ fn (a ~ast) inline {
     };
   };
 };
+not ~~ fn (in ~bool) bool return in bxor 1;
 some_state ~~ @sint(32);
 getstate ~~ fn () (@typeof(some_state)) 
   return (some_state = some_state + 1);
@@ -186,4 +187,5 @@ arr ~~ fn (i~int) any
   ? ~~ ?;
   true  ~~ true;
   false ~~ false;
+  not ~~ not;
 };

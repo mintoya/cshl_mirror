@@ -86,7 +86,7 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
     sglist_get(*env.tlist, signature.start - 1 + (p - params.start)) =
         try_err(function_item_type, (ss, arg_scope, p), 0);
   sglist_get(*env.tlist, signature.start + params.len - 1) =
-      try_err(value_asType, (ss, try_err(temporary_interpret, (ss, arg_scope, retT), 0)), 0);
+      try_err(lower_asType, (ss, arg_scope, retT), 0);
 
   // clang-format off
   msList_push(ss->alloc, ss->functions, {

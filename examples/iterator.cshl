@@ -1,6 +1,5 @@
 @using @import "module.cshl";
 
-not ~~ fn (in ~bool) bool return in bxor 1;
 range ~~ fn (start~i32, end~i32) any {
   result ~ @struct{
     Self  ~~ @this();
@@ -20,6 +19,9 @@ range ~~ fn (start~i32, end~i32) any {
   result.end   = end;
   return result;
 };
+
+
+
 filter ~~ fn (cnd ~ast) inline return @qot{
   rt ~ @struct{
     Self ~~ @this();
@@ -52,11 +54,10 @@ map ~~ fn (body ~ast) inline return @qot {
 
 iterate ~~ fn () inline return @qot while (_:next() as bool);
 
-
 sum ~i32~0;
 range(0 , 6) 
   |> filter { not (_ band 1);} 
   |> map    { _ * 3;}
   |> map    { sum = sum + _ ;}
-  |> iterate();
+|> iterate();
 sum;

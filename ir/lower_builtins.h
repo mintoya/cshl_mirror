@@ -326,7 +326,7 @@ static u32 lower_builtin_apply errs(superscope *ss, scope *s, astidx args) {
 
 static u32 lower_builtin_reft errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_args(ss, args, 1);
-  Type inner = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 0), 0)), 0);
+  Type inner = try_err(lower_asType, (ss, s, list.start + 0), 0);
   return scope_add_value(ss, s, Type_asValue(ss, try_err(Type_ref, (inner), 0)));
 }
 static u32 lower_builtin_bare_type errs(superscope *ss, scope *s, astidx args, Type t) {
@@ -335,7 +335,7 @@ static u32 lower_builtin_bare_type errs(superscope *ss, scope *s, astidx args, T
 }
 static u32 lower_builtin_decor errs(superscope *ss, scope *s, astidx args, bool is_const, bool is_volatile, bool is_comptime) {
   let list = builtin_args(ss, args, 1);
-  Type inner = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 0), 0)), 0);
+  Type inner = try_err(lower_asType, (ss, s, list.start + 0), 0);
   inner.isconst |= is_const;
   inner.isvolatile |= is_volatile;
   inner.iscomptime |= is_comptime;
@@ -375,7 +375,15 @@ static u32 lower_builtin_returntype errs(superscope *ss, scope *s, astidx args) 
   return scope_add_value(ss, s, Type_asValue(ss, ret));
 }
 static u32 lower_builtin_typeof errs(superscope *ss, scope *s, astidx args) {
-  return scope_add_value(ss, s, Type_asValue(ss, ss_type(ss, scope_find(ss, s, try_err(lower, (ss, s, args), 0))->t)));
+  let v = try_err(lower, (ss, s, args), 0);
+  // reading a name yields the place, not what the place holds; @typeof answers
+  // the second question, so it strips. @isref is the first question.
+  return scope_add_value(ss, s, Type_asValue(ss, Type_stripRef(ss_type(ss, scope_find(ss, s, v)->t))));
+}
+static u32 lower_builtin_isref errs(superscope *ss, scope *s, astidx args) {
+  let list = builtin_args(ss, args, 1);
+  let v = try_err(lower, (ss, s, list.start + 0), 0);
+  return scope_add_value(ss, s, TV_bool(ss, !!ss_type(ss, scope_find(ss, s, v)->t).ref_kind));
 }
 static u32 lower_builtin_arrof errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_args(ss, args, 2);
@@ -385,27 +393,27 @@ static u32 lower_builtin_arrof errs(superscope *ss, scope *s, astidx args) {
 
   usize count = *(usize *)count_tv;
   if (count > (usize) ~(u32)0) return_err("ARRAY_TOO_LARGE", 0);
-  Type elem = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 1), 0)), 0);
+  Type elem = try_err(lower_asType, (ss, s, list.start + 1), 0);
   return scope_add_value(ss, s, Type_asValue(ss, try_err(Type_arr, (ss, elem, count), 0)));
 }
 static u32 lower_builtin_ptrof errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_args(ss, args, 1);
-  Type inner = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 0), 0)), 0);
+  Type inner = try_err(lower_asType, (ss, s, list.start + 0), 0);
   return scope_add_value(ss, s, Type_asValue(ss, try_err(Type_ptr, (inner), 0)));
 }
 static u32 lower_builtin_sizeof errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_args(ss, args, 1);
-  let t = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 0), 0)), 0);
+  let t = try_err(lower_asType, (ss, s, list.start + 0), 0);
   return scope_add_value(ss, s, TV_bigint(ss, BInt.from.i64(ss->alloc, Type_sizeof(t, ss_typeenv(ss)))));
 }
 static u32 lower_builtin_alignof errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_args(ss, args, 1);
-  let t = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 0), 0)), 0);
+  let t = try_err(lower_asType, (ss, s, list.start + 0), 0);
   return scope_add_value(ss, s, TV_bigint(ss, BInt.from.i64(ss->alloc, Type_alignof(t, ss_typeenv(ss)))));
 }
 static u32 lower_builtin_offsetof errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_args(ss, args, 2);
-  let t = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, list.start + 0), 0)), 0);
+  let t = try_err(lower_asType, (ss, s, list.start + 0), 0);
   let name = try_err(id_from_ast, (ss, s, list.start + 1), 0);
   let e = ss_typeenv(ss);
   let st = TypeTree_inner_struct(t.t, e);
@@ -464,7 +472,7 @@ static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
 
     typed_value bound = {};
     if (typeidx) {
-      let bt = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, working_scope, typeidx), 0)), 0);
+      let bt = try_err(lower_asType, (ss, working_scope, typeidx), 0);
       if (tu_is(c_type, bt.t) && valueidx) {
         bound = try_err(temporary_interpret, (ss, working_scope, valueidx), 0);
         if (!tu_is(c_type, ss_type(ss, bound.t).t))
@@ -513,7 +521,7 @@ static u32 lower_builtin_union errs(superscope *ss, scope *s, astidx args) {
     if (ast_child(ss, dcl.name_type_value + 2)) return_err("UNION_MEMBER_INITIALIZER", 0);
 
     let name = try_err(id_from_ast, (ss, s, nameidx), 0);
-    Type bt = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, typeidx), 0)), 0);
+    Type bt = try_err(lower_asType, (ss, s, typeidx), 0);
     if (Type_is_comptime(bt)) return_err("UNION_MEMBER_COMPTIME", 0);
 
     let e = ss_typeenv(ss);
@@ -560,7 +568,7 @@ static u32 lower_builtin_bitstruct errs(superscope *ss, scope *s, astidx args) {
     if (!baseidx || !widthidx) return_err("BITSTRUCT_MEMBER_NO_WIDTH", 0);
 
     let name = try_err(id_from_ast, (ss, s, nameidx), 0);
-    Type base = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, baseidx), 0)), 0);
+    Type base = try_err(lower_asType, (ss, s, baseidx), 0);
     if (Type_is_comptime(base)) return_err("BITSTRUCT_COMPTIME_MEMBER", 0);
 
     let width_value = try_err(temporary_interpret, (ss, s, widthidx), 0);
@@ -614,6 +622,7 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
       (builtin_uint, /*    */ try_err(lower_builtin_intty, (ss, s, args, false), 0)),
       (builtin_returntype, /**/ try_err(lower_builtin_returntype, (ss, s, args), 0)),
       (builtin_typeof, /*  */ try_err(lower_builtin_typeof, (ss, s, args), 0)),
+      (builtin_isref, /*   */ try_err(lower_builtin_isref, (ss, s, args), 0)),
       (builtin_arrof, /*   */ try_err(lower_builtin_arrof, (ss, s, args), 0)),
       (builtin_ptrof, /*   */ try_err(lower_builtin_ptrof, (ss, s, args), 0)),
       (builtin_sizeof, /*  */ try_err(lower_builtin_sizeof, (ss, s, args), 0)),

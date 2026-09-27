@@ -31,7 +31,8 @@ typedef enum : u8 {
   builtin_sint,       // @sint(N) integer with N bits
   builtin_uint,       // @uint(N) unsigned integer with N bits
   builtin_returntype, // @returntype() return type of the enclosing function
-  builtin_typeof,     // @typeof(V) type of argument
+  builtin_typeof,     // @typeof(V) type of what V holds, never a referance
+  builtin_isref,      // @isref(V) comptime: does V denote a referance
   builtin_typeinfo,   // @typeinfo(T) what a type is made of, @typeinfo() being that type
   builtin_arrof,      // @arrof(N,t) array of N t's
   builtin_ptrof,      // @ptrof(t) pionter to t
@@ -328,6 +329,10 @@ static inline usize Type_sizeof(Type t, typeenv e) {
   if (t.ref_kind || t.ptr_level) return sizeof(void *);
   else return TypeTree_sizeof(t.t, e);
 }
+static inline Type Type_stripRef(Type t) {
+  t.ref_kind = 0;
+  return t;
+}
 
 static inline r_struct TypeTree_inner_struct(TypeTree t, typeenv e) {
   return tu_match_exp(
@@ -487,6 +492,7 @@ typePrinter(builtin_id) {
       (builtin_return, /*  */ PUTS("return")),
       (builtin_returntype, /**/ PUTS("returntype")),
       (builtin_typeof, /*  */ PUTS("typeof")),
+      (builtin_isref, /*   */ PUTS("isref")),
       (builtin_typeinfo, /**/ PUTS("typeinfo")),
       (builtin_alignof, /* */ PUTS("alignof")),
       (builtin_continue, /**/ PUTS("continue")),

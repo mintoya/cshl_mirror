@@ -3,6 +3,7 @@ s32 ~~ @sint(32);
 ref ~~ @refT;
 f ~~ @fn (), s32, { return 7; };
 a ~~ f();
-// reading a name yields its lvalue, so a const declaration's register reads as a ref to a const
-// type; the callee still returned an unqualified value that had to be accepted there
-(a == 7) and (@typeof(a) == @refT(@const(s32)));
+// reading a name yields the place, not what the place holds, so @typeof reports
+// the s32 underneath; @isref is how you ask about the place itself. The callee
+// still returned an unqualified value that had to be accepted at the call.
+(a == 7) and (@typeof(a) == @const(s32)) and @isref(a);

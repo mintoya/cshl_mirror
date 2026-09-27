@@ -334,6 +334,7 @@ test_file_1(cout_non_power_alignment);
 test_file_1(cout_union_bool);
 test_file_1(interpret_import);
 test_file_1(interpret_using);
+test_file_1(typeof_strips_reference_and_isref_reports_it);
 test_file_1(namespace_enclosing_function);
 
 //
@@ -342,6 +343,14 @@ test_file_1(namespace_enclosing_function);
 
 static err_t lower_source_err(allocfn arena, fptr src) {
   let ctx = catch_errcall((parse_source, (arena, src, nullptr)), e, (({ return e; }), (astidx_full){}));
+  let env = ss_init(arena, ctx);
+  return call_err(lower, (env, env->outermost, ctx.idx)).err;
+}
+
+// same, but the source is attributed to a path so `@import` resolves relative
+// to the directory that path lives in
+static err_t lower_source_named_err(allocfn arena, fptr src, const char *filename) {
+  let ctx = catch_errcall((parse_source, (arena, src, filename)), e, (({ return e; }), (astidx_full){}));
   let env = ss_init(arena, ctx);
   return call_err(lower, (env, env->outermost, ctx.idx)).err;
 }
@@ -929,4 +938,83 @@ test_fn(meta_try_propagates_to_enclosing_result_type) {
   // resolves inside examples/
   let r = interpret_source_named(arena, fp(source), "examples/meta.cshl", nullptr);
   test_assert(*(bool *)r.v.value);
+}
+
+// A type-position builtin takes a type, not a value, and must say so instead of
+// running the argument through the interpreter: `interpret` only allocates
+// frame storage for the scope it is given, so a read of an enclosing scope's
+// slot -- reached here through the `this` dref of a method -- comes back as a
+// null pointer and faults. The inline `iterate` macro is what forces the
+// method to be instantiated on that path.
+test_fn(lower_error_sizeof_of_value_read_through_this) {
+  let arena = arena_new_ext(allocator, 1 << 18);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_named_err(
+      arena,
+      fp(
+          "@using @import \"module.cshl\";\n"
+          "iterate ~~ fn () inline return @qot while (_:next() as bool);\n"
+          "arrayiter ~~ fn (array ~any) any {\n"
+          "  r~@struct{\n"
+          "    array ~ @typeof array;\n"
+          "    place ~ u64;\n"
+          "    Self  ~~ @this();\n"
+          "    next ~~ fn (this~@refT(Self)) (? i32) {\n"
+          "      result ~ @returntype();\n"
+          "      if (this.place < @sizeof(this.array)) {\n"
+          "        result.isnnull = true;\n"
+          "        result.value = 1;\n"
+          "        this.place = this.place + 1;\n"
+          "      } else (result.isnnull = 0);\n"
+          "      return result;\n"
+          "    };\n"
+          "  };\n"
+          "  r.array = array;\n"
+          "  return r;\n"
+          "};\n"
+          "s ~arr(5) i32;\n"
+          "arrayiter(s) |> iterate();\n"
+      ),
+      "examples/sizeof_of_value.cshl"
+  );
+  test_assert(e.err_code);
+  test_streq(e.err_code, "TYPE_IS_NOT_VALUE");
+}
+
+// The counterpart to the error above: the *correct* spelling still has to work.
+// `@typeof(this.array[0])` is a type, so lowering alone settles it, but it
+// leaves an ir_array behind that reads through the method's `this` dref. A type
+// position must not run that IR, or the read faults on a null pointer.
+test_fn(sizeof_of_typeof_through_this_lowers) {
+  let arena = arena_new_ext(allocator, 1 << 18);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_named_err(
+      arena,
+      fp(
+          "@using @import \"module.cshl\";\n"
+          "iterate ~~ fn () inline return @qot while (_:next() as bool);\n"
+          "arrayiter ~~ fn (array ~any) any {\n"
+          "  r~@struct{\n"
+          "    array ~ @typeof array;\n"
+          "    place ~ u64;\n"
+          "    Self  ~~ @this();\n"
+          "    next ~~ fn (this~@refT(Self)) (? i32) {\n"
+          "      result ~ @returntype();\n"
+          "      if (this.place < @sizeof(@typeof(this.array))/@sizeof(@typeof(this.array[0]))) {\n"
+          "        result.isnnull = true;\n"
+          "        result.value = 1;\n"
+          "        this.place = this.place + 1;\n"
+          "      } else (result.isnnull = 0);\n"
+          "      return result;\n"
+          "    };\n"
+          "  };\n"
+          "  r.array = array;\n"
+          "  return r;\n"
+          "};\n"
+          "s ~arr(5) i32;\n"
+          "arrayiter(s) |> iterate();\n"
+      ),
+      "examples/sizeof_of_typeof.cshl"
+  );
+  test_assert(!e.err_code);
 }
