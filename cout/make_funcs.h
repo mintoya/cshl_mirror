@@ -6,9 +6,6 @@
 #include "wheels/macros.h"
 #include "wheels/print/print_pre.h"
 
-// A function instance does not carry its own signature slice: the generic
-// signature lives on the function, and this instance's parameter types live in
-// the specialization scope it owns (values[0] is the scope's void slot).
 static typeidx function_instance_params_start(superscope *ss, function_instance *instance) {
   function *fn = &ss->functions[instance->spec->instance.fn - 1];
   return tu_catchr(c_fun, ss_type(ss, fn->signature).t).start;
@@ -27,7 +24,6 @@ static Type function_instance_ret(superscope *ss, function_instance *instance) {
 
 static bool function_should_be_emitted(superscope *ss, function_instance *instance) {
   (void)ss;
-  // A runtime argument only exists as an ir_farg; comptime arguments never emit one.
   bool has_runtime_arg = false;
   foreach (let inst, span(instance->spec->instructions, msList_len(instance->spec->instructions)))
     has_runtime_arg |= tu_is(ir_farg, *inst);
@@ -129,17 +125,39 @@ static void makeCStringLiteral(printerfunction_context _ctx, const unsigned char
   for (usize i = 0; i < len; i++) {
     unsigned char c = text[i];
     switch (c) {
-      case '\\': PUTS("\\\\"); break;
-      case '"': PUTS("\\\""); break;
-      case '\n': PUTS("\\n"); break;
-      case '\r': PUTS("\\r"); break;
-      case '\t': PUTS("\\t"); break;
-      case '\b': PUTS("\\b"); break;
-      case '\f': PUTS("\\f"); break;
-      case '\v': PUTS("\\v"); break;
-      case '\a': PUTS("\\a"); break;
-      case '\0': PUTS("\\0"); break;
-      default: PUTC((c8)c); break;
+      case '\\':
+        PUTS("\\\\");
+        break;
+      case '"':
+        PUTS("\\\"");
+        break;
+      case '\n':
+        PUTS("\\n");
+        break;
+      case '\r':
+        PUTS("\\r");
+        break;
+      case '\t':
+        PUTS("\\t");
+        break;
+      case '\b':
+        PUTS("\\b");
+        break;
+      case '\f':
+        PUTS("\\f");
+        break;
+      case '\v':
+        PUTS("\\v");
+        break;
+      case '\a':
+        PUTS("\\a");
+        break;
+      case '\0':
+        PUTS("\\0");
+        break;
+      default:
+        PUTC((c8)c);
+        break;
     }
   }
   PUTS("\\0\"");
@@ -400,9 +418,11 @@ static void makeWideOperation(
     PUTS(", ");
     makeRegisterPlace(ss, _ctx, s, right_reg);
     PUTS(", ");
-    if (operation == enop_shl) PUTS("1"); else PUTS("0");
+    if (operation == enop_shl) PUTS("1");
+    else PUTS("0");
     PUTS(", ");
-    if (is_signed) PUTS("1"); else PUTS("0");
+    if (is_signed) PUTS("1");
+    else PUTS("0");
     PUTS(")");
     return;
   }
@@ -416,7 +436,8 @@ static void makeWideOperation(
   PUTS(", (enum cshl_int_op)");
   USETYPEPRINTER(u32, operation);
   PUTS(", ");
-  if (is_signed) PUTS("1"); else PUTS("0");
+  if (is_signed) PUTS("1");
+  else PUTS("0");
   PUTS(")");
 }
 
@@ -462,7 +483,8 @@ static void makeWideComparison(
   PUTS("), ");
   USETYPEPRINTER(usize, bits);
   PUTS(", ");
-  if (is_signed) PUTS("1"); else PUTS("0");
+  if (is_signed) PUTS("1");
+  else PUTS("0");
   PUTS(") ");
   makeRawOperator(_ctx, operation);
   PUTS(" 0)");
@@ -542,7 +564,14 @@ static void makeCall(
     if (Type_is_comptime(t)) continue;
     if (!first) PUTS(", ");
     first = false;
-    makeVariable(_ctx, s, i);
+
+    if (t.ref_kind == ref_ref) {
+      makeRegisterAddress(ss, _ctx, s, i);
+    } else if (t.ref_kind == ref_dref) {
+      makeVariable(_ctx, s, i);
+    } else {
+      makeRegisterPlace(ss, _ctx, s, i);
+    }
   }
   PUTS(")");
 }
@@ -569,8 +598,14 @@ static void makeReference(superscope *ss, printerfunction_context _ctx, scope *s
       makeVariable(_ctx, s, op.d);
       PUTS(" = ");
       if (lt.ref_kind == ref_dref) makeVariable(_ctx, s, op.l), PUTS(".data");
-      else if (lt.ref_kind) makeVariable(_ctx, s, op.l);
-      else {
+      else if (lt.ref_kind) {
+        if (function_register_is_field_ref(ss, s, op.l)) {
+          PUTS("*(");
+          makeRegisterType(ss, _ctx, s, op.l);
+          PUTS(" *)");
+        }
+        makeVariable(_ctx, s, op.l);
+      } else {
         PUTS("&");
         makeVariable(_ctx, s, op.l);
       }
@@ -652,7 +687,8 @@ static void makeCast(superscope *ss, printerfunction_context _ctx, scope *s, ity
     PUTS("), ");
     USETYPEPRINTER(usize, source_bits);
     PUTS(", ");
-    if (source_signed) PUTS("1"); else PUTS("0");
+    if (source_signed) PUTS("1");
+    else PUTS("0");
     PUTS(");");
   } else if (lt.ref_kind == ref_dref) {
     PUTS("cshl_read(");
@@ -864,10 +900,23 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
         function *function = &ss->functions[s->instance.fn - 1];
         Type rt = function_instance_ret(ss, &function->instances[s->instance.index]);
         PUTS("  return ");
-        if (rt.ref_kind) makeVariable(_ctx, s, reg);
-        else makeRegisterPlace(ss, _ctx, s, reg);
+        if (rt.ref_kind == ref_ref) {
+          makeRegisterAddress(ss, _ctx, s, reg);
+        } else if (rt.ref_kind == ref_dref) {
+          makeVariable(_ctx, s, reg);
+        } else {
+          makeRegisterPlace(ss, _ctx, s, reg);
+        }
         PUTS(";");
       }),
+      // (ir_ret, reg, {
+      //   function *function = &ss->functions[s->instance.fn - 1];
+      //   Type rt = function_instance_ret(ss, &function->instances[s->instance.index]);
+      //   PUTS("  return ");
+      //   if (rt.ref_kind) makeVariable(_ctx, s, reg);
+      //   else makeRegisterPlace(ss, _ctx, s, reg);
+      //   PUTS(";");
+      // }),
       (ir_loops, _, PUTS("  while (1) {")),
       (ir_loope, _, PUTS("  }")),
       (ir_break, _, PUTS("  break;")),

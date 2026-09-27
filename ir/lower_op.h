@@ -44,20 +44,27 @@ u32 lower_math errs(superscope *ss, scope *s, u32 left, u32 right, u32 op) {
   return d;
 }
 u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber) {
-  // these are not overloadable
+  // these are not overloadable since they handled here
   switch_tuple(
       op_as_enum(opNumber),
       (enop_pipe, {
         let result = scope_add_value(ss, s, TV_any(ss));
         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_blocks, {})), 0);
-        try_err(scope_bind, (ss, s, left, fp("_")), 0);
-        try_err(lower, (ss, s, right), 0);
-        try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = result, .l = scope_last_item(ss, s)})), 0);
+        u32 bound = left;
+        if (ss_type(ss, scope_find(ss, s, left)->t).ref_kind) {
+          let lv = *scope_find(ss, s, left);
+          bound = scope_add_value(ss, s, (typed_value){.t = lv.t});
+          try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_getref, {.l = left, .d = bound})), 0);
+        }
+        try_err(scope_bind, (ss, s, bound, fp("_")), 0);
+        let value = try_err(lower, (ss, s, right), 0);
+        try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = result, .l = value})), 0);
         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_blocke, {})), 0);
         return result;
       }),
       (enop_colon, assertMessage(false, "unreachable")),
       (enop_set, {
+        // should ferry to = member
         let src = try_err(lower, (ss, s, right), 0);
         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = left, .l = src})), 0);
         return left;

@@ -10,7 +10,7 @@ typedef struct {
 } astidx_span;
 typedef struct typeinfo_value {
   typed_value subject;
-  enum { typeinfo_root, typeinfo_struct, typeinfo_fn } view;
+  enum { typeinfo_root, typeinfo_struct, typeinfo_fn, typeinfo_array } view;
 } typeinfo_value;
 typedef struct superscope superscope;
 typedef struct scope scope;

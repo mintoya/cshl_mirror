@@ -82,10 +82,6 @@ static inline int cshl_copy(double_offset dest, double_offset src, size_t size, 
   return 0;
 }
 
-// Little-endian byte buffers support arbitrary widths without _BitInt.
-// This is the source of truth for the arithmetic operation numbers; the
-// compiler's enum_op derives its arithmetic members from it so a wide
-// operation can be emitted with a single explicit cast.
 enum cshl_int_op {
   CSHL_INT_MUL,
   CSHL_INT_DIV,

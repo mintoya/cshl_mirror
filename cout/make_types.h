@@ -455,34 +455,64 @@ static void makeTypeAliases(superscope *ss, printerfunction_context _ctx) {
   }
 }
 
+// A stable, content-derived key for the C struct tag a body will receive.
+// Structurally identical bodies hash to the same tag, so they must only be
+// defined once and later tags alias the first.
+static fptr out_bodyTagKey(superscope *ss, printerfunction_context _ctx, Type t) {
+  fptr key = fp(snprint(_ctx.allocator, "{Type_full}", ss_tf(ss, t)));
+  if (key.len) key.len--; // drop the NUL, matching out_makeTagName
+  return key;
+}
 static void makeAggregateTypes(superscope *ss, printerfunction_context _ctx) {
   let e = ss_typeenv(ss);
+  // Distinct named tags can share one structural body, and the emitted C struct
+  // tag is a hash of that body. Define each body once; later tags alias it.
+  msList(fptr) defined = msList_init(_ctx.allocator, fptr);
+  defer { msList_deInit(_ctx.allocator, defined); };
   foreach (let idx, range(0, ss->tlist.len)) {
     let t = sglist_get(ss->tlist, idx);
     if (tu_is(r_null, t.t) || Type_is_comptime(t) || t.decorations) continue;
+    if (!out_isAggregate(t) && !tu_is(r_arr, t.t)) continue;
+    fptr key = out_bodyTagKey(ss, _ctx, t);
+    bool seen = false;
+    foreach (let it, span(defined, msList_len(defined))) seen |= fptr_eq(*it, key);
+    bool define = !seen;
+    if (define) msList_push(_ctx.allocator, defined, key);
+    out_printTypeComment(ss, _ctx, t);
     if (tu_is(r_arr, t.t)) {
       r_arr a = tu_catch(r_arr, t.t);
-      out_printTypeComment(ss, _ctx, t);
-      PUTS("struct ");
-      out_makeTagName(ss, _ctx, t);
-      PUTS(" {\n");
-      makeType(ss, _ctx, Type_at(e, a.t));
-      PUTS(" cshl_elements[");
-      USETYPEPRINTER(usize, a.count);
-      PUTS("];\n};\n");
+      if (define) {
+        PUTS("struct ");
+        out_makeTagName(ss, _ctx, t);
+        PUTS(" {\n");
+        makeType(ss, _ctx, Type_at(e, a.t));
+        PUTS(" cshl_elements[");
+        USETYPEPRINTER(usize, a.count);
+        PUTS("];\n};\n");
+      }
       PUTS("typedef struct ");
       out_makeTagName(ss, _ctx, t);
       PUTS(" cshlT_");
       USETYPEPRINTER(usize, idx + 1);
       PUTS(";\n");
-    } else if (out_isAggregate(t)) {
-      out_printTypeComment(ss, _ctx, t);
-      PUTS("typedef ");
-      makeFullType(ss, _ctx, t);
-      PUTS(" cshlT_");
-      USETYPEPRINTER(usize, idx + 1);
-      PUTS(";\n");
-      out_assertLayout(ss, _ctx, t);
+    } else {
+      if (define) {
+        PUTS("typedef ");
+        makeFullType(ss, _ctx, t);
+        PUTS(" cshlT_");
+        USETYPEPRINTER(usize, idx + 1);
+        PUTS(";\n");
+        out_assertLayout(ss, _ctx, t);
+      } else {
+        // Body already defined under this tag; just alias it.
+        PUTS("typedef ");
+        out_makeAggregateKeyword(e, _ctx, t);
+        PUTS(" ");
+        out_makeTagName(ss, _ctx, t);
+        PUTS(" cshlT_");
+        USETYPEPRINTER(usize, idx + 1);
+        PUTS(";\n");
+      }
     }
   }
 }

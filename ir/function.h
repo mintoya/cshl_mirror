@@ -86,7 +86,7 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
     sglist_get(*env.tlist, signature.start - 1 + (p - params.start)) =
         try_err(function_item_type, (ss, arg_scope, p), 0);
   sglist_get(*env.tlist, signature.start + params.len - 1) =
-      try_err(value_asType, (ss, try_err(temporary_interpret, (ss, arg_scope, retT), 0)), 0);
+      try_err(lower_asType, (ss, arg_scope, retT), 0);
 
   // clang-format off
   msList_push(ss->alloc, ss->functions, {
@@ -262,8 +262,9 @@ u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astidx args,
   }
   foreach (let a, span(alist.start, alist.len)) {
     let want = Type_at(env, type_run_at(env, generic_signature.start, idx));
+    bool comptime_arg = Type_is_comptime(want) && !tu_is(c_any, want.t);
     regs.ptr[idx++] = TypeTree_is_ast(want.t) ? scope_add_value(ss, s, TV_ast(ss, a))
-                      : Type_is_comptime(want)
+                      : comptime_arg
                           ? scope_add_value(ss, s, try_err(temporary_interpret, (ss, s, a), 0))
                           : try_err(lower, (ss, s, a), 0);
   }

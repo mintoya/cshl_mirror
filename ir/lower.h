@@ -53,7 +53,7 @@ static u32 lower_anon_struct errs(superscope *ss, scope *s, astidx a) {
     u32 val = valueidx ? try_err(lower, (ss, s, valueidx), 0) : 0;
     Type member = {};
     if (typeidx) {
-      member = try_err(value_asType, (ss, try_err(temporary_interpret, (ss, s, typeidx), 0)), 0);
+      member = try_err(lower_asType, (ss, s, typeidx), 0);
       val = val ? try_err(scope_cast_value, (ss, s, val, member), 0) : scope_add_value(ss, s, TV_of(ss, member));
     } else if (val) member = ss_type(ss, scope_find(ss, s, val)->t);
     else return_err("ANONYMOUS_MEMBER_NO_VALUE", 0);

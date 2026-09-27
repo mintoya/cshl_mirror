@@ -5,11 +5,11 @@ range ~~ fn (start~i32, end~i32) any {
     Self  ~~ @this();
     state ~ i32;
     end   ~ i32;
-    next ~~ fn (this~@refT(Self)) (@struct{valid~bool;yield~i32;}) {
+    next ~~ fn (this~@refT(Self)) (? i32) {
       result ~ @returntype();
-      result.valid = this.state < this.end;
-      if (result.valid) {
-        result.yield = this.state;
+      if (this.state < this.end) {
+        result.isnnull = true;
+        result.value = this.state;
         this.state = this.state + 1;
       };
       return result;
@@ -19,26 +19,76 @@ range ~~ fn (start~i32, end~i32) any {
   result.end   = end;
   return result;
 };
-sum ~i32~0;
-
-foreach ~~ fn (iterator ~ast) inline {
-  return @qot {
-    return fn (block ~ast) inline {
-      return @qot {
-        state ~= iterator;
-        curr  ~= state:next();
-        while (curr.valid){
-          curr.yield |> @ast_op(
-            "()",
-            @id("@uqot"),
-            @id("block")
-          );
-          curr = state:next();
-        };
+arrayiter ~~ fn (array ~any) any {
+  result ~@struct {
+    arrayT  ~~ @typeof array;
+    arrayIT ~~ @refT @typeof array[0];
+    data  ~ @refT @typeof array;
+    place ~ u32;
+    length ~ u32;
+    next  ~~ fn (this~@refT(@this())) (? this.arrayIT) {
+      result ~@returntype();
+      if ( this.place < this.length) {
+        result.isnnull = 1;
+        result.value   = @ref this.data[this.place];
+        this.place = this.place+1;
       };
+      return result;
     };
   };
+  result.data = array;
+  result.length = 
+  (@sizeof(@typeof array) 
+    / @sizeof(@typeof array[0]));
+  return result;
 };
 
-foreach(range(0 , 6)) {sum = sum + _;};
+
+
+filter ~~ fn (cnd ~ast) inline return @qot{
+  rt ~ @struct{
+    Self ~~ @this();
+    state ~ @typeof _;
+    next ~~ fn (this~@refT(Self)) any {
+      result ~= this.state:next();
+      while (
+        result as bool
+        and (result.value |> @uqot(cnd))
+      ) (result = this.state:next());
+      return result;
+    };
+  };
+  rt.state = _;
+  rt;
+};
+map ~~ fn (body ~ast) inline return @qot {
+  rt ~ @struct{
+    Self ~~ @this();
+    state ~ @typeof _;
+    next ~~ fn (this~@refT(Self)) any {
+      result ~= this.state:next();
+      if (result as bool) (result.value = (result.value |> @uqot body));
+      return result;
+    };
+  };
+  rt.state = _;
+  rt;
+};
+
+iterate ~~ fn () inline return @qot while (_:next() as bool);
+
+sum ~i32~0;
+range(0 , 6) 
+  |> filter { not (_ band 1);} 
+  |> map    { _ * 3;}
+  |> map    { sum = sum + _ ;}
+|> iterate();
 sum;
+
+i85 ~arr(4) i8;
+counter~i32;
+arrayiter(i85) |> map {
+  counter = counter + 1;
+  _ = counter;
+} |> iterate();
+i85;
