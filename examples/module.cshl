@@ -1,4 +1,3 @@
-{
 type ~~ @type();
 ast  ~~ @ast();
 any  ~~ @any();
@@ -115,6 +114,9 @@ while ~~ fn (a ~ast) inline {
 some_state ~~ @sint(32);
 getstate ~~ fn () (@typeof(some_state)) 
   return (some_state = some_state + 1);
+arr ~~ fn (i~int) any 
+  return (fn (T~type) type 
+    return (@arr(i,T)));
 
 @struct{
   inline  ~~ inline;
@@ -140,5 +142,5 @@ getstate ~~ fn () (@typeof(some_state))
   if ~~ if;
   while ~~ while;
   cif ~~ cif;
-};
+  arr ~~ arr;
 };

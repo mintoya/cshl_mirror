@@ -1,0 +1,44 @@
+@using @import "module.cshl";
+
+range ~~ fn (start~i32, end~i32) any {
+  result ~ @struct{
+    Self  ~~ @this();
+    state ~ i32;
+    end   ~ i32;
+    next ~~ fn (this~@refT(Self)) (@struct{valid~bool;yield~i32;}) {
+      result ~ @returntype();
+      result.valid = this.state < this.end;
+      if (result.valid) {
+        result.yield = this.state;
+        this.state = this.state + 1;
+      };
+      return result;
+    };
+  };
+  result.state = start;
+  result.end   = end;
+  return result;
+};
+sum ~i32~0;
+
+foreach ~~ fn (iterator ~ast) inline {
+  return @qot {
+    return fn (block ~ast) inline {
+      return @qot {
+        state ~= iterator;
+        curr  ~= state:next();
+        while (curr.valid){
+          curr.yield |> @ast_op(
+            "()",
+            @id("@uqot"),
+            @id("block")
+          );
+          curr = state:next();
+        };
+      };
+    };
+  };
+};
+
+foreach(range(0 , 6)) {sum = sum + _;};
+sum;
