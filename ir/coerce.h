@@ -287,6 +287,19 @@ static void lower_dot_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d)
       *scope_find(ss, s, d) = TV_bigint(ss, BInt.from.i64(ss->alloc, identity));
       return;
     }
+    if (info->view == typeinfo_array) {
+      let arr = TypeTree_inner_array(ss_type(ss, info->subject.v.c_type).t, tenv);
+      if (!arr.t) return_err("TYPE_HAS_NO_ARRAY");
+      if (fptr_eq(name, "len")) {
+        *scope_find(ss, s, d) = TV_bigint(ss, BInt.from.i64(ss->alloc, arr.count));
+        return;
+      }
+      if (fptr_eq(name, "elem")) {
+        *scope_find(ss, s, d) = Type_asValue(ss, ss_type(ss, arr.t));
+        return;
+      }
+      return_err("NO_MEMBER");
+    }
     if (info->view == typeinfo_struct) {
       if (!fptr_eq(name, "namespace")) return_err("NO_MEMBER");
       let target = ss_type(ss, info->subject.v.c_type);
@@ -304,6 +317,9 @@ static void lower_dot_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d)
     else if (fptr_eq(name, "struct") && tu_is(c_type, subject_type.t) &&
              TypeTree_inner_struct(ss_type(ss, info->subject.v.c_type).t, tenv).start)
       next.view = typeinfo_struct;
+    else if (fptr_eq(name, "array") && tu_is(c_type, subject_type.t) &&
+             TypeTree_inner_array(ss_type(ss, info->subject.v.c_type).t, tenv).t)
+      next.view = typeinfo_array;
     else return_err("NO_MEMBER");
     *scope_find(ss, s, d) = TV_with(ss, T(tu_of(c_typeinfo, {})), VS(.c_typeinfo = avalue(ss->alloc, next)));
     return;

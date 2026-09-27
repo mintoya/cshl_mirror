@@ -11,12 +11,35 @@ range ~~ fn (start~i32, end~i32) any {
         result.isnnull = true;
         result.value = this.state;
         this.state = this.state + 1;
-      } else (result.isnnull = 0);
+      };
       return result;
     };
   };
   result.state = start;
   result.end   = end;
+  return result;
+};
+arrayiter ~~ fn (array ~any) any {
+  result ~@struct {
+    arrayT  ~~ @typeof array;
+    arrayIT ~~ @refT @typeof array[0];
+    data  ~ @refT @typeof array;
+    place ~ u32;
+    length ~ u32;
+    next  ~~ fn (this~@refT(@this())) (? this.arrayIT) {
+      result ~@returntype();
+      if ( this.place < this.length) {
+        result.isnnull = 1;
+        result.value   = @ref this.data[this.place];
+        this.place = this.place+1;
+      };
+      return result;
+    };
+  };
+  result.data = array;
+  result.length = 
+  (@sizeof(@typeof array) 
+    / @sizeof(@typeof array[0]));
   return result;
 };
 
@@ -61,3 +84,11 @@ range(0 , 6)
   |> map    { sum = sum + _ ;}
 |> iterate();
 sum;
+
+i85 ~arr(4) i8;
+counter~i32;
+arrayiter(i85) |> map {
+  counter = counter + 1;
+  _ = counter;
+} |> iterate();
+i85;

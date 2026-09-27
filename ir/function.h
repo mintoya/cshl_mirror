@@ -262,8 +262,9 @@ u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astidx args,
   }
   foreach (let a, span(alist.start, alist.len)) {
     let want = Type_at(env, type_run_at(env, generic_signature.start, idx));
+    bool comptime_arg = Type_is_comptime(want) && !tu_is(c_any, want.t);
     regs.ptr[idx++] = TypeTree_is_ast(want.t) ? scope_add_value(ss, s, TV_ast(ss, a))
-                      : Type_is_comptime(want)
+                      : comptime_arg
                           ? scope_add_value(ss, s, try_err(temporary_interpret, (ss, s, a), 0))
                           : try_err(lower, (ss, s, a), 0);
   }
