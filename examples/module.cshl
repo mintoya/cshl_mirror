@@ -22,6 +22,45 @@ fn  ~~ @fn (a ~ast),inline,{
       @uqot(a."()".opright."()".opright),
     );
 };
+@closure ~~ fn (caps ~ast, args ~ast, ret ~ast, body ~ast) any {
+  capture ~~ @fn (mode ~@int(), inst ~ast, c ~ast), ast, {
+    cif (mode == 0)
+      return @qot (@uqot(c.name) ~ @uqot(c.type));
+    cif (mode == 1)
+      return @qot (@uqot(@ast_op(".", inst, c.name)) = @uqot(c.value));
+    return @qot( @uqot(c.name) ~ @uqot(c.type) = @uqot(@ast_op(".", @qot(self), c.name)));
+  };
+  captures ~~ fn (caps ~ast, inst ~ast, mode ~@int(), i ~@int()) ast {
+    cif (caps[i] == @qot()) {
+      return @qot [];
+    } else return @qot {
+      @uqot(@apply(capture, mode, inst, caps[i]));
+      @splice(@apply(captures, caps, inst, mode, i + 1));
+    };
+  };
+  return @uqot@qot {
+    ClosureType ~type~ @struct {
+      Self ~type~ @this();
+      @splice @apply(captures, caps, @qot(inst), 0, 0);
+      @id("()") ~~ fn (self ~Self, @splice(args)) (@uqot(ret)) {
+        @splice @apply(captures, caps, @qot(inst), 2, 0);
+        @splice body ;
+      };
+    };
+    inst ~ClosureType;
+    @splice @apply(captures, caps, @qot(inst), 1, 0);
+    inst;
+  };
+};
+closure ~~ fn (a ~ast) any {
+  return 
+    @uqot @qot @closure(
+      @uqot(a."()".opleft),
+      @uqot(a."()".opright."()".opleft),
+      @uqot(a."()".opright."()".opright.opleft),
+      @uqot(a."()".opright."()".opright.opright),
+    );
+};
 if  ~~ fn (a ~ast) inline {
   call ~ast~ a."()";
   cond ~ast~ call.opleft;
@@ -96,6 +135,8 @@ getstate ~~ fn () (@typeof(some_state))
   getstate ~~ getstate;
 
   fn ~~ fn;
+  @closure ~~ @closure;
+  closure ~~ closure;
   if ~~ if;
   while ~~ while;
   cif ~~ cif;

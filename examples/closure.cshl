@@ -1,47 +1,11 @@
-type ~~ @type();
-ast ~~ @ast();
-any ~~ @any();
-s32 ~~ @sint(32);
+@using @import "module.cshl";
 
-capture ~~ @fn (mode ~@int(), inst ~ast, c ~ast), ast, {
-  @cif((mode == 0), (return @qot (@uqot(c.name) ~ @uqot(c.type))));
-  @cif((mode == 1), (return @qot (@uqot(@ast_op(".", inst, c.name)) = @uqot(c.value))));
-  return @qot( @uqot(c.name) ~ @uqot(c.type) = @uqot(@ast_op(".", @qot(self), c.name)));
-};
+counter ~i32 = 0;
 
-captures ~~ @fn (caps ~ast, inst ~ast, mode ~@int(), i ~@int()), ast, {
-  @cif(
-    (caps[i] == @qot()),
-    (return @qot []),
-    (return @qot {
-      @uqot(@apply(capture, mode, inst, caps[i]));
-      @splice(@apply(captures, caps, inst, mode, i + 1));
-    })
-  );
-};
+add ~~ closure [n ~(@refT i32) = counter] (j ~i32) i32
+  return (n = n + j);
 
-@closure ~~ @fn (caps ~ast, args ~ast, ret ~ast, body ~ast), any, {
-  return @uqot@qot {
-    ClosureType ~type~ @struct {
-      Self ~type~ @this();
-      @splice @apply(captures, caps, @qot(inst), 0, 0);
-      @id("()") ~~ @fn ((self ~Self, @splice(args)), @uqot(ret), {
-        @splice @apply(captures, caps, @qot(inst), 2, 0);
-        @splice body ;
-      });
-    };
-    inst ~ClosureType;
-    @splice @apply(captures, caps, @qot(inst), 1, 0);
-    inst;
-  };
-};
-
-counter ~s32 = 0;
-
-add ~~ @closure [n ~(@refT s32) = counter], (j ~s32), s32,
-  (return (n = n + j));
-
-result ~~ @fn (), s32, {
+result ~~ fn () i32 {
   add(3);
   return add(3);
 };
