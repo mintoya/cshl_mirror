@@ -217,6 +217,7 @@ static allocfn intstate_scratch(intstate is) {
 void interpret_ret errs(intstate is, ir_ret r) {
   let v = intstate_findreg(is, r);
   let s = msList_last(is->cs).sp;
+  if (!s->instance.fn) return_err("RETURN_OUTSIDE_FUNCTION");
   let fn = &is->ss->functions[s->instance.fn - 1];
   usize argc = fn->params.len;
   if (fn->instances[s->instance.index].ret.ref_kind) {
