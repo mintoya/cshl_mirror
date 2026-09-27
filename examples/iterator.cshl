@@ -1,17 +1,18 @@
 @using @import "module.cshl";
 
+not ~~ fn (in ~bool) bool return in bxor 1;
 range ~~ fn (start~i32, end~i32) any {
   result ~ @struct{
     Self  ~~ @this();
     state ~ i32;
     end   ~ i32;
-    next ~~ fn (this~@refT(Self)) (@struct{valid~bool;yield~i32;}) {
+    next ~~ fn (this~@refT(Self)) (? i32) {
       result ~ @returntype();
-      result.valid = this.state < this.end;
-      if (result.valid) {
-        result.yield = this.state;
+      if (this.state < this.end) {
+        result.isnnull = true;
+        result.value = this.state;
         this.state = this.state + 1;
-      };
+      } else (result.isnnull = 0);
       return result;
     };
   };
@@ -19,39 +20,43 @@ range ~~ fn (start~i32, end~i32) any {
   result.end   = end;
   return result;
 };
-filter ~~ fn (cnd ~ast) inline {
-  return @qot{
-    rt ~ @struct{
-      Self ~~ @this();
-      state ~ @typeof _;
-      next ~~ fn (this~@refT(Self)) (@struct{valid~bool;yield~i32;}) {
-        result ~= this.state:next();
-        while (
-          result.valid  
-          and (result.yield |> @uqot(cnd) bxor 1)
-          ) ( result = this.state:next() );
-        ret    ~@returntype();
-        ret.valid= result.valid;
-        ret.yield= result.yield;
-        return ret;
-      };
+filter ~~ fn (cnd ~ast) inline return @qot{
+  rt ~ @struct{
+    Self ~~ @this();
+    state ~ @typeof _;
+    next ~~ fn (this~@refT(Self)) any {
+      result ~= this.state:next();
+      while (
+        result as bool
+        and (result.value |> @uqot(cnd))
+      ) (result = this.state:next());
+      return result;
     };
-    rt.state = _;
-    rt;
   };
+  rt.state = _;
+  rt;
 };
+map ~~ fn (body ~ast) inline return @qot {
+  rt ~ @struct{
+    Self ~~ @this();
+    state ~ @typeof _;
+    next ~~ fn (this~@refT(Self)) any {
+      result ~= this.state:next();
+      if (result as bool) (result.value = (result.value |> @uqot body));
+      return result;
+    };
+  };
+  rt.state = _;
+  rt;
+};
+
+iterate ~~ fn () inline return @qot while (_:next() as bool);
+
+
 sum ~i32~0;
-
-each ~~ fn (block ~ast) inline {
-  return @qot {
-    it ~= _;
-    curr ~= it:next();
-    while (curr.valid) {
-      curr.yield |> @uqot(block);
-      curr = it:next();
-    };
-  };
-};
-
-range(0 , 6) |> filter { _ band 1 ;} |> each { sum = sum + _; };
+range(0 , 6) 
+  |> filter { not (_ band 1);} 
+  |> map    { _ * 3;}
+  |> map    { sum = sum + _ ;}
+  |> iterate();
 sum;

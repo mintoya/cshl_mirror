@@ -12,6 +12,9 @@ u16 ~~ @uint 16;
 u32 ~~ @uint 32;
 u64 ~~ @uint 64;
 bool ~~ @bool();
+true ~@comptime(bool)~1;
+false~@comptime(bool)~0;
+null ~ @struct{nothing~bool;};
 void ~~ @void();
 fn  ~~ @fn (a ~ast),inline,{
   return 
@@ -103,12 +106,20 @@ cif  ~~ fn (a ~ast) inline {
   );
 };
 while ~~ fn (a ~ast) inline {
-  cond ~ast~ a."()".opleft;
-  body ~ast~ a."()".opright;
-  return @qot @loop{
-    @if (@uqot(cond)),
-      (@uqot(body)),
-      (break());
+  @cif (a."()"), { 
+    cond ~ast~ a."()".opleft;
+    body ~ast~ a."()".opright;
+    return @qot @loop{
+      @if (@uqot(cond)),
+        (@uqot(body)),
+        (break());
+    };
+  },{
+    return @qot @loop{
+      @if (@uqot(a)),
+        (0),
+        (break());
+    };
   };
 };
 some_state ~~ @sint(32);
@@ -117,6 +128,35 @@ getstate ~~ fn () (@typeof(some_state))
 arr ~~ fn (i~int) any 
   return (fn (T~type) type 
     return (@arr(i,T)));
+? ~~ fn (t~type) type return @struct {
+    Self ~~ @this();
+    isnnull  ~bool;
+    value    ~t;
+    @id("as") ~~ fn (this~Self , t~type) any {
+      cif (t == bool) {
+        return this.isnnull; 
+      } else  @error(); // not bound to anything, regular unbound id
+    };
+    /*
+    @id("=") ~~ fn (this~@refT(Self) , o~any) any {
+      cif (@typeof(o) == t) {
+        result ~Self;
+        result.isnnull = true;
+        result.value = o;
+        return result;
+      } else @error();
+
+    };
+    */
+    orelse ~~ fn (this~ast , a~ast) inline {
+      return @qot {
+        result ~= @uqot(this);
+        if result
+          (result.value = @uqot a);
+        result.value;
+      };
+    };
+};
 
 @struct{
   inline  ~~ inline;
@@ -143,4 +183,7 @@ arr ~~ fn (i~int) any
   while ~~ while;
   cif ~~ cif;
   arr ~~ arr;
+  ? ~~ ?;
+  true  ~~ true;
+  false ~~ false;
 };
