@@ -24,7 +24,6 @@ static Type function_instance_ret(superscope *ss, function_instance *instance) {
 
 static bool function_should_be_emitted(superscope *ss, function_instance *instance) {
   (void)ss;
-  // A runtime argument only exists as an ir_farg; comptime arguments never emit one.
   bool has_runtime_arg = false;
   foreach (let inst, span(instance->spec->instructions, msList_len(instance->spec->instructions)))
     has_runtime_arg |= tu_is(ir_farg, *inst);
@@ -599,8 +598,14 @@ static void makeReference(superscope *ss, printerfunction_context _ctx, scope *s
       makeVariable(_ctx, s, op.d);
       PUTS(" = ");
       if (lt.ref_kind == ref_dref) makeVariable(_ctx, s, op.l), PUTS(".data");
-      else if (lt.ref_kind) makeVariable(_ctx, s, op.l);
-      else {
+      else if (lt.ref_kind) {
+        if (function_register_is_field_ref(ss, s, op.l)) {
+          PUTS("*(");
+          makeRegisterType(ss, _ctx, s, op.l);
+          PUTS(" *)");
+        }
+        makeVariable(_ctx, s, op.l);
+      } else {
         PUTS("&");
         makeVariable(_ctx, s, op.l);
       }
