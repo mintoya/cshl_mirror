@@ -19,26 +19,39 @@ range ~~ fn (start~i32, end~i32) any {
   result.end   = end;
   return result;
 };
+filter ~~ fn (cnd ~ast) inline {
+  return @qot{
+    rt ~ @struct{
+      Self ~~ @this();
+      state ~ @typeof _;
+      next ~~ fn (this~@refT(Self)) (@struct{valid~bool;yield~i32;}) {
+        result ~= this.state:next();
+        while (
+          result.valid  
+          and (result.yield |> @uqot(cnd) bxor 1)
+          ) ( result = this.state:next() );
+        ret    ~@returntype();
+        ret.valid= result.valid;
+        ret.yield= result.yield;
+        return ret;
+      };
+    };
+    rt.state = _;
+    rt;
+  };
+};
 sum ~i32~0;
 
-foreach ~~ fn (iterator ~ast) inline {
+each ~~ fn (block ~ast) inline {
   return @qot {
-    return fn (block ~ast) inline {
-      return @qot {
-        state ~= iterator;
-        curr  ~= state:next();
-        while (curr.valid){
-          curr.yield |> @ast_op(
-            "()",
-            @id("@uqot"),
-            @id("block")
-          );
-          curr = state:next();
-        };
-      };
+    it ~= _;
+    curr ~= it:next();
+    while (curr.valid) {
+      curr.yield |> @uqot(block);
+      curr = it:next();
     };
   };
 };
 
-foreach(range(0 , 6)) {sum = sum + _;};
+range(0 , 6) |> filter { _ band 1 ;} |> each { sum = sum + _; };
 sum;
