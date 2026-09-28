@@ -361,6 +361,26 @@ static err_t lower_source_named_err(allocfn arena, fptr src, const char *filenam
   return call_err(lower, (env, env->outermost, ctx.idx)).err;
 }
 
+test_fn(as_overload_checks_requested_return_type) {
+  const struct { const char *source; bool valid; } cases[] = {
+      {"any ~~ @any(); true ~@comptime(@bool())~1; T ~~ @struct { Self ~~ @this(); x ~@sint(32); @id(\"as\") ~~ @fn (s~Self,t~@type()), any, { return s.x; }; }; v ~T; v as @bool();", false},
+      {"any ~~ @any(); true ~@comptime(@bool())~1; T ~~ @struct { Self ~~ @this(); @id(\"as\") ~~ @fn (s~@comptime(Self),t~@type()), any, { return true; }; }; v ~@comptime(T); v as @sint(32);", false},
+      {"any ~~ @any(); true ~@comptime(@bool())~1; T ~~ @struct { Self ~~ @this(); x ~@sint(32); @id(\"as\") ~~ @fn (s~Self,t~@type()), any, { return s.x; }; }; v ~T; v as @sint(16);", false},
+      {"any ~~ @any(); true ~@comptime(@bool())~1; T ~~ @struct { Self ~~ @this(); x ~@bool(); @id(\"as\") ~~ @fn (s~Self,t~@type()), any, { return s.x; }; }; v ~T; v as @bool();", true},
+      {"any ~~ @any(); true ~@comptime(@bool())~1; T ~~ @struct { Self ~~ @this(); @id(\"as\") ~~ @fn (s~@comptime(Self),t~@type()), any, { return true; }; }; v ~@comptime(T); v as @bool();", true},
+  };
+  foreach (let c, span(cases, countof(cases))) {
+    let arena = arena_new_ext(allocator, 1 << 16);
+    defer { arena_cleanup(arena); };
+    let e = lower_source_err(arena, ((fptr){strlen(c->source), (u8 *)c->source}));
+    if (c->valid) test_assert(!e.err_code);
+    else {
+      test_assert(e.err_code);
+      test_streq(e.err_code, "AS_OVERLOAD_RETURN_TYPE");
+    }
+  }
+}
+
 test_fn(anonymous_conversion_rejects_invalid_members) {
   const struct { const char *source, *error; } cases[] = {
       {"[x = 1, 2];", "ANONYMOUS_MIXED_MEMBERS"},

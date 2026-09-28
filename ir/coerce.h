@@ -549,8 +549,15 @@ static void tcheck_rawop errs(superscope *env, scope *s, ir_rawop op) {
     memcpy(sym, &op.o, sizeof(u32));
     let m = ss_tag_named(env, lt.t, (fptr){strlen(sym), (u8 *)sym});
     if (m.owner) {
+      Type requested = {};
+      if (op.o == opNumbers.as)
+        requested = try_err(value_asType, (env, *scope_find(env, s, op.r)));
       let method = scope_add_value(env, s, *scope_find(env, m.owner, m.idx));
       u32 res = try_err(lower_function_call_values, (env, s, method, ((slice(u32)){2, (u32[2]){op.l, op.r}})));
+      // An `any` return is inferred by the call, but `as` still promises the
+      // requested type. Do not hide a broken overload with another cast.
+      if (op.o == opNumbers.as && Type_cmp_ndecor(scope_reg_type(env, s, res), requested, ss_typeenv(env)))
+        return_err("AS_OVERLOAD_RETURN_TYPE");
       scope_set_type(env, scope_find(env, s, op.d), scope_find(env, s, res)->t);
       if (scope_reg_type(env, s, res).ref_kind)
         msList_push(env->alloc, s->instructions, (ir)tu_of(ir_getref, {.l = res, .d = op.d}));
