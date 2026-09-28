@@ -1,5 +1,8 @@
 @using @import "module.cshl";
 
+// @cout is emitted before everything else in its scope, so it comes first.
+@cout "#include <stdio.h>";
+
 counter ~i32 = 0;
 
 add ~~ closure [n ~(@refT i32) = counter] (j ~i32) i32
@@ -10,5 +13,7 @@ result ~~ fn () i32 {
   return add(3);
 };
 
-a ~~ result();
-b ~~ result();
+printint ~~ fn (i~i32) void 
+  @cout "printf(\"%i\\n\",arg0);";
+printint(result());
+printint(result());

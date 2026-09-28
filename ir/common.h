@@ -10,7 +10,10 @@ typedef struct {
 } astidx_span;
 typedef struct typeinfo_value {
   typed_value subject;
-  enum { typeinfo_root, typeinfo_struct, typeinfo_fn, typeinfo_array } view;
+  enum { typeinfo_root,
+         typeinfo_struct,
+         typeinfo_fn,
+         typeinfo_array } view;
 } typeinfo_value;
 typedef struct superscope superscope;
 typedef struct scope scope;
@@ -62,6 +65,7 @@ struct superscope {
   msList(typeidx) thisstack;
   moxmap(fptr, scope *) type_info;
   msList(function) functions;
+  msList(fptr) coutput;
   scope *outermost;
 
   typeidx t_void, t_any, t_int, t_bool, t_ast, t_type;
@@ -559,6 +563,7 @@ typePrinter(scope_full) {
         (ir_ife, _, PUTS("(ife)")),
         (ir_loops, _, PUTS("(loops)")),
         (ir_loope, _, PUTS("(loope)")),
+        (ir_cout, r, PUTS("(cout "), USETYPEPRINTER(u32, r), PUTS(")")),
         (default, assertMessage(false)),
     );
     PUTS(",");

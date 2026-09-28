@@ -295,7 +295,8 @@ void interpret_field errs(intstate is, ir_field c) {
   let bf = TypeTree_inner_bitfield(lt.t, e);
   if (bf.start) {
     u32 offset = 0;
-    foreach (let i, range(0, c.i)) offset += type_bitf_item(e, bf, i)->width;
+    foreach (let i, range(0, c.i))
+      offset += type_bitf_item(e, bf, i)->width;
     *(dref *)intstate_findslots_value(is, c.d)->value =
         (dref){(u8 *)l.v.value + offset / 8, offset % 8, type_bitf_item(e, bf, c.i)->width};
     return;
@@ -510,6 +511,7 @@ static void intstate_inst errs(intstate is, usize at, ir inst) {
       (ir_putptr /**/, c, try_err(interpret_putptr, (is, c))),
       (ir_call, c, try_err(interpret_call, (is, c))),
       (ir_rawdot /**/, _, assertMessage(false, "unreachable")),
+      (ir_cout /*   */, _, assertMessage(false, "cant ouput c in the interpreter")),
       (default, assertMessage(false, "unhandled instruction")),
   );
 }

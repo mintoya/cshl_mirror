@@ -714,37 +714,50 @@ static void makeCast(superscope *ss, printerfunction_context _ctx, scope *s, ity
   }
 }
 
+static void makeCoutText(superscope *ss, printerfunction_context _ctx, u32 chunk) {
+  assertMessage(chunk < msList_len(ss->coutput));
+  fptr text = *msList_get(ss->coutput, chunk);
+  _ctx.put((const c8 *)text.ptr, _ctx.arb, text.len, 0);
+}
+
+static void makeScopeCout(superscope *ss, printerfunction_context _ctx, scope *s) {
+  foreach (let inst, span(s->instructions, msList_len(s->instructions)))
+    if (tu_is(ir_cout, *inst)) {
+      makeCoutText(ss, _ctx, inst->ir_cout);
+      PUTS("\n");
+    }
+}
+
 static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx, scope *s, ir inst) {
   if (tu_is(ir_set, inst) &&
       (Type_is_comptime(function_register_type(ss, s, inst.ir_set.d)) ||
        function_is_non_int_comptime(function_register_type(ss, s, inst.ir_set.l))))
-    return;
+    assertMessage(false, "should not be here");
   if (tu_is(ir_cast, inst) &&
       (Type_is_comptime(function_register_type(ss, s, inst.ir_cast.d)) ||
        function_is_non_int_comptime(function_register_type(ss, s, inst.ir_cast.l))))
-    return;
+    assertMessage(false, "should not be here");
   if (tu_is(ir_rawop, inst) &&
       (Type_is_comptime(function_register_type(ss, s, inst.ir_rawop.d)) ||
        function_is_non_int_comptime(function_register_type(ss, s, inst.ir_rawop.l)) ||
        function_is_non_int_comptime(function_register_type(ss, s, inst.ir_rawop.r))))
-    return;
+    assertMessage(false, "should not be here");
   if (tu_is(ir_call, inst) && Type_is_comptime(function_register_type(ss, s, inst.ir_call.d)))
-    return;
+    assertMessage(false, "should not be here");
   if (tu_is(ir_ret, inst) && Type_is_comptime(function_register_type(ss, s, inst.ir_ret)))
-    return;
-  if (tu_is(ir_rawdot, inst)) PUTS("  // ir_rawdot");
+    assertMessage(false, "should not be here");
+  // if (tu_is(ir_rawdot, inst)) PUTS("  // ir_rawdot");
   tu_match_void(
       inst,
+      (ir_cout, _, ), // handled
       (ir_getref, op, makeReference(ss, _ctx, s, op)),
       (ir_getptr, op, {
-        PUTS("  ");
         makeVariable(_ctx, s, op.d);
         PUTS(" = ");
         makeRegisterAddress(ss, _ctx, s, op.l);
         PUTS(";");
       }),
       (ir_putptr, op, {
-        PUTS("  ");
         makeVariable(_ctx, s, op.d);
         PUTS(" = ");
         makeRegisterPlace(ss, _ctx, s, op.l);
@@ -756,7 +769,6 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
         Type lt = function_register_type(ss, s, op.l);
         Type rt = function_register_type(ss, s, op.r);
         u32 raw_op = op_as_enum(op.o);
-        PUTS("  ");
         if (function_is_wide(ss, dt) && dt.ref_kind == ref_ref) PUTS("*");
         makeVariable(_ctx, s, op.d);
         PUTS(" = ");
@@ -796,12 +808,10 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
         }
         PUTS(";");
       }),
-      (ir_rawdot, _, PUTS("")),
       (ir_field, op, makeFieldReference(ss, _ctx, s, op)),
       (ir_array, op, makeArrayReference(ss, _ctx, s, op)),
       (ir_call, op, {
         Type dt = function_register_type(ss, s, op.d);
-        PUTS("  ");
         if (dt.ref_kind == ref_dref) {
           makeVariable(_ctx, s, op.d);
           PUTS(" = ");
@@ -816,7 +826,6 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
       (ir_set, op, {
         Type dt = function_register_type(ss, s, op.d);
         Type lt = function_register_type(ss, s, op.l);
-        PUTS("  ");
         if (dt.ref_kind == ref_dref) {
           if (lt.ref_kind == ref_dref) {
             makeVariable(_ctx, s, op.d);
@@ -824,7 +833,7 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
             makeVariable(_ctx, s, op.l);
             PUTS(".data;");
           } else {
-            PUTS("  cshl_write(");
+            PUTS("cshl_write(");
             makeVariable(_ctx, s, op.d);
             PUTS(".data, (const unsigned char *)&");
             makeRegisterPlace(ss, _ctx, s, op.l);
@@ -867,15 +876,15 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
           }
         }
       }),
-      (ir_blocks, _, PUTS("  {")),
-      (ir_blocke, _, PUTS("  }")),
+      (ir_blocks, _, PUTS("{")),
+      (ir_blocke, _, PUTS("}")),
       (ir_ifs, cond, {
-        PUTS("  if (");
+        PUTS("if(");
         makeRegisterPlace(ss, _ctx, s, cond);
-        PUTS(") {");
+        PUTS("){");
       }),
-      (ir_ifd, _, PUTS("  } else {")),
-      (ir_ife, _, PUTS("  }")),
+      (ir_ifd, _, PUTS("} else {")),
+      (ir_ife, _, PUTS("}")),
       (ir_farg, op, {
         Type dt = function_register_type(ss, s, op.d);
         function *function = &ss->functions[s->instance.fn - 1];
@@ -899,7 +908,7 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
       (ir_ret, reg, {
         function *function = &ss->functions[s->instance.fn - 1];
         Type rt = function_instance_ret(ss, &function->instances[s->instance.index]);
-        PUTS("  return ");
+        PUTS("return ");
         if (rt.ref_kind == ref_ref) {
           makeRegisterAddress(ss, _ctx, s, reg);
         } else if (rt.ref_kind == ref_dref) {
@@ -909,26 +918,15 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
         }
         PUTS(";");
       }),
-      // (ir_ret, reg, {
-      //   function *function = &ss->functions[s->instance.fn - 1];
-      //   Type rt = function_instance_ret(ss, &function->instances[s->instance.index]);
-      //   PUTS("  return ");
-      //   if (rt.ref_kind) makeVariable(_ctx, s, reg);
-      //   else makeRegisterPlace(ss, _ctx, s, reg);
-      //   PUTS(";");
-      // }),
-      (ir_loops, _, PUTS("  while (1) {")),
-      (ir_loope, _, PUTS("  }")),
-      (ir_break, _, PUTS("  break;")),
-      (ir_cont, _, PUTS("  continue;")),
+      (ir_loops, _, PUTS("while (1) {")),
+      (ir_loope, _, PUTS("}")),
+      (ir_break, _, PUTS("break;")),
+      (ir_cont, _, PUTS("continue;")),
       (default, assertMessage(false, "unhandled instruction")),
   );
   PUTS("\n");
 }
 
-// This IR keeps compile-time-known constants as runtime registers carrying a
-// value, so a register must be initialized from that value; a bare {0} would
-// lose it (e.g. the constant arguments of a call).
 static void makeVariableInit(superscope *ss, printerfunction_context _ctx, scope *s, u32 reg) {
   typeenv e = ss_typeenv(ss);
   Type t = function_register_type(ss, s, reg);
@@ -982,6 +980,7 @@ static void makeVariables(superscope *ss, printerfunction_context _ctx, scope *s
 }
 
 static void makeFunctionBody(superscope *ss, printerfunction_context _ctx, function_instance *instance) {
+  makeScopeCout(ss, _ctx, instance->spec);
   makeVariables(ss, _ctx, instance->spec);
   foreach (let inst, span(instance->spec->instructions, msList_len(instance->spec->instructions)))
     makeFunctionInstruction(ss, _ctx, instance->spec, *inst);

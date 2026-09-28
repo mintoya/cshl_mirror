@@ -12,7 +12,7 @@ meant to be a c-like language with
 - [x] first class functions
 - [x] first class ast
 - [x] operator overloading
-- [ ] raii-ish stuff?
+- [ ] raii-ish stuff? prolly just defer
 
 
 ## grammer

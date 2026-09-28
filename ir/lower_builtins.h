@@ -81,6 +81,20 @@ static u32 lower_builtin_id errs(superscope *ss, scope *s, astidx args) {
   let copy = slice_clone(ss->alloc, ((fptr){arr.count, (u8 *)str.v.value}));
   return scope_add_value(ss, s, TV_ast(ss, ast_make_id(ss, copy)));
 }
+static u32 lower_builtin_cout errs(superscope *ss, scope *s, astidx args) {
+  let list = builtin_args(ss, args, 1);
+  foreach (let inst, span(s->instructions, msList_len(s->instructions)))
+    if (!tu_is(ir_farg, *inst)) return_err("COUT_NOT_AT_SCOPE_START", 0);
+  let str = try_err(temporary_interpret, (ss, s, list.start), 0);
+  let arr = tu_catchr(r_arr, ss_type(ss, str.t).t, return_err("COUT_NEEDS_STRING", 0));
+  if (tu_catchr(r_sint, type_tree(ss_typeenv(ss), arr.t), return_err("COUT_NEEDS_STRING", 0)).bits != 8)
+    return_err("COUT_NEEDS_STRING", 0);
+  let copy = slice_clone(ss->alloc, ((fptr){arr.count, (u8 *)str.v.value}));
+  u32 chunk = msList_len(ss->coutput);
+  msList_push(ss->alloc, ss->coutput, copy);
+  try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_cout, chunk)), 0);
+  return scope_add_value(ss, s, TV_void(ss));
+}
 
 static u32 lower_builtin_import errs(superscope *ss, scope *s, astidx args) {
   let str = try_err(temporary_interpret, (ss, s, args), 0);
@@ -368,7 +382,8 @@ static u32 lower_builtin_typeinfo errs(superscope *ss, scope *s, astidx args) {
 static u32 lower_builtin_returntype errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_args(ss, args, 0);
   scope *owner = s;
-  while (owner && !owner->instance.fn) owner = owner->parent;
+  while (owner && !owner->instance.fn)
+    owner = owner->parent;
   if (!owner) return_err("RETURNTYPE_OUTSIDE_FUNCTION", 0);
   let ret = ss->functions[owner->instance.fn - 1].instances[owner->instance.index].ret;
   if (!ret.t.tag) return_err("RETURNTYPE_NOT_RESOLVED", 0);
@@ -649,6 +664,7 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
       (builtin_type, /*    */ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_type, {}))), 0)),
       (builtin_inlineast, /**/ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_inlineast, {}))), 0)),
       (builtin_typeinfo, /**/ try_err(lower_builtin_typeinfo, (ss, s, args), 0)),
+      (builtin_cout, /**/ try_err(lower_builtin_cout, (ss, s, args), 0)),
   );
   assertMessage(false, "unhandled builtin %u", builtin);
 }

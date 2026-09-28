@@ -710,6 +710,7 @@ static inline void scope_add_inst_typecheck errs(superscope *env, scope *s, ir i
       (ir_loope /* */, _, try_err(scope_emit_inst, (env, s, i))),
       (ir_break /* */, _, try_err(scope_emit_inst, (env, s, i))),
       (ir_cont /*  */, _, try_err(scope_emit_inst, (env, s, i))),
+      (ir_cout /*  */, _, try_err(scope_emit_inst, (env, s, i))),
       (ir_ifd /*   */, _, try_err(scope_emit_inst, (env, s, i))),
       (ir_ife /*   */, _, try_err(scope_emit_inst, (env, s, i))),
       (ir_blocks /**/, _, ), // nothing but namespace stuff

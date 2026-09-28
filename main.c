@@ -73,8 +73,8 @@ cmd_main(
       assertMessage(out);
       defer { assertMessage(fclose(out) == 0, "failed to close C output"); };
 
-      printerfunction_context pctx = {.put = fileprint, .arb = out, .allocator = allocator};
-      makeC(env, fileprint, pctx);
+      P$(((printerfunction_context){.put = fileprint, .arb = out, .allocator = allocator}),
+         (makeC(env, $), 0));
     }
     if (execute) {
       let res = catch_errcall((interpret, (env, env->outermost)), e, (err_panic(e), (typed_value){}));

@@ -9,17 +9,15 @@ void makeTypes(superscope *ss, printerfunction_context _ctx);
 void makeFuncs(superscope *ss, printerfunction_context _ctx);
 void makeMain(superscope *ss, printerfunction_context _ctx);
 static void makeVariables(superscope *ss, printerfunction_context _ctx, scope *s);
-void makeC(superscope *ss, outputFunction _put, printerfunction_context _ctx) {
-  (void)_put;
+static void makeScopeCout(superscope *ss, printerfunction_context _ctx, scope *s);
+void makeC(superscope *ss, printerfunction_context _ctx) {
   makeRuntime(_ctx);
   makeTypes(ss, _ctx);
+  makeScopeCout(ss, _ctx, ss->outermost);
   makeVariables(ss, _ctx, ss->outermost);
   makeFuncs(ss, _ctx);
   makeMain(ss, _ctx);
 }
-// A text-mode stream turns every '\n' into CRLF, so a source that already
-// carries CRLF would reach the compiler as CRCRLF and break the backslash line
-// continuations the runtime relies on. Emit LF only.
 static void out_runtime_text(
     printerfunction_context _ctx,
     const unsigned char *bytes,
@@ -36,7 +34,7 @@ static void out_runtime_text(
 void out_runtime(printerfunction_context _ctx) {
 #if !defined(__GNUC__) || defined(__clang__)
   static const unsigned char source[] = {
-#embed "cshl.lib.c"
+  #embed "cshl.lib.c"
   };
   usize len = sizeof(source);
   // #embed appends a terminating null byte; it is not part of the runtime.

@@ -220,6 +220,7 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
     .pointers = mxmap_init(allocator, void*, usize),
     .thisstack = msList_init(allocator , typeidx),
     .functions = msList_init(allocator,function),
+    .coutput = msList_init(allocator, fptr),
   }));
   // clang-format on
   res->typeindex = moxmap_init(allocator, Type, typeidx, (oxmap_cmp){Type_cmp_hash_ss, res});
@@ -281,6 +282,7 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
       {"@loop", builtin_loop},
       {"@import", builtin_import},
       {"@using", builtin_using},
+      {"@cout", builtin_cout},
   };
   foreach (let i, vla(builtins))
     catch_errcall(
@@ -298,6 +300,7 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
 static inline void ss_deInit(superscope *ss) {
   let allocator = ((struct cballocator *)ss->alloc)->allocator;
   msList_deInit(allocator, ss->thisstack);
+  msList_deInit(allocator, ss->coutput);
   foreach (let it, mxmap_iter(ss->pointers, void *, usize))
     adestroy(allocator, (u8(*)[*it.val])it.key);
   mxmap_deinit(ss->pointers);
