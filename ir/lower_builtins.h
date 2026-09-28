@@ -144,8 +144,8 @@ static u32 lower_builtin_using errs(superscope *ss, scope *s, astidx args) {
     return_err("USING_EXPECTS_STRUCT", 0);
   let owner = moxmap_get(ss->type_info, type_name(ss_typeenv(ss), type.t.r_tag.name));
   if (!owner) return_err("USING_EXPECTS_STRUCT", 0);
-  foreach (let member, moxmap_iter((*owner)->named->bindings, fptr, u32)) {
-    let copy = scope_add_value(ss, s, *scope_find(ss, *owner, *member.val));
+  foreach (let member, moxmap_iter(owner->namespace->named->bindings, fptr, u32)) {
+    let copy = scope_add_value(ss, s, *scope_find(ss, owner->namespace, *member.val));
     try_err(scope_bind, (ss, s, copy, member.key), 0);
   }
   return scope_add_value(ss, s, TV_void(ss));
@@ -464,13 +464,16 @@ static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
   let stmts = ast_block_children(ss, list.start);
 
   let members = (r_struct){.start = ss_member_reserve(ss, stmts.len)};
-  let _this = T(tu_of(r_tag, {ss_type_intern(ss, T(tu_of(r_struct, members))), unique_type_name(ss)}));
+  // The member list is incomplete: interning it could alias another unfinished struct.
+  let inner = ss_type_reserve(ss, 0);
+  sglist_get(ss->tlist, inner - 1) = T(tu_of(r_struct, members));
+  let _this = T(tu_of(r_tag, {inner, unique_type_name(ss)}));
   let this_idx = ss_type_intern(ss, _this);
 
   let working_scope = scope_inferior(ss, s);
   msList_push(ss->alloc, ss->thisstack, this_idx);
   defer { msList_pop(ss->thisstack); };
-  moxmap_set(ss->type_info, type_name(ss_typeenv(ss), _this.t.r_tag.name), working_scope);
+  moxmap_set(ss->type_info, type_name(ss_typeenv(ss), _this.t.r_tag.name), ((type_metadata){.namespace = working_scope}));
 
   let offset = (usize){};
   let e = ss_typeenv(ss);
@@ -509,7 +512,7 @@ static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
     ri->t = ss_type(ss, bound.t);
     if (!Type_is_comptime(ri->t)) {
       ri->offset = lineup(offset, ri->alignment = Type_alignof(ri->t, e));
-      offset += Type_sizeof(ri->t, e);
+      offset = ri->offset + Type_sizeof(ri->t, e);
     }
   }
 

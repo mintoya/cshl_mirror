@@ -1,0 +1,19 @@
+i32 ~~ @sint(32);
+Node ~~ @struct {
+  Self ~~ @this();
+  next ~@ptr(Self);
+  value ~@const(i32);
+};
+node ~Node;
+node.next = @where(node);
+node.value = 7;
+copy ~~ @fn((input ~Node), Node, { return input; });
+frozen ~Node~ copy(node);
+Box ~~ @struct { item ~@const(Node); };
+box ~Box;
+box.item = frozen;
+values ~@arr(2, @const(i32));
+values[0] = 3;
+values[1] = 4;
+(@at(node.next).value == 7) and (box.item.value == 7) and
+(values[0] + values[1] == frozen.value);

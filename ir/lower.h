@@ -23,9 +23,14 @@ static u32 lower_anon_struct errs(superscope *ss, scope *s, astidx a) {
   let n = elems.len;
 
   let members = (r_struct){.start = ss_member_reserve(ss, n)};
-  let _this = T(tu_of(r_tag, {ss_type_intern(ss, T(tu_of(r_struct, members))), unique_type_name(ss)}));
+  // The member list is incomplete: interning it could alias another unfinished struct.
+  let inner = ss_type_reserve(ss, 0);
+  sglist_get(ss->tlist, inner - 1) = T(tu_of(r_struct, members));
+  let _this = T(tu_of(r_tag, {inner, unique_type_name(ss)}));
   let ns = scope_inferior(ss, s);
-  moxmap_set(ss->type_info, type_name(ss_typeenv(ss), _this.t.r_tag.name), ns);
+  bool is_positional = true;
+  moxmap_set(ss->type_info, type_name(ss_typeenv(ss), _this.t.r_tag.name),
+      ((type_metadata){.namespace = ns, .is_anonymous = true, .is_positional = true}));
 
   let res = scope_add_value(ss, s, TV_of(ss, _this));
   usize offset = 0;
@@ -46,16 +51,24 @@ static u32 lower_anon_struct errs(superscope *ss, scope *s, astidx a) {
       }
     }
 
+    if (!i) {
+      is_positional = !nameidx;
+      moxmap_get(ss->type_info, type_name(ss_typeenv(ss), _this.t.r_tag.name))->is_positional = is_positional;
+    } else if (is_positional != !nameidx) return_err("ANONYMOUS_MIXED_MEMBERS", 0);
     let numbered = snprint(ss->alloc, "{usize}", (usize)i);
     numbered.len--;
     fptr name = nameidx ? try_err(id_from_ast, (ss, s, nameidx), 0) : fp(numbered);
+
+    foreach (let j, range(0, i))
+      if (!fptr_cmp(name, type_name(ss_typeenv(ss), type_struct_item(ss_typeenv(ss), members, j)->name)))
+        return_err("ANONYMOUS_DUPLICATE_MEMBER", 0);
 
     u32 val = valueidx ? try_err(lower, (ss, s, valueidx), 0) : 0;
     Type member = {};
     if (typeidx) {
       member = try_err(lower_asType, (ss, s, typeidx), 0);
       val = val ? try_err(scope_cast_value, (ss, s, val, member), 0) : scope_add_value(ss, s, TV_of(ss, member));
-    } else if (val) member = ss_type(ss, scope_find(ss, s, val)->t);
+    } else if (val) member = Type_stripRef(ss_type(ss, scope_find(ss, s, val)->t));
     else return_err("ANONYMOUS_MEMBER_NO_VALUE", 0);
 
     let e = ss_typeenv(ss);
@@ -63,11 +76,13 @@ static u32 lower_anon_struct errs(superscope *ss, scope *s, astidx a) {
     ri->name = id_srcpos(ss, nameidx, name);
     ri->t = member;
     if (Type_is_comptime(member)) {
-      try_err(scope_bind, (ss, ns, scope_add_value(ss, ns, *scope_find(ss, s, val)), name), 0);
+      let snapshot = scope_add_value(ss, s, TV_of(ss, member));
+      try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = val, .d = snapshot})), 0);
+      try_err(scope_bind, (ss, ns, scope_add_value(ss, ns, *scope_find(ss, s, snapshot)), name), 0);
       continue;
     }
     ri->offset = lineup(offset, ri->alignment = Type_alignof(member, e));
-    offset += Type_sizeof(member, e);
+    offset = ri->offset + Type_sizeof(member, e);
 
     let slot = scope_add_value(ss, s, TV_any(ss));
     try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_field, {.l = res, .d = slot, .i = (u32)i})), 0);

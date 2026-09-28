@@ -32,10 +32,10 @@ static bool function_should_be_emitted(superscope *ss, function_instance *instan
   return returns_runtime;
 }
 
-static void makeFunctionType(superscope *ss, printerfunction_context _ctx, typeidx idx) {
+static void makeFunctionType(superscope *ss, printerfunction_context _ctx, c_type_names names, typeidx idx) {
   Type t = ss_type(ss, idx);
   if (Type_is_comptime(t)) PUTS("void_t");
-  else makeTypedefName(_ctx, idx);
+  else makeType(ss, _ctx, names, ss_type(ss, idx));
 }
 
 static void makeVariable(printerfunction_context _ctx, scope *s, u32 reg) {
@@ -48,20 +48,16 @@ static void makeVariable(printerfunction_context _ctx, scope *s, u32 reg) {
 static Type function_register_type(superscope *ss, scope *s, u32 reg) {
   return ss_type(ss, scope_find(ss, s, reg)->t);
 }
-static typeidx function_register_typeidx(superscope *ss, scope *s, u32 reg) {
-  return scope_find(ss, s, reg)->t;
-}
-static void makeRegisterType(superscope *ss, printerfunction_context _ctx, scope *s, u32 reg) {
-  makeTypedefName(_ctx, function_register_typeidx(ss, s, reg));
+static void makeRegisterType(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s, u32 reg) {
+  makeType(ss, _ctx, names, function_register_type(ss, s, reg));
 }
 
 static bool function_is_wide(superscope *ss, Type t) {
   return out_integerIsWide(ss_typeenv(ss), t);
 }
 
-static void makeWideType(printerfunction_context _ctx, u32 bits) {
-  PUTS("cshl_int_");
-  USETYPEPRINTER(usize, bits);
+static void makeWideType(superscope *ss, printerfunction_context _ctx, c_type_names names, u32 bits) {
+  USETYPEPRINTER(cstr, out_typeName(ss, names, T(TypeTree_uint(bits))));
 }
 
 static u32 function_integer_bits(superscope *ss, Type t) {
@@ -159,9 +155,9 @@ static void makeCStringLiteral(printerfunction_context _ctx, const unsigned char
   PUTS("\\0\"");
 }
 
-static void makeVariableInit(superscope *ss, printerfunction_context _ctx, scope *s, u32 reg);
+static void makeVariableInit(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s, u32 reg);
 
-static void makeRegisterPlace(superscope *ss, printerfunction_context _ctx, scope *s, u32 reg) {
+static void makeRegisterPlace(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s, u32 reg) {
   Type t = function_register_type(ss, s, reg);
   typed_value *value = scope_find(ss, s, reg);
   if (tu_is(c_int, t.t)) {
@@ -176,10 +172,10 @@ static void makeRegisterPlace(superscope *ss, printerfunction_context _ctx, scop
       base.iscomptime = base.isconst = base.isvolatile = false;
       // Compound literals can also be addressed by cshl_write and wide operations.
       PUTS("((");
-      makeType(ss, _ctx, base);
+      makeType(ss, _ctx, names, base);
       PUTS(")");
       if (!function_is_wide(ss, base)) PUTS("{ ");
-      makeVariableInit(ss, _ctx, s, reg);
+      makeVariableInit(ss, _ctx, names, s, reg);
       if (!function_is_wide(ss, base)) PUTS(" }");
       PUTS(")");
       return;
@@ -202,7 +198,7 @@ static void makeRegisterPlace(superscope *ss, printerfunction_context _ctx, scop
   assertMessage(t.ref_kind != ref_dref, "double-offset reference used as a C value");
   if (t.ref_kind == ref_ref && function_register_is_field_ref(ss, s, reg)) {
     PUTS("*(*(");
-    makeRegisterType(ss, _ctx, s, reg);
+    makeRegisterType(ss, _ctx, names, s, reg);
     PUTS(" *)");
     makeVariable(_ctx, s, reg);
     PUTS(")");
@@ -212,7 +208,7 @@ static void makeRegisterPlace(superscope *ss, printerfunction_context _ctx, scop
   makeVariable(_ctx, s, reg);
 }
 
-static void makeDrefSignBits(superscope *ss, printerfunction_context _ctx, scope *s, u32 reg) {
+static void makeDrefSignBits(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s, u32 reg) {
   Type t = function_register_type(ss, s, reg);
   if (t.ref_kind == ref_dref && function_sign_bits(t, ss_typeenv(ss))) {
     makeVariable(_ctx, s, reg);
@@ -220,35 +216,35 @@ static void makeDrefSignBits(superscope *ss, printerfunction_context _ctx, scope
   } else USETYPEPRINTER(u32, function_sign_bits(t, ss_typeenv(ss)));
 }
 
-static void makeDrefValue(superscope *ss, printerfunction_context _ctx, scope *s, u32 reg) {
+static void makeDrefValue(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s, u32 reg) {
   Type t = function_register_type(ss, s, reg);
   t.ref_kind = 0;
   PUTS("(");
-  makeType(ss, _ctx, t);
+  makeType(ss, _ctx, names, t);
   PUTS(")");
   PUTS("cshl_load(");
   makeVariable(_ctx, s, reg);
   PUTS(".data, ");
-  makeDrefSignBits(ss, _ctx, s, reg);
+  makeDrefSignBits(ss, _ctx, names, s, reg);
   PUTS(")");
 }
 
-static void makeRegisterAddress(superscope *ss, printerfunction_context _ctx, scope *s, u32 reg) {
+static void makeRegisterAddress(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s, u32 reg) {
   Type t = function_register_type(ss, s, reg);
   assertMessage(t.ref_kind != ref_dref, "double-offset reference used as an address");
   if (t.ref_kind == ref_ref) {
     PUTS("&");
-    makeRegisterPlace(ss, _ctx, s, reg);
-  } else if (t.ptr_level) makeRegisterPlace(ss, _ctx, s, reg);
+    makeRegisterPlace(ss, _ctx, names, s, reg);
+  } else if (t.ptr_level) makeRegisterPlace(ss, _ctx, names, s, reg);
   else {
     PUTS("&");
-    makeRegisterPlace(ss, _ctx, s, reg);
+    makeRegisterPlace(ss, _ctx, names, s, reg);
   }
 }
 
-static void makeRegisterSize(superscope *ss, printerfunction_context _ctx, scope *s, u32 reg) {
+static void makeRegisterSize(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s, u32 reg) {
   PUTS("sizeof(");
-  makeRegisterPlace(ss, _ctx, s, reg);
+  makeRegisterPlace(ss, _ctx, names, s, reg);
   PUTS(")");
 }
 
@@ -313,9 +309,9 @@ static void makeRawOperator(printerfunction_context _ctx, enum_op op) {
   }
 }
 
-static void makeRawOperand(superscope *ss, printerfunction_context _ctx, scope *s, Type t, u32 reg) {
-  if (t.ref_kind == ref_dref) makeDrefValue(ss, _ctx, s, reg);
-  else makeRegisterPlace(ss, _ctx, s, reg);
+static void makeRawOperand(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s, Type t, u32 reg) {
+  if (t.ref_kind == ref_dref) makeDrefValue(ss, _ctx, names, s, reg);
+  else makeRegisterPlace(ss, _ctx, names, s, reg);
 }
 
 static void makeWideDecimal(printerfunction_context _ctx, bigint value);
@@ -323,6 +319,7 @@ static void makeWideDecimal(printerfunction_context _ctx, bigint value);
 static void makeWideOperandAs(
     superscope *ss,
     printerfunction_context _ctx,
+    c_type_names names,
     scope *s,
     u32 reg,
     u32 target_bits
@@ -334,7 +331,7 @@ static void makeWideOperandAs(
       PUTS("->bytes");
     } else {
       PUTS("(");
-      makeRegisterPlace(ss, _ctx, s, reg);
+      makeRegisterPlace(ss, _ctx, names, s, reg);
       PUTS(".bytes)");
     }
     return;
@@ -345,15 +342,15 @@ static void makeWideOperandAs(
     PUTS("}");
     return;
   }
-  makeWideType(_ctx, target_bits);
+  makeWideType(ss, _ctx, names, target_bits);
   PUTS("_from_decimal(");
   makeWideDecimal(_ctx, scope_find(ss, s, reg)->v.c_int);
   PUTS(").bytes");
 }
 
-static void makeWideOperand(superscope *ss, printerfunction_context _ctx, scope *s, u32 reg) {
+static void makeWideOperand(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s, u32 reg) {
   u32 bits = function_integer_bits(ss, function_register_type(ss, s, reg));
-  makeWideOperandAs(ss, _ctx, s, reg, bits);
+  makeWideOperandAs(ss, _ctx, names, s, reg, bits);
 }
 
 static void makeWideDecimal(printerfunction_context _ctx, bigint value) {
@@ -370,6 +367,7 @@ static void makeWideDecimal(printerfunction_context _ctx, bigint value) {
 static void makeWideCastFromOperand(
     superscope *ss,
     printerfunction_context _ctx,
+    c_type_names names,
     scope *s,
     u32 dest_reg,
     u32 source_reg
@@ -380,27 +378,27 @@ static void makeWideCastFromOperand(
   Type base = Type_stripTag(dt, ss_typeenv(ss));
   bool is_signed = tu_is(r_sint, base.t);
   if (tu_is(c_int, lt.t)) {
-    makeWideType(_ctx, bits);
+    makeWideType(ss, _ctx, names, bits);
     PUTS("_from_decimal(");
     makeWideDecimal(_ctx, scope_find(ss, s, source_reg)->v.c_int);
     PUTS(")");
     return;
   }
-  makeWideType(_ctx, bits);
+  makeWideType(ss, _ctx, names, bits);
   PUTS("_cast_value(");
   if (function_is_wide(ss, lt)) {
-    makeWideOperandAs(ss, _ctx, s, source_reg, bits);
+    makeWideOperandAs(ss, _ctx, names, s, source_reg, bits);
   } else {
     PUTS("(const unsigned char *)&(");
     lt.ref_kind = 0;
-    makeType(ss, _ctx, lt);
+    makeType(ss, _ctx, names, lt);
     PUTS("){ ");
-    makeRegisterPlace(ss, _ctx, s, source_reg);
+    makeRegisterPlace(ss, _ctx, names, s, source_reg);
     PUTS(" }");
   }
   lt.ref_kind = 0;
   PUTS(", sizeof(");
-  makeType(ss, _ctx, lt);
+  makeType(ss, _ctx, names, lt);
   PUTS("), ");
   USETYPEPRINTER(u32, function_integer_bits(ss, lt));
   PUTS(", ");
@@ -413,6 +411,7 @@ static void makeWideCastFromOperand(
 static void makeWideOperation(
     superscope *ss,
     printerfunction_context _ctx,
+    c_type_names names,
     scope *s,
     u32 dest_reg,
     u32 left_reg,
@@ -424,11 +423,11 @@ static void makeWideOperation(
   Type base = Type_stripTag(dt, ss_typeenv(ss));
   bool is_signed = tu_is(r_sint, base.t);
   if (operation == enop_shl || operation == enop_shr) {
-    makeWideType(_ctx, bits);
+    makeWideType(ss, _ctx, names, bits);
     PUTS("_shift_value(");
-    makeWideOperandAs(ss, _ctx, s, left_reg, bits);
+    makeWideOperandAs(ss, _ctx, names, s, left_reg, bits);
     PUTS(", ");
-    makeRegisterPlace(ss, _ctx, s, right_reg);
+    makeRegisterPlace(ss, _ctx, names, s, right_reg);
     PUTS(", ");
     if (operation == enop_shl) PUTS("1");
     else PUTS("0");
@@ -438,11 +437,11 @@ static void makeWideOperation(
     PUTS(")");
     return;
   }
-  makeWideType(_ctx, bits);
+  makeWideType(ss, _ctx, names, bits);
   PUTS("_binary_value(");
-  makeWideOperandAs(ss, _ctx, s, left_reg, bits);
+  makeWideOperandAs(ss, _ctx, names, s, left_reg, bits);
   PUTS(", ");
-  makeWideOperandAs(ss, _ctx, s, right_reg, bits);
+  makeWideOperandAs(ss, _ctx, names, s, right_reg, bits);
   // enum_op derives its arithmetic values from cshl_int_op, so the operation
   // passes straight through as a cast.
   PUTS(", (enum cshl_int_op)");
@@ -456,17 +455,18 @@ static void makeWideOperation(
 static void makeWideTruth(
     superscope *ss,
     printerfunction_context _ctx,
+    c_type_names names,
     scope *s,
     u32 reg,
     u32 bits
 ) {
   PUTS("(cshl_int_compare(");
-  makeWideOperandAs(ss, _ctx, s, reg, bits);
+  makeWideOperandAs(ss, _ctx, names, s, reg, bits);
   PUTS(", ");
-  makeWideType(_ctx, bits);
+  makeWideType(ss, _ctx, names, bits);
   PUTS("_from_decimal(\"0\").bytes");
   PUTS(", sizeof(");
-  makeWideType(_ctx, bits);
+  makeWideType(ss, _ctx, names, bits);
   PUTS("), ");
   USETYPEPRINTER(usize, bits);
   PUTS(", 0) != 0)");
@@ -475,6 +475,7 @@ static void makeWideTruth(
 static void makeWideComparison(
     superscope *ss,
     printerfunction_context _ctx,
+    c_type_names names,
     scope *s,
     u32 left_reg,
     u32 right_reg,
@@ -487,11 +488,11 @@ static void makeWideComparison(
   Type base = Type_stripTag(comparison_type, ss_typeenv(ss));
   bool is_signed = tu_is(r_sint, base.t);
   PUTS("(cshl_int_compare(");
-  makeWideOperandAs(ss, _ctx, s, left_reg, bits);
+  makeWideOperandAs(ss, _ctx, names, s, left_reg, bits);
   PUTS(", ");
-  makeWideOperandAs(ss, _ctx, s, right_reg, bits);
+  makeWideOperandAs(ss, _ctx, names, s, right_reg, bits);
   PUTS(", sizeof(");
-  makeWideType(_ctx, bits);
+  makeWideType(ss, _ctx, names, bits);
   PUTS("), ");
   USETYPEPRINTER(usize, bits);
   PUTS(", ");
@@ -502,62 +503,63 @@ static void makeWideComparison(
   PUTS(" 0)");
 }
 
-static void makeShiftAmount(superscope *ss, printerfunction_context _ctx, scope *s, Type rt, u32 r, bool negative) {
+static void makeShiftAmount(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s, Type rt, u32 r, bool negative) {
   if (negative) {
     PUTS("((");
     u32 bits = function_integer_bits(ss, rt);
-    makeType(ss, _ctx, T(TypeTree_uint(bits ? bits : sizeof(usize) * CHAR_BIT)));
+    makeType(ss, _ctx, names, T(TypeTree_uint(bits ? bits : sizeof(usize) * CHAR_BIT)));
     PUTS(")(-(");
   }
-  makeRawOperand(ss, _ctx, s, rt, r);
+  makeRawOperand(ss, _ctx, names, s, rt, r);
   if (negative) PUTS(" + 1)) + 1u)");
 }
 
-static void makeDirectedShift(superscope *ss, printerfunction_context _ctx, scope *s, Type dt, Type lt, Type rt, u32 l, u32 r, bool left, bool negative) {
+static void makeDirectedShift(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s, Type dt, Type lt, Type rt, u32 l, u32 r, bool left, bool negative) {
   u32 bits = function_integer_bits(ss, dt);
   bool is_signed = !!function_sign_bits(dt, ss_typeenv(ss));
   PUTS("(");
-  makeShiftAmount(ss, _ctx, s, rt, r, negative);
+  makeShiftAmount(ss, _ctx, names, s, rt, r, negative);
   PUTS(" >= ");
   USETYPEPRINTER(u32, bits);
   PUTS(" ? ");
   if (!left && is_signed) {
     PUTS("(");
-    makeRawOperand(ss, _ctx, s, lt, l);
+    makeRawOperand(ss, _ctx, names, s, lt, l);
     PUTS(" < 0 ? -1 : 0)");
   } else PUTS("0");
   PUTS(" : ((");
   if (left) {
     PUTS("(");
-    makeType(ss, _ctx, T(TypeTree_uint(bits)));
+    makeType(ss, _ctx, names, T(TypeTree_uint(bits)));
     PUTS(")");
   }
-  makeRawOperand(ss, _ctx, s, lt, l);
+  makeRawOperand(ss, _ctx, names, s, lt, l);
   // Keep narrow left operands unsigned after C's integer promotions.
   if (left) PUTS(" + 0u");
   if (left) PUTS(") << ");
   else PUTS(") >> ");
-  makeShiftAmount(ss, _ctx, s, rt, r, negative);
+  makeShiftAmount(ss, _ctx, names, s, rt, r, negative);
   PUTS("))");
 }
 
-static void makeShift(superscope *ss, printerfunction_context _ctx, scope *s, u32 l, u32 r, Type dt, Type lt, Type rt, u32 op) {
+static void makeShift(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s, u32 l, u32 r, Type dt, Type lt, Type rt, u32 op) {
   bool left = op == enop_shl;
   bool signed_amount = function_sign_bits(rt, ss_typeenv(ss)) || tu_is(c_int, rt.t);
   if (signed_amount) {
     PUTS("(");
-    makeRawOperand(ss, _ctx, s, rt, r);
+    makeRawOperand(ss, _ctx, names, s, rt, r);
     PUTS(" < 0 ? ");
-    makeDirectedShift(ss, _ctx, s, dt, lt, rt, l, r, !left, true);
+    makeDirectedShift(ss, _ctx, names, s, dt, lt, rt, l, r, !left, true);
     PUTS(" : ");
   }
-  makeDirectedShift(ss, _ctx, s, dt, lt, rt, l, r, left, false);
+  makeDirectedShift(ss, _ctx, names, s, dt, lt, rt, l, r, left, false);
   if (signed_amount) PUTS(")");
 }
 
 static void makeCall(
     superscope *ss,
     printerfunction_context _ctx,
+    c_type_names names,
     scope *s,
     u32 callee_reg,
     u32 first_arg,
@@ -578,17 +580,17 @@ static void makeCall(
     first = false;
 
     if (t.ref_kind == ref_ref) {
-      makeRegisterAddress(ss, _ctx, s, i);
+      makeRegisterAddress(ss, _ctx, names, s, i);
     } else if (t.ref_kind == ref_dref) {
       makeVariable(_ctx, s, i);
     } else {
-      makeRegisterPlace(ss, _ctx, s, i);
+      makeRegisterPlace(ss, _ctx, names, s, i);
     }
   }
   PUTS(")");
 }
 
-static void makeReference(superscope *ss, printerfunction_context _ctx, scope *s, itypeof(ir, ir_getref) op) {
+static void makeReference(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s, itypeof(ir, ir_getref) op) {
   Type dt = function_register_type(ss, s, op.d);
   PUTS("  ");
   if (dt.ref_kind == ref_dref) {
@@ -601,7 +603,7 @@ static void makeReference(superscope *ss, printerfunction_context _ctx, scope *s
     bool field_ref = lt.ref_kind && function_register_is_field_ref(ss, s, op.d);
     if (field_ref) {
       PUTS("*((");
-      makeRegisterType(ss, _ctx, s, op.l);
+      makeRegisterType(ss, _ctx, names, s, op.l);
       PUTS(" *)");
       makeVariable(_ctx, s, op.d);
       PUTS(") = ");
@@ -613,7 +615,7 @@ static void makeReference(superscope *ss, printerfunction_context _ctx, scope *s
       else if (lt.ref_kind) {
         if (function_register_is_field_ref(ss, s, op.l)) {
           PUTS("*(");
-          makeRegisterType(ss, _ctx, s, op.l);
+          makeRegisterType(ss, _ctx, names, s, op.l);
           PUTS(" *)");
         }
         makeVariable(_ctx, s, op.l);
@@ -626,7 +628,7 @@ static void makeReference(superscope *ss, printerfunction_context _ctx, scope *s
   PUTS(";");
 }
 
-static void makeFieldReference(superscope *ss, printerfunction_context _ctx, scope *s, itypeof(ir, ir_field) op) {
+static void makeFieldReference(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s, itypeof(ir, ir_field) op) {
   typeenv e = ss_typeenv(ss);
   Type lt = function_register_type(ss, s, op.l);
   r_bitfield bf = TypeTree_inner_bitfield(lt.t, e);
@@ -637,7 +639,7 @@ static void makeFieldReference(superscope *ss, printerfunction_context _ctx, sco
     foreach (let i, range(0, op.i))
       offset += type_bitf_item(e, bf, i)->width;
     PUTS(".data = (double_offset){ .ptr = (unsigned char *)");
-    makeRegisterAddress(ss, _ctx, s, op.l);
+    makeRegisterAddress(ss, _ctx, names, s, op.l);
     PUTS(" + ");
     USETYPEPRINTER(usize, offset / 8);
     PUTS(", .bit_offset = ");
@@ -650,9 +652,9 @@ static void makeFieldReference(superscope *ss, printerfunction_context _ctx, sco
     assertMessage(strct.start && op.i < type_struct_len(e, strct), "field type has no member");
     u32 offset = type_struct_item(e, strct, op.i)->offset;
     PUTS(" = (");
-    makeRegisterType(ss, _ctx, s, op.d);
+    makeRegisterType(ss, _ctx, names, s, op.d);
     PUTS(")((unsigned char *)");
-    makeRegisterAddress(ss, _ctx, s, op.l);
+    makeRegisterAddress(ss, _ctx, names, s, op.l);
     PUTS(" + ");
     USETYPEPRINTER(usize, offset);
     PUTS(")");
@@ -660,21 +662,21 @@ static void makeFieldReference(superscope *ss, printerfunction_context _ctx, sco
   PUTS(";");
 }
 
-static void makeArrayReference(superscope *ss, printerfunction_context _ctx, scope *s, itypeof(ir, ir_array) op) {
+static void makeArrayReference(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s, itypeof(ir, ir_array) op) {
   PUTS("  ");
   makeVariable(_ctx, s, op.d);
   PUTS(" = (");
-  makeRegisterType(ss, _ctx, s, op.d);
+  makeRegisterType(ss, _ctx, names, s, op.d);
   PUTS(")((unsigned char *)");
-  makeRegisterAddress(ss, _ctx, s, op.l);
+  makeRegisterAddress(ss, _ctx, names, s, op.l);
   PUTS(" + ");
-  makeRegisterPlace(ss, _ctx, s, op.r);
+  makeRegisterPlace(ss, _ctx, names, s, op.r);
   PUTS(" * sizeof(*");
   makeVariable(_ctx, s, op.d);
   PUTS("));");
 }
 
-static void makeCast(superscope *ss, printerfunction_context _ctx, scope *s, itypeof(ir, ir_cast) op) {
+static void makeCast(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s, itypeof(ir, ir_cast) op) {
   Type dt = function_register_type(ss, s, op.d);
   Type lt = function_register_type(ss, s, op.l);
   PUTS("  ");
@@ -682,7 +684,7 @@ static void makeCast(superscope *ss, printerfunction_context _ctx, scope *s, ity
     if (dt.ref_kind == ref_ref) PUTS("*");
     makeVariable(_ctx, s, op.d);
     PUTS(" = ");
-    makeWideCastFromOperand(ss, _ctx, s, op.d, op.l);
+    makeWideCastFromOperand(ss, _ctx, names, s, op.d, op.l);
     PUTS(";");
   } else if (function_is_wide(ss, lt)) {
     u32 source_bits = function_integer_bits(ss, lt);
@@ -691,11 +693,11 @@ static void makeCast(superscope *ss, printerfunction_context _ctx, scope *s, ity
     if (dt.ref_kind == ref_ref) PUTS("*");
     makeVariable(_ctx, s, op.d);
     PUTS(" = (");
-    makeType(ss, _ctx, dt);
+    makeType(ss, _ctx, names, dt);
     PUTS(") cshl_int_to_i64(");
-    makeWideOperand(ss, _ctx, s, op.l);
+    makeWideOperand(ss, _ctx, names, s, op.l);
     PUTS(", sizeof(");
-    makeWideType(_ctx, source_bits);
+    makeWideType(ss, _ctx, names, source_bits);
     PUTS("), ");
     USETYPEPRINTER(usize, source_bits);
     PUTS(", ");
@@ -709,55 +711,55 @@ static void makeCast(superscope *ss, printerfunction_context _ctx, scope *s, ity
     if (dt.ref_kind == ref_ref) PUTS("*");
     makeVariable(_ctx, s, op.d);
     PUTS(", ");
-    makeRegisterSize(ss, _ctx, s, op.d);
+    makeRegisterSize(ss, _ctx, names, s, op.d);
     PUTS(", ");
-    makeRegisterSize(ss, _ctx, s, op.d);
+    makeRegisterSize(ss, _ctx, names, s, op.d);
     PUTS(", ");
-    makeDrefSignBits(ss, _ctx, s, op.l);
+    makeDrefSignBits(ss, _ctx, names, s, op.l);
     PUTS(");");
   } else {
     if (dt.ref_kind == ref_ref) PUTS("*");
     makeVariable(_ctx, s, op.d);
     PUTS(" = (");
-    makeType(ss, _ctx, dt);
+    makeType(ss, _ctx, names, dt);
     PUTS(")");
-    makeRegisterPlace(ss, _ctx, s, op.l);
+    makeRegisterPlace(ss, _ctx, names, s, op.l);
     PUTS(";");
   }
 }
 
-static void makeCoutText(superscope *ss, printerfunction_context _ctx, u32 chunk) {
+static void makeCoutText(superscope *ss, printerfunction_context _ctx, c_type_names names, u32 chunk) {
   assertMessage(chunk < msList_len(ss->coutput));
   fptr text = *msList_get(ss->coutput, chunk);
   _ctx.put((const c8 *)text.ptr, _ctx.arb, text.len, 0);
 }
 
-static void makeScopeCout(superscope *ss, printerfunction_context _ctx, scope *s) {
+static void makeScopeCout(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s) {
   foreach (let inst, span(s->instructions, msList_len(s->instructions)))
     if (tu_is(ir_cout, *inst)) {
-      makeCoutText(ss, _ctx, inst->ir_cout);
+      makeCoutText(ss, _ctx, names, inst->ir_cout);
       PUTS("\n");
     }
 }
 
-static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx, scope *s, ir inst) {
+static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s, ir inst) {
   tu_match_void(
       inst,
       (ir_cout, _, ), // handled
-      (ir_getref, op, makeReference(ss, _ctx, s, op)),
+      (ir_getref, op, makeReference(ss, _ctx, names, s, op)),
       (ir_getptr, op, {
         makeVariable(_ctx, s, op.d);
         PUTS(" = ");
-        makeRegisterAddress(ss, _ctx, s, op.l);
+        makeRegisterAddress(ss, _ctx, names, s, op.l);
         PUTS(";");
       }),
       (ir_putptr, op, {
         makeVariable(_ctx, s, op.d);
         PUTS(" = ");
-        makeRegisterPlace(ss, _ctx, s, op.l);
+        makeRegisterPlace(ss, _ctx, names, s, op.l);
         PUTS(";");
       }),
-      (ir_cast, op, makeCast(ss, _ctx, s, op)),
+      (ir_cast, op, makeCast(ss, _ctx, names, s, op)),
       (ir_rawop, op, {
         Type dt = function_register_type(ss, s, op.d);
         Type lt = function_register_type(ss, s, op.l);
@@ -767,53 +769,53 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
         makeVariable(_ctx, s, op.d);
         PUTS(" = ");
         if (function_is_wide(ss, dt))
-          makeWideOperation(ss, _ctx, s, op.d, op.l, op.r, raw_op);
+          makeWideOperation(ss, _ctx, names, s, op.d, op.l, op.r, raw_op);
         else if (function_is_wide(ss, lt) || function_is_wide(ss, rt)) {
           switch_tuple(
               raw_op,
               (enop_oand, {
                 u32 truth_bits = function_is_wide(ss, lt) ? function_integer_bits(ss, lt) : function_integer_bits(ss, rt);
-                makeWideTruth(ss, _ctx, s, op.l, truth_bits);
+                makeWideTruth(ss, _ctx, names, s, op.l, truth_bits);
                 PUTS(" && ");
-                makeWideTruth(ss, _ctx, s, op.r, truth_bits);
+                makeWideTruth(ss, _ctx, names, s, op.r, truth_bits);
               }),
               (enop_oor, {
                 u32 truth_bits = function_is_wide(ss, lt) ? function_integer_bits(ss, lt) : function_integer_bits(ss, rt);
-                makeWideTruth(ss, _ctx, s, op.l, truth_bits);
+                makeWideTruth(ss, _ctx, names, s, op.l, truth_bits);
                 PUTS(" || ");
-                makeWideTruth(ss, _ctx, s, op.r, truth_bits);
+                makeWideTruth(ss, _ctx, names, s, op.r, truth_bits);
               }),
-              (enop_eq, makeWideComparison(ss, _ctx, s, op.l, op.r, enop_eq)),
-              (enop_neq, makeWideComparison(ss, _ctx, s, op.l, op.r, enop_neq)),
-              (enop_les, makeWideComparison(ss, _ctx, s, op.l, op.r, enop_les)),
-              (enop_mor, makeWideComparison(ss, _ctx, s, op.l, op.r, enop_mor)),
-              (enop_leq, makeWideComparison(ss, _ctx, s, op.l, op.r, enop_leq)),
-              (enop_moq, makeWideComparison(ss, _ctx, s, op.l, op.r, enop_moq)),
+              (enop_eq, makeWideComparison(ss, _ctx, names, s, op.l, op.r, enop_eq)),
+              (enop_neq, makeWideComparison(ss, _ctx, names, s, op.l, op.r, enop_neq)),
+              (enop_les, makeWideComparison(ss, _ctx, names, s, op.l, op.r, enop_les)),
+              (enop_mor, makeWideComparison(ss, _ctx, names, s, op.l, op.r, enop_mor)),
+              (enop_leq, makeWideComparison(ss, _ctx, names, s, op.l, op.r, enop_leq)),
+              (enop_moq, makeWideComparison(ss, _ctx, names, s, op.l, op.r, enop_moq)),
               (default, assertMessage(false, "wide integer operation has a native destination"))
           );
         } else if (raw_op == enop_shl || raw_op == enop_shr) {
-          makeShift(ss, _ctx, s, op.l, op.r, dt, lt, rt, raw_op);
+          makeShift(ss, _ctx, names, s, op.l, op.r, dt, lt, rt, raw_op);
         } else {
-          makeRawOperand(ss, _ctx, s, lt, op.l);
+          makeRawOperand(ss, _ctx, names, s, lt, op.l);
           PUTS(" ");
           makeRawOperator(_ctx, raw_op);
           PUTS(" ");
-          makeRawOperand(ss, _ctx, s, rt, op.r);
+          makeRawOperand(ss, _ctx, names, s, rt, op.r);
         }
         PUTS(";");
       }),
-      (ir_field, op, makeFieldReference(ss, _ctx, s, op)),
-      (ir_array, op, makeArrayReference(ss, _ctx, s, op)),
+      (ir_field, op, makeFieldReference(ss, _ctx, names, s, op)),
+      (ir_array, op, makeArrayReference(ss, _ctx, names, s, op)),
       (ir_call, op, {
         Type dt = function_register_type(ss, s, op.d);
         if (dt.ref_kind == ref_dref) {
           makeVariable(_ctx, s, op.d);
           PUTS(" = ");
-          makeCall(ss, _ctx, s, op.l, op.r, op.e);
+          makeCall(ss, _ctx, names, s, op.l, op.r, op.e);
         } else {
           makeVariable(_ctx, s, op.d);
           PUTS(" = ");
-          makeCall(ss, _ctx, s, op.l, op.r, op.e);
+          makeCall(ss, _ctx, names, s, op.l, op.r, op.e);
         }
         PUTS(";");
       }),
@@ -830,9 +832,9 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
             PUTS("cshl_write(");
             makeVariable(_ctx, s, op.d);
             PUTS(".data, (const unsigned char *)&");
-            makeRegisterPlace(ss, _ctx, s, op.l);
+            makeRegisterPlace(ss, _ctx, names, s, op.l);
             PUTS(", ");
-            makeRegisterSize(ss, _ctx, s, op.l);
+            makeRegisterSize(ss, _ctx, names, s, op.l);
             PUTS(");");
           }
         } else {
@@ -843,18 +845,18 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
             if (dt.ref_kind == ref_ref) PUTS("*");
             makeVariable(_ctx, s, op.d);
             PUTS(", ");
-            makeRegisterSize(ss, _ctx, s, op.d);
+            makeRegisterSize(ss, _ctx, names, s, op.d);
             PUTS(", ");
-            makeRegisterSize(ss, _ctx, s, op.d);
+            makeRegisterSize(ss, _ctx, names, s, op.d);
             PUTS(", ");
-            makeDrefSignBits(ss, _ctx, s, op.l);
+            makeDrefSignBits(ss, _ctx, names, s, op.l);
             PUTS(");");
             PUTS(";");
           } else {
             bool field_ref = dt.ref_kind == ref_ref && function_register_is_field_ref(ss, s, op.d);
             if (field_ref) {
               PUTS("*(*(");
-              makeRegisterType(ss, _ctx, s, op.d);
+              makeRegisterType(ss, _ctx, names, s, op.d);
               PUTS(" *)");
               makeVariable(_ctx, s, op.d);
               PUTS(")");
@@ -865,7 +867,7 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
               PUTS(" = ");
             }
             if (dt.ref_kind == ref_ref && lt.ref_kind) makeVariable(_ctx, s, op.l);
-            else makeRegisterPlace(ss, _ctx, s, op.l);
+            else makeRegisterPlace(ss, _ctx, names, s, op.l);
             PUTS(";");
           }
         }
@@ -874,7 +876,7 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
       (ir_blocke, _, PUTS("}")),
       (ir_ifs, cond, {
         PUTS("if(");
-        makeRegisterPlace(ss, _ctx, s, cond);
+        makeRegisterPlace(ss, _ctx, names, s, cond);
         PUTS("){");
       }),
       (ir_ifd, _, PUTS("} else {")),
@@ -904,11 +906,11 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
         Type rt = function_instance_ret(ss, &function->instances[s->instance.index]);
         PUTS("return ");
         if (rt.ref_kind == ref_ref) {
-          makeRegisterAddress(ss, _ctx, s, reg);
+          makeRegisterAddress(ss, _ctx, names, s, reg);
         } else if (rt.ref_kind == ref_dref) {
           makeVariable(_ctx, s, reg);
         } else {
-          makeRegisterPlace(ss, _ctx, s, reg);
+          makeRegisterPlace(ss, _ctx, names, s, reg);
         }
         PUTS(";");
       }),
@@ -921,13 +923,13 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
   PUTS("\n");
 }
 
-static void makeVariableInit(superscope *ss, printerfunction_context _ctx, scope *s, u32 reg) {
+static void makeVariableInit(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s, u32 reg) {
   typeenv e = ss_typeenv(ss);
   Type t = function_register_type(ss, s, reg);
   typed_value *value = scope_find(ss, s, reg);
   usize size = Type_sizeof(t, e);
   if (!size || !value->v.value || t.ref_kind || t.ptr_level) {
-    PUTS("{0}");
+    PUTS("{}");
     return;
   }
   Type base = Type_stripTag(t, e);
@@ -955,39 +957,40 @@ static void makeVariableInit(superscope *ss, printerfunction_context _ctx, scope
     } else USETYPEPRINTER(u64, raw);
     return;
   }
-  PUTS("{0}");
+  PUTS("{}");
 }
 
-static void makeVariables(superscope *ss, printerfunction_context _ctx, scope *s) {
+static void makeVariables(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s) {
   foreach (let value, span(s->values, msList_len(s->values))) {
     Type t = ss_type(ss, value->t);
     if (Type_is_comptime(t)) continue;
     t.isconst = false;
     u32 reg = s->start + (u32)(value - s->values) + 1;
-    makeType(ss, _ctx, t);
+    makeType(ss, _ctx, names, t);
     PUTS(" ");
     makeVariable(_ctx, s, reg);
     PUTS(" = ");
-    makeVariableInit(ss, _ctx, s, reg);
+    makeVariableInit(ss, _ctx, names, s, reg);
     PUTS(";\n");
   }
 }
 
-static void makeFunctionBody(superscope *ss, printerfunction_context _ctx, function_instance *instance) {
-  makeScopeCout(ss, _ctx, instance->spec);
-  makeVariables(ss, _ctx, instance->spec);
+static void makeFunctionBody(superscope *ss, printerfunction_context _ctx, c_type_names names, function_instance *instance) {
+  makeScopeCout(ss, _ctx, names, instance->spec);
+  makeVariables(ss, _ctx, names, instance->spec);
   foreach (let inst, span(instance->spec->instructions, msList_len(instance->spec->instructions)))
-    makeFunctionInstruction(ss, _ctx, instance->spec, *inst);
+    makeFunctionInstruction(ss, _ctx, names, instance->spec, *inst);
 }
 
 static void makeFunctionSignature(
     superscope *ss,
     printerfunction_context _ctx,
+    c_type_names names,
     usize function_index,
     usize instance_index,
     function_instance *instance
 ) {
-  makeType(ss, _ctx, function_instance_ret(ss, instance));
+  makeType(ss, _ctx, names, function_instance_ret(ss, instance));
   PUTS(" cshl_fn"), USETYPEPRINTER(usize, function_index + 1), PUTS("_"), USETYPEPRINTER(usize, instance_index);
   PUTS("(");
   u32 arg_count = 0;
@@ -995,7 +998,7 @@ static void makeFunctionSignature(
     Type t = function_instance_type_at(ss, instance, k);
     if (Type_is_comptime(t)) continue;
     if (arg_count++) PUTS(", ");
-    makeFunctionType(ss, _ctx, instance->spec->values[1 + k].t);
+    makeFunctionType(ss, _ctx, names, instance->spec->values[1 + k].t);
     PUTS(" arg");
     USETYPEPRINTER(usize, arg_count - 1);
   }
@@ -1003,28 +1006,28 @@ static void makeFunctionSignature(
   PUTS(")");
 }
 
-void makeMain(superscope *ss, printerfunction_context _ctx) {
+void makeMain(superscope *ss, printerfunction_context _ctx, c_type_names names) {
   scope *s = ss->outermost;
   PUTS("int main(void){\n");
   foreach (let inst, span(s->instructions, msList_len(s->instructions)))
-    makeFunctionInstruction(ss, _ctx, s, *inst);
+    makeFunctionInstruction(ss, _ctx, names, s, *inst);
   u32 result = scope_last_item(ss, s);
   Type result_type = function_register_type(ss, s, result);
   if (tu_is(r_bool, result_type.t) && !result_type.decorations) {
     PUTS("  return !(");
-    makeRegisterPlace(ss, _ctx, s, result);
+    makeRegisterPlace(ss, _ctx, names, s, result);
     PUTS(");\n");
   } else PUTS("  return 0;\n");
   PUTS("}\n");
 }
 
-void makeFuncs(superscope *ss, printerfunction_context _ctx) {
+void makeFuncs(superscope *ss, printerfunction_context _ctx, c_type_names names) {
   foreach (let i, range(0, msList_len(ss->functions))) {
     function *function = &ss->functions[i];
     foreach (let j, range(0, msList_len(function->instances))) {
       function_instance *instance = &function->instances[j];
       if (!function_should_be_emitted(ss, instance)) continue;
-      makeFunctionSignature(ss, _ctx, i, j, instance);
+      makeFunctionSignature(ss, _ctx, names, i, j, instance);
       PUTS(";\n");
     }
   }
@@ -1033,9 +1036,9 @@ void makeFuncs(superscope *ss, printerfunction_context _ctx) {
     foreach (let j, range(0, msList_len(function->instances))) {
       function_instance *instance = &function->instances[j];
       if (!function_should_be_emitted(ss, instance)) continue;
-      makeFunctionSignature(ss, _ctx, i, j, instance);
+      makeFunctionSignature(ss, _ctx, names, i, j, instance);
       PUTS("{\n");
-      makeFunctionBody(ss, _ctx, instance);
+      makeFunctionBody(ss, _ctx, names, instance);
       PUTS("}\n");
     }
   }

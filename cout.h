@@ -3,20 +3,24 @@
 #include "wheels/print/print_pre.h"
 #include <limits.h>
 
+typedef moxmap(typeidx, c8 *) c_type_names;
+
 void out_runtime(printerfunction_context _ctx);
 void makeRuntime(printerfunction_context _ctx);
-void makeTypes(superscope *ss, printerfunction_context _ctx);
-void makeFuncs(superscope *ss, printerfunction_context _ctx);
-void makeMain(superscope *ss, printerfunction_context _ctx);
-static void makeVariables(superscope *ss, printerfunction_context _ctx, scope *s);
-static void makeScopeCout(superscope *ss, printerfunction_context _ctx, scope *s);
+c_type_names makeTypes(superscope *ss, printerfunction_context _ctx);
+static void freeTypeNames(allocfn allocator, c_type_names names);
+void makeFuncs(superscope *ss, printerfunction_context _ctx, c_type_names names);
+void makeMain(superscope *ss, printerfunction_context _ctx, c_type_names names);
+static void makeVariables(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s);
+static void makeScopeCout(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s);
 void makeC(superscope *ss, printerfunction_context _ctx) {
   makeRuntime(_ctx);
-  makeTypes(ss, _ctx);
-  makeScopeCout(ss, _ctx, ss->outermost);
-  makeVariables(ss, _ctx, ss->outermost);
-  makeFuncs(ss, _ctx);
-  makeMain(ss, _ctx);
+  let names = makeTypes(ss, _ctx);
+  defer { freeTypeNames(_ctx.allocator, names); };
+  makeScopeCout(ss, _ctx, names, ss->outermost);
+  makeVariables(ss, _ctx, names, ss->outermost);
+  makeFuncs(ss, _ctx, names);
+  makeMain(ss, _ctx, names);
 }
 static void out_runtime_text(
     printerfunction_context _ctx,

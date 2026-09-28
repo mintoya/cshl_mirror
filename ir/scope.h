@@ -224,7 +224,7 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
   }));
   // clang-format on
   res->typeindex = moxmap_init(allocator, Type, typeidx, (oxmap_cmp){Type_cmp_hash_ss, res});
-  res->type_info = moxmap_init(allocator, fptr, scope *, (oxmap_cmp){fptr_cmp_hash, res});
+  res->type_info = moxmap_init(allocator, fptr, type_metadata, (oxmap_cmp){fptr_cmp_hash, res});
   res->t_void = ss_type_intern(res, T(tu_of(r_void, {})));
   res->t_any = ss_type_intern(res, T(tu_of(c_any, {})));
   res->t_int = ss_type_intern(res, T(tu_of(c_int, {})));

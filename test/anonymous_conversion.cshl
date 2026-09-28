@@ -1,0 +1,54 @@
+@using @import "module.cshl";
+! ~~ fn (T ~type) type {
+  return @struct {
+    Self ~~ @this();
+    has_err ~bool;
+    data ~@union { err_text ~@ptr(i8); result ~T; };
+  };
+};
+Pos ~~ ! i32;
+otherfn ~~ fn () Pos return [true, [@where "error"[0]]];
+namedfn ~~ fn () Pos return [has_err = true, data = [err_text = @where "error"[0]]];
+successfn ~~ fn () Pos return [data = [result = 42], has_err = false];
+a ~= otherfn();
+b ~= namedfn();
+c ~= successfn();
+
+Pair ~~ @struct { Self ~~ @this(); x ~i32; y ~i32; };
+p ~Pair = [1, 2];
+p = [y = 4, x = 3];
+anon ~= [5, 6];
+q ~Pair = anon;
+r ~= [x = 7, y = 8] as Pair;
+sum ~~ fn (pair ~Pair) i32 return pair.x + pair.y;
+via_any ~~ fn (value ~any) Pair return value;
+v ~= via_any([9, 10]);
+
+next ~~ fn (counter ~@refT(i32)) i32 {
+  counter = counter + 1;
+  return counter;
+};
+Nested ~~ @struct { first ~i32; pair ~Pair; last ~i32; };
+counter ~i32 = 0;
+ordered ~Nested = [next(counter), [next(counter), next(counter)], next(counter)];
+reordered ~Pair = [y = next(counter), x = next(counter)];
+snapshot ~Pair = [counter, next(counter)];
+Ref ~~ @struct { value ~@refT(i32); };
+ref ~Ref = [value ~@refT(i32) = counter];
+ref.value = 8;
+// Compile-time entries must also be captured before subsequent mutation.
+ct ~@comptime(i32) = 10;
+ct_source ~= [ct, { ct = 20; ct; }];
+ct_pair ~Pair = ct_source;
+
+
+(a.has_err and b.has_err) and
+(@at(a.data.err_text) == 101) and (@at(b.data.err_text) == 101) and
+(c.has_err == false) and (c.data.result == 42) and
+(p.x == 3) and (p.y == 4) and (q.x == 5) and (q.y == 6) and
+(r.x == 7) and (r.y == 8) and (sum([11, 12]) == 23) and
+(v.x == 9) and (v.y == 10) and
+(ordered.first == 1) and (ordered.pair.x == 2) and (ordered.pair.y == 3) and (ordered.last == 4) and
+(reordered.y == 5) and (reordered.x == 6) and
+(snapshot.x == 6) and (snapshot.y == 7) and (counter == 8) and
+(ct_pair.x == 10) and (ct_pair.y == 20);

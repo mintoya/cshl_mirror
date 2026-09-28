@@ -31,16 +31,15 @@ arr(3) i8;
     };
   };
 };
-otherfn ~~ fn () (! i32) {
-  result ~@returntype();
-  result.has_err = 1;
-  result.data.err_text = @where "error"[0];
-  return result;
-};
+otherfn ~~ fn () (! i32) 
+  return [true,[@where "error"[0]]];
+otherfn ~~ fn () (! i32) 
+  return [
+    has_err = true,
+    data = [err_text = @where "error"[0]] ];
 main ~~ fn () (! void) {
   otherfn():try();
   result ~@returntype();
-  result.has_err = false;
   return result;
 };
 result ~~ main();

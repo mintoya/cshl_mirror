@@ -19,6 +19,11 @@ typedef struct typeinfo_value {
 typedef struct superscope superscope;
 typedef struct scope scope;
 typedef struct name_env name_env;
+typedef struct {
+  scope *namespace;
+  bool is_anonymous;
+  bool is_positional;
+} type_metadata;
 struct name_env {
   name_env *parent;
   moxmap(fptr, u32) bindings;
@@ -64,7 +69,7 @@ struct superscope {
   moxmap(Type, typeidx) typeindex;
   mxmap(void *, usize) pointers;
   msList(typeidx) thisstack;
-  moxmap(fptr, scope *) type_info;
+  moxmap(fptr, type_metadata) type_info;
   msList(function) functions;
   msList(fptr) coutput;
   scope *outermost;

@@ -18,7 +18,7 @@ struct type_named {
 static inline struct type_named ss_tag_named(superscope *ss, TypeTree t, fptr name) {
   iflet_tu (let tag, r_tag, t)
     if_decl (let info, moxmap_get(ss->type_info, type_name(ss_typeenv(ss), tag.name)))
-      if_decl (let idx, moxmap_get((*info)->named->bindings, name)) return (struct type_named){*info, *idx};
+      if_decl (let idx, moxmap_get(info->namespace->named->bindings, name)) return (struct type_named){info->namespace, *idx};
   return (struct type_named){};
 }
 static inline struct type_named tag_set_member(superscope *ss, Type t) {
@@ -152,10 +152,20 @@ static bool scope_cast_would_change(Type from, Type to, typeenv e) {
       Type_cmp(e, Type_stripTag(from, e), Type_stripTag(to, e))
   );
 }
+static u32 scope_convert_anonymous errs(superscope *ss, scope *s, u32 source, Type target, type_metadata info);
 static u32 scope_cast_value errs(superscope *ss, scope *s, u32 left, Type to) {
   let e = ss_typeenv(ss);
   let ot = ss_type(ss, scope_find(ss, s, left)->t);
   if (!scope_cast_would_change(ot, to, e)) return left;
+  let source_base = Type_stripTag(ot, e);
+  let target_base = Type_stripTag(to, e);
+  if (!ot.ptr_level && !to.ptr_level && !to.ref_kind && !Type_is_comptime(to) &&
+      tu_is(r_tag, ot.t) && tu_is(r_struct, target_base.t) &&
+      TypeTree_cmp(e, source_base.t, target_base.t)) {
+    let info = moxmap_get(ss->type_info, type_name(e, ot.t.r_tag.name));
+    if (info && info->is_anonymous)
+      return try_err(scope_convert_anonymous, (ss, s, left, to, *info), 0);
+  }
   if (Type_is_comptime(to) && Type_is_comptime(ot)) {
     let work = scope_inferior(ss, s);
     let input = scope_add_value(ss, work, *scope_find(ss, s, left));
@@ -166,6 +176,66 @@ static u32 scope_cast_value errs(superscope *ss, scope *s, u32 left, Type to) {
   let d = scope_add_value(ss, s, TV_of(ss, to));
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_cast, {.l = left, .d = d})), 0);
   return d;
+}
+// Read already-evaluated entries in source order; never re-lower initializer ASTs.
+static u32 scope_convert_anonymous errs(superscope *ss, scope *s, u32 source, Type target, type_metadata info) {
+  let e = ss_typeenv(ss);
+  let source_members = TypeTree_inner_struct(ss_type(ss, scope_find(ss, s, source)->t).t, e);
+  let target_members = TypeTree_inner_struct(target.t, e);
+  let count = type_struct_len(e, source_members);
+  let target_count = type_struct_len(e, target_members);
+  usize runtime_count = 0;
+  bool shared_offset = true;
+  foreach (let i, range(0, target_count)) {
+    let member = type_struct_item(e, target_members, i);
+    if (Type_is_comptime(member->t)) continue;
+    runtime_count++;
+    shared_offset &= member->offset == 0;
+  }
+  // Members sharing offset zero select one initializer, regardless of type origin.
+  let required_count = runtime_count && shared_offset ? 1 : runtime_count;
+  if (count != required_count)
+    return_err("ANONYMOUS_MEMBER_COUNT", 0);
+
+  let used = slice_alloc(ss->alloc, u8, target_count);
+  defer { slice_free(ss->alloc, used); };
+  if (used.len) memset(used.ptr, 0, used.len);
+  u32 result = scope_add_value(ss, s, TV_of(ss, target));
+  usize next = 0;
+  foreach (let i, range(0, count)) {
+    let source_member = *type_struct_item(e, source_members, i);
+    let name = type_name(e, source_member.name);
+    usize index = target_count;
+    if (info.is_positional) {
+      while (next < target_count && Type_is_comptime(type_struct_item(e, target_members, next)->t)) next++;
+      index = next++;
+    } else {
+      foreach (let j, range(0, target_count)) {
+        let member = type_struct_item(e, target_members, j);
+        if (!Type_is_comptime(member->t) && !fptr_cmp(name, type_name(e, member->name))) {
+          index = j;
+          break;
+        }
+      }
+    }
+    if (index == target_count) return_err("ANONYMOUS_UNKNOWN_MEMBER", 0);
+    if (used.ptr[index]) return_err("ANONYMOUS_DUPLICATE_MEMBER", 0);
+    used.ptr[index] = true;
+
+    u32 value;
+    if (Type_is_comptime(source_member.t)) {
+      let binding = moxmap_get(info.namespace->named->bindings, name);
+      if (!binding) return_err("ANONYMOUS_MEMBER_NO_VALUE", 0);
+      value = scope_add_value(ss, s, *scope_find(ss, info.namespace, *binding));
+    } else {
+      value = scope_add_value(ss, s, TV_any(ss));
+      try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_field, {.l = source, .d = value, .i = (u32)i})), 0);
+    }
+    let field = scope_add_value(ss, s, TV_any(ss));
+    try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_field, {.l = result, .d = field, .i = (u32)index})), 0);
+    try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = value, .d = field})), 0);
+  }
+  return result;
 }
 u32 lower_condition errs(superscope *ss, scope *s, astidx a) {
   let l = try_err(lower, (ss, s, a), 0);
@@ -300,7 +370,7 @@ static void lower_typeinfo_member errs(superscope *ss, scope *s, typeinfo_value 
       scope *owner = nullptr;
       if (tu_is(r_tag, target.t)) {
         let found = moxmap_get(ss->type_info, type_name(tenv, target.t.r_tag.name));
-        if (found) owner = *found;
+        if (found) owner = found->namespace;
       }
       if (!owner) return_err("TYPE_HAS_NO_NAMESPACE");
       *scope_find(ss, s, d) = TV_with(ss, T(tu_of(c_namespace, {})), VS(.c_namespace = owner));

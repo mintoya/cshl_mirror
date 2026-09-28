@@ -335,6 +335,8 @@ test_file_1(cout_packed_return);
 test_file_1(cout_non_power_alignment);
 test_file_1(cout_union_bool);
 test_file_1(cout_comptime_constants);
+test_file_1(cout_recursive_const);
+test_file_1(anonymous_conversion);
 test_file_1(interpret_import);
 test_file_1(interpret_using);
 test_file_1(typeof_strips_reference_and_isref_reports_it);
@@ -356,6 +358,33 @@ static err_t lower_source_named_err(allocfn arena, fptr src, const char *filenam
   let ctx = catch_errcall((parse_source, (arena, src, filename)), e, (({ return e; }), (astidx_full){}));
   let env = ss_init(arena, ctx);
   return call_err(lower, (env, env->outermost, ctx.idx)).err;
+}
+
+test_fn(anonymous_conversion_rejects_invalid_members) {
+  const struct { const char *source, *error; } cases[] = {
+      {"[x = 1, 2];", "ANONYMOUS_MIXED_MEMBERS"},
+      {"[1, x = 2];", "ANONYMOUS_MIXED_MEMBERS"},
+      {"[[x = 1, 2]];", "ANONYMOUS_MIXED_MEMBERS"},
+      {"T ~~ @struct { x ~@sint(32); y ~@sint(32); }; v ~T = [1];", "ANONYMOUS_MEMBER_COUNT"},
+      {"T ~~ @struct { x ~@sint(32); }; v ~T = [1, 2];", "ANONYMOUS_MEMBER_COUNT"},
+      {"T ~~ @struct { x ~@sint(32); y ~@sint(32); }; v ~T = [x = 1, 2];", "ANONYMOUS_MIXED_MEMBERS"},
+      {"T ~~ @struct { x ~@sint(32); }; v ~T = [z = 1];", "ANONYMOUS_UNKNOWN_MEMBER"},
+      {"T ~~ @struct { x ~@sint(32); y ~@sint(32); }; v ~T = [x = 1, x = 2];", "ANONYMOUS_DUPLICATE_MEMBER"},
+      {"T ~~ @struct { x ~@sint(32); y ~@sint(32); }; v ~T = [x ~@sint(32) = 1, x ~@sint(32) = 2];", "ANONYMOUS_DUPLICATE_MEMBER"},
+      {"T ~~ @union { x ~@sint(32); y ~@sint(32); }; v ~T = [1, 2];", "ANONYMOUS_MEMBER_COUNT"},
+      {"T ~~ @union { x ~@sint(32); }; v ~T = [];", "ANONYMOUS_MEMBER_COUNT"},
+      {"T ~~ @union { x ~@sint(32); }; v ~T = [z = 1];", "ANONYMOUS_UNKNOWN_MEMBER"},
+      {"T ~~ @struct { Self ~~ @this(); x ~@sint(32); }; v ~T = [Self = @sint(32)];", "ANONYMOUS_UNKNOWN_MEMBER"},
+      {"T ~~ @struct { x ~@sint(32); }; v ~T = [@sint(32)];", "CANNOT_CAST"},
+      {"S ~~ @struct { x ~@sint(16); }; T ~~ @struct { x ~@sint(32); }; s ~S; t ~T = s;", "CANNOT_CAST"},
+  };
+  foreach (let c, span(cases, countof(cases))) {
+    let arena = arena_new_ext(allocator, 1 << 16);
+    defer { arena_cleanup(arena); };
+    let e = lower_source_err(arena, ((fptr){strlen(c->source), (u8 *)c->source}));
+    test_assert(e.err_code);
+    test_streq(e.err_code, c->error);
+  }
 }
 
 test_fn(using_rejects_duplicate_names) {

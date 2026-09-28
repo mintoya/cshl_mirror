@@ -92,7 +92,8 @@ test_fn(cout_layout_declarations) {
   test_assert(pipe);
   printerfunction_context pctx = {.put = fileprint, .arb = pipe, .allocator = arena};
   out_runtime(pctx);
-  makeTypes(ss, pctx);
+  let names = makeTypes(ss, pctx);
+  defer { freeTypeNames(arena, names); };
   test_inteq(0, pclose(pipe));
 }
 
@@ -116,10 +117,10 @@ test_fn(cout_preserves_ir_values) {
 }
 
 // Execute generated C: interpreter-only checks cannot detect dropped stores.
-test_fn(cout_comptime_constants_execute) {
+static void check_generated_c(allocfn allocator, test_result *_result, const char *filename) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let ctx = parse_source(nullptr, arena, nullFptr, "test/cout_comptime_constants.cshl");
+  let ctx = parse_source(nullptr, arena, nullFptr, filename);
   let ss = ss_init(arena, ctx);
   lower(nullptr, ss, ss->outermost, ctx.idx);
   scope_finish(ss, ss->outermost);
@@ -135,4 +136,62 @@ test_fn(cout_comptime_constants_execute) {
   makeC(ss, (printerfunction_context){.put = fileprint, .arb = pipe, .allocator = arena});
   test_inteq(0, pclose(pipe));
   test_inteq(0, system(executable));
+}
+
+test_fn(cout_comptime_constants_execute) {
+  check_generated_c(allocator, _result, "test/cout_comptime_constants.cshl");
+}
+
+test_fn(anonymous_conversion_execute) {
+  check_generated_c(allocator, _result, "test/anonymous_conversion.cshl");
+}
+
+test_fn(cout_recursive_const_execute) {
+  check_generated_c(allocator, _result, "test/cout_recursive_const.cshl");
+}
+
+test_fn(cout_type_dispatch_layout) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let ctx = parse_source(nullptr, arena, fp(";"), nullptr);
+  let ss = ss_init(arena, ctx);
+  let a_idx = ss_type_reserve(ss, 0);
+  let b_idx = ss_type_reserve(ss, 0);
+  Type a = T(tu_of(r_tag, {a_idx, ss_srcpos_of_text(ss, fp("A"))}));
+  Type b = T(tu_of(r_tag, {b_idx, ss_srcpos_of_text(ss, fp("B"))}));
+  let a_members = (r_struct){.start = ss_member_reserve(ss, 1)};
+  let b_members = (r_struct){.start = ss_member_reserve(ss, 1)};
+  sglist_get(ss->tlist, a_idx - 1) = T(tu_of(r_struct, a_members));
+  sglist_get(ss->tlist, b_idx - 1) = T(tu_of(r_struct, b_members));
+  // A points to B; B embeds A by value. Emitting B while declaring A's pointer
+  // would try to embed an incomplete A.
+  *type_struct_item(ss_typeenv(ss), a_members, 0) = (r_struct_item){
+      .t = P$(b, ($.ptr_level = 1, $)),
+      .name = ss_srcpos_of_text(ss, fp("b")), .alignment = alignof(void *),
+  };
+  *type_struct_item(ss_typeenv(ss), b_members, 0) = (r_struct_item){
+      .t = a, .name = ss_srcpos_of_text(ss, fp("a")), .alignment = alignof(void *),
+  };
+  let frozen = P$(a, ($.isconst = true, $));
+  ss_type_intern(ss, frozen);
+  let pipe = popen("clang -std=c23 -x c -fsyntax-only -", "w");
+  test_assert(pipe);
+  printerfunction_context pctx = {.put = fileprint, .arb = pipe, .allocator = arena};
+  out_runtime(pctx);
+  let names = makeTypes(ss, pctx);
+  defer { freeTypeNames(arena, names); };
+  test_inteq(0, pclose(pipe));
+  test_assert(out_typeName(ss, names, a) == out_typeName(ss, names, frozen));
+}
+
+test_fn(cout_dispatch_existing_programs) {
+  const char *files[] = {
+      "test/cout_loop_control.cshl", "test/cout_signed_shifts.cshl",
+      "test/cout_packed_return.cshl", "test/cout_non_power_alignment.cshl",
+      "test/cout_union_bool.cshl",
+  };
+  foreach (let file, span(files, countof(files))) {
+    check_generated_c(allocator, _result, *file);
+    if (_result->result) return;
+  }
 }
