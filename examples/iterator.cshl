@@ -1,3 +1,4 @@
+@cout "#include <stdio.h>";
 @using @import "module.cshl";
 
 range ~~ fn (start~i32, end~i32) any {
@@ -87,8 +88,14 @@ sum;
 
 i85 ~arr(4) i8;
 counter~i32;
+
+puti ~~ fn (in ~i32) void @cout "printf(\"%i\\n\",arg0);";
+
 arrayiter(i85) |> map {
   counter = counter + 1;
   _ = counter;
+} |> map {
+  puti(_);
+  _;
 } |> iterate();
 i85;

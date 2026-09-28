@@ -10,22 +10,24 @@ arr(3) i8;
       err_text ~(@ptr @sint 8);
       result ~T;
     };
-    try ~~ fn (self ~ast) (@inlineast()) {
-      return @qot{
+    catch ~~ fn (self ~ast) inline {;};
+    try ~~ fn (self ~ast) inline return @qot {
         this ~~ @uqot(self);
         if this.has_err {
           RT ~type~ @returntype();
-          @cif(@typeinfo(RT).struct.namespace.fn.0 == @typeinfo(!).fn.0, {
-            error ~RT;
-            error.has_err = 1 as bool;
-            error.data.err_text = this.data.err_text;
-            return error;
-          }, {
-            // TODO: do something about it
-          });
+          cif (@typeinfo(RT).struct) {
+            cif (
+              @typeinfo(RT).struct.namespace.fn.0 ==
+              @typeinfo(!).fn.0
+            ) {
+              error ~RT;
+              error.has_err = true;
+              error.data.err_text = this.data.err_text;
+              return error;
+            } else call_to_unbound_thing();
+          } else call_to_unbound_thing();
         };
         this.data.result;
-      };
     };
   };
 };
@@ -35,8 +37,11 @@ otherfn ~~ fn () (! i32) {
   result.data.err_text = @where "error"[0];
   return result;
 };
-main ~~ fn () (! void) {otherfn():try();};
-it ~~ main();
-// it.data.err_text;
-it.has_err;
-
+main ~~ fn () (! void) {
+  otherfn():try();
+  result ~@returntype();
+  result.has_err = false;
+  return result;
+};
+result ~~ main();
+result.has_err;

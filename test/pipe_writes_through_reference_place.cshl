@@ -1,4 +1,4 @@
-@using(@import "../examples/module.cshl");
+@using(@import "module.cshl");
 // `_` is the place a pipe body writes through. Piping a reference member must not let
 // `_ = other_ref` rebind the member; it has to store the value into the referenced place.
 Cell ~type~ @struct {

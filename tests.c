@@ -108,7 +108,7 @@ test_fn(cout_preserves_ir_values) {
   let out = tmpfile();
   test_assert(out);
   printerfunction_context pctx = {.put = fileprint, .arb = out, .allocator = arena};
-  makeC(ss, fileprint, pctx);
+  makeC(ss, pctx);
   test_inteq(0, fclose(out));
   test_inteq(0, memcmp(copy.ptr, ss->outermost->values, copy.len * sizeof(typed_value)));
   let result = interpret(nullptr, ss, ss->outermost);

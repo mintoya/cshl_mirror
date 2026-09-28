@@ -40,9 +40,9 @@ static cmpres typed_value_cmp_typed(Type ta, value_store av, Type tb, value_stor
         let a = av.c_typeinfo;
         let b = bv.c_typeinfo;
         (cmpres)(!a || !b ? icmp((usize)a, (usize)b) :
-            (icmp(a->view, b->view) ?: typed_value_cmp_typed(
+            (icmp(a->view, b->view) ?: (a->view == typeinfo_invalid ? cmp_eq : typed_value_cmp_typed(
                 Type_at(e, a->subject.t), a->subject.v,
-                Type_at(e, b->subject.t), b->subject.v, e)));
+                Type_at(e, b->subject.t), b->subject.v, e))));
       })),
       // asts have no size, so memcmp below would call every ast equal
       (c_ast, _, icmp(av.c_ast, bv.c_ast)),

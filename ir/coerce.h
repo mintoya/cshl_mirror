@@ -270,24 +270,18 @@ static bool bitstruct_member_index(typeenv e, Type base, fptr name, u32 *idx) {
     }
   return false;
 }
-static void lower_dot_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d) {
+static void lower_typeinfo_member errs(superscope *ss, scope *s, typeinfo_value *info, fptr name, u32 d) {
+  if (!info) return_err("NO_MEMBER");
   let tenv = ss_typeenv(ss);
-  let lt = scope_reg_to_type_stripTag(ss, s, l);
-  if (lt.ref_kind) lt.ref_kind = ref_none;
-  let name = value_to_fptr(ss, *scope_find(ss, s, r));
-  if (fptr_isNull(name)) return_err("DOT_NEEDS_NAME");
-
-  if (tu_is(c_typeinfo, lt.t)) {
-    let info = scope_find(ss, s, l)->v.c_typeinfo;
-    if (!info) return_err("NO_MEMBER");
-    let subject_type = ss_type(ss, info->subject.t);
-    if (info->view == typeinfo_fn) {
+  switch (info->view) {
+    case typeinfo_invalid: return_err("NO_MEMBER");
+    case typeinfo_fn: {
       if (!fptr_eq(name, "0") && !fptr_eq(name, "1")) return_err("NO_MEMBER");
       let identity = fptr_eq(name, "0") ? info->subject.v.c_fun.fn : info->subject.v.c_fun.spec;
       *scope_find(ss, s, d) = TV_bigint(ss, BInt.from.i64(ss->alloc, identity));
       return;
     }
-    if (info->view == typeinfo_array) {
+    case typeinfo_array: {
       let arr = TypeTree_inner_array(ss_type(ss, info->subject.v.c_type).t, tenv);
       if (!arr.t) return_err("TYPE_HAS_NO_ARRAY");
       if (fptr_eq(name, "len")) {
@@ -300,7 +294,7 @@ static void lower_dot_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d)
       }
       return_err("NO_MEMBER");
     }
-    if (info->view == typeinfo_struct) {
+    case typeinfo_struct: {
       if (!fptr_eq(name, "namespace")) return_err("NO_MEMBER");
       let target = ss_type(ss, info->subject.v.c_type);
       scope *owner = nullptr;
@@ -312,29 +306,46 @@ static void lower_dot_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d)
       *scope_find(ss, s, d) = TV_with(ss, T(tu_of(c_namespace, {})), VS(.c_namespace = owner));
       return;
     }
-    typeinfo_value next = *info;
-    if (fptr_eq(name, "fn") && tu_is(c_fun, subject_type.t)) next.view = typeinfo_fn;
-    else if (fptr_eq(name, "struct") && tu_is(c_type, subject_type.t) &&
-             TypeTree_inner_struct(ss_type(ss, info->subject.v.c_type).t, tenv).start)
-      next.view = typeinfo_struct;
-    else if (fptr_eq(name, "array") && tu_is(c_type, subject_type.t) &&
-             TypeTree_inner_array(ss_type(ss, info->subject.v.c_type).t, tenv).t)
-      next.view = typeinfo_array;
-    else return_err("NO_MEMBER");
-    *scope_find(ss, s, d) = TV_with(ss, T(tu_of(c_typeinfo, {})), VS(.c_typeinfo = avalue(ss->alloc, next)));
-    return;
+    case typeinfo_root: {
+      let subject_type = ss_type(ss, info->subject.t);
+      subject_type.isconst = false;
+      typeinfo_value next = *info;
+      if (fptr_eq(name, "fn") && tu_is(c_fun, subject_type.t)) next.view = typeinfo_fn;
+      else if (fptr_eq(name, "struct") && tu_is(c_type, subject_type.t) && TypeTree_inner_struct(ss_type(ss, info->subject.v.c_type).t, tenv).start)
+        next.view = typeinfo_struct;
+      else if (fptr_eq(name, "array") && tu_is(c_type, subject_type.t) && TypeTree_inner_array(ss_type(ss, info->subject.v.c_type).t, tenv).t)
+        next.view = typeinfo_array;
+      else if (fptr_eq(name, "fn") || fptr_eq(name, "struct") || fptr_eq(name, "array")) {
+        *scope_find(ss, s, d) = TV_with(ss, T(tu_of(c_typeinfo, {})),
+            VS(.c_typeinfo = avalue(ss->alloc, ((typeinfo_value){.view = typeinfo_invalid}))));
+        return;
+      } else return_err("NO_MEMBER");
+      *scope_find(ss, s, d) = TV_with(ss, T(tu_of(c_typeinfo, {})), VS(.c_typeinfo = avalue(ss->alloc, next)));
+      return;
+    }
   }
+  return_err("NO_MEMBER");
+}
+
+static void lower_dot_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d) {
+  let tenv = ss_typeenv(ss);
+  let lt = scope_reg_to_type_stripTag(ss, s, l);
+  if (lt.ref_kind) lt.ref_kind = ref_none;
+  let name = value_to_fptr(ss, *scope_find(ss, s, r));
+  if (fptr_isNull(name)) return_err("DOT_NEEDS_NAME");
+
+  if (tu_is(c_typeinfo, lt.t))
+    return (void)try_err(lower_typeinfo_member, (ss, s, scope_find(ss, s, l)->v.c_typeinfo, name, d));
 
   if (tu_is(c_namespace, lt.t)) {
     if (!fptr_eq(name, "fn")) return_err("NO_MEMBER");
     scope *owner = scope_find(ss, s, l)->v.c_namespace;
-    while (owner && !owner->instance.fn) owner = owner->parent;
+    while (owner && !owner->instance.fn)
+      owner = owner->parent;
     if (!owner) return_err("NAMESPACE_HAS_NO_FUNCTION");
     let fn = owner->instance.fn;
-    let subject = TV(ss->functions[fn - 1].signature,
-                     VS(.c_fun = {.fn = fn, .spec = owner->instance.index}));
-    *scope_find(ss, s, d) = TV_with(ss, T(tu_of(c_typeinfo, {})),
-        VS(.c_typeinfo = avalue(ss->alloc, ((typeinfo_value){.subject = subject, .view = typeinfo_fn}))));
+    let subject = TV(ss->functions[fn - 1].signature, VS(.c_fun = {.fn = fn, .spec = owner->instance.index}));
+    *scope_find(ss, s, d) = TV_with(ss, T(tu_of(c_typeinfo, {})), VS(.c_typeinfo = avalue(ss->alloc, ((typeinfo_value){.subject = subject, .view = typeinfo_fn}))));
     return;
   }
 
@@ -559,6 +570,11 @@ static void tcheck_cast errs(superscope *env, scope *s, ir_cast cv) {
     let src = scope_add_value(env, s, TV_bool(env, truthy));
     return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_set, {.l = src, .d = cv.d})));
   }
+  if (tu_is(c_typeinfo, Type_stripTag(lt, tenv).t) && tu_is(r_bool, dt.t)) {
+    let info = scope_find(env, s, cv.l)->v.c_typeinfo;
+    let src = scope_add_value(env, s, TV_bool(env, info && info->view != typeinfo_invalid));
+    return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_set, {.l = src, .d = cv.d})));
+  }
   if (!(Type_is_integer_like(lt, tenv) && Type_is_integer_like(Type_stripTag(dt, tenv), tenv)))
     return_err("CANNOT_CAST");
   return (void)try_err(scope_emit_inst, (env, s, (ir)tu_of(ir_cast, cv)));
@@ -729,7 +745,3 @@ static inline void scope_add_inst_typecheck errs(superscope *env, scope *s, ir i
       (ir_field, fld, try_err(tcheck_field, (env, s, fld))),
   );
 }
-
-//
-//
-//

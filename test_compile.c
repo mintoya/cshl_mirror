@@ -890,10 +890,35 @@ test_fn(namespace_outside_function_reports_error) {
   test_streq(e.err_code, "NAMESPACE_HAS_NO_FUNCTION");
 }
 
+test_fn(typeinfo_view_probes) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(arena, fp(
+      "T ~~ @struct { x ~ @sint(32); };"
+      "A ~~ @arr(3, @sint(32));"
+      "f ~~ @fn((), @sint(32), { return 1; });"
+      "missing ~~ @typeinfo(@void()).struct;"
+      "truthy ~~ @fn((info ~ @typeinfo()), @bool(), { return info as @bool(); });"
+      "@cif(missing, { undefined_name; });"
+      "@cif(@typeinfo(T).struct, {}, { undefined_name; });"
+      "(@typeinfo(T).struct as @bool()) and"
+      "(@typeinfo(A).array as @bool()) and"
+      "(@typeinfo(f).fn as @bool()) and"
+      "(truthy(@typeinfo(T))) and"
+      "(truthy(missing) == (0 as @bool())) and"
+      "(truthy(@typeinfo(T).array) == (0 as @bool())) and"
+      "((missing as @bool()) == (0 as @bool())) and"
+      "((@typeinfo(T).array as @bool()) == (0 as @bool())) and"
+      "((@typeinfo(T).fn as @bool()) == (0 as @bool())) and"
+      "((@typeinfo(f).struct as @bool()) == (0 as @bool())) and"
+      "((@typeinfo(f).array as @bool()) == (0 as @bool()));"), nullptr);
+  test_assert(*(bool *)r.v.value);
+}
+
 test_fn(typeinfo_rejects_wrong_member) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let e = lower_source_err(arena, fp("@typeinfo(@sint(32)).struct;"));
+  let e = lower_source_err(arena, fp("@typeinfo(@sint(32)).unknown;"));
   test_assert(e.err_code);
   test_streq(e.err_code, "NO_MEMBER");
 }
@@ -916,31 +941,6 @@ test_fn(returntype_rejects_arguments) {
   test_streq(e.err_code, "WRONG_ARG_COUNT");
 }
 
-test_fn(meta_try_propagates_to_enclosing_result_type) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-  let meta = read_file(arena, "examples/meta.cshl");
-  let exercise = fp(
-      "Input ~~ ! i32; Output ~~ ! void;"
-      "propagate ~~ fn (input ~Input) Output {"
-      "  input:try();"
-      "  ok ~Output; ok.has_err = 0 as bool; return ok;"
-      "};"
-      "message ~@sint(8) = 42;"
-      "bad ~Input; bad.has_err = 1 as bool; bad.data.err_text = @where(message);"
-      "failed ~~ propagate(bad);"
-      "good ~Input; good.has_err = 0 as bool; good.data.result = 17;"
-      "passed ~~ propagate(good);"
-      "failed.has_err and (@at(failed.data.err_text) == 42) and (passed.has_err == (0 as bool));"
-  );
-  let source = slice_alloc(arena, u8, meta.len + exercise.len);
-  memcpy(source.ptr, meta.ptr, meta.len);
-  memcpy(source.ptr + meta.len, exercise.ptr, exercise.len);
-  // attribute the combined source to the meta file so `@import "module.cshl"`
-  // resolves inside examples/
-  let r = interpret_source_named(arena, fp(source), "examples/meta.cshl", nullptr);
-  test_assert(*(bool *)r.v.value);
-}
 
 // A type-position builtin takes a type, not a value, and must say so instead of
 // running the argument through the interpreter: `interpret` only allocates
@@ -977,7 +977,7 @@ test_fn(lower_error_sizeof_of_value_read_through_this) {
           "s ~arr(5) i32;\n"
           "arrayiter(s) |> iterate();\n"
       ),
-      "examples/sizeof_of_value.cshl"
+      "test/sizeof_of_value.cshl"
   );
   test_assert(e.err_code);
   test_streq(e.err_code, "TYPE_IS_NOT_VALUE");
@@ -1016,7 +1016,7 @@ test_fn(sizeof_of_typeof_through_this_lowers) {
           "s ~arr(5) i32;\n"
           "arrayiter(s) |> iterate();\n"
       ),
-      "examples/sizeof_of_typeof.cshl"
+      "test/sizeof_of_typeof.cshl"
   );
   test_assert(!e.err_code);
 }

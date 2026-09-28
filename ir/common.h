@@ -10,7 +10,8 @@ typedef struct {
 } astidx_span;
 typedef struct typeinfo_value {
   typed_value subject;
-  enum { typeinfo_root,
+  enum { typeinfo_invalid,
+         typeinfo_root,
          typeinfo_struct,
          typeinfo_fn,
          typeinfo_array } view;

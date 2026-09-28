@@ -377,7 +377,7 @@ static u32 lower_builtin_typeinfo errs(superscope *ss, scope *s, astidx args) {
   let subject = try_err(temporary_interpret, (ss, s, list.start), 0);
   let st = ss_type(ss, subject.t);
   if (!tu_is(c_type, st.t) && !tu_is(c_fun, st.t)) return_err("TYPEINFO_NEEDS_TYPE_OR_FUNCTION", 0);
-  return scope_add_value(ss, s, TV_with(ss, t, VS(.c_typeinfo = avalue(ss->alloc, ((typeinfo_value){.subject = subject})))));
+  return scope_add_value(ss, s, TV_with(ss, t, VS(.c_typeinfo = avalue(ss->alloc, ((typeinfo_value){.subject = subject, .view = typeinfo_root})))));
 }
 static u32 lower_builtin_returntype errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_args(ss, args, 0);

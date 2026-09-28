@@ -1,4 +1,4 @@
-@using(@import "../examples/module.cshl");
+@using(@import "module.cshl");
 // An `any` parameter is the generic placeholder: it must lower the argument at runtime,
 // not fold it into a comptime value, or a passed reference is lost and writes go nowhere.
 setit ~~ fn (r ~any) any {
