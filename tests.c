@@ -195,3 +195,7 @@ test_fn(cout_dispatch_existing_programs) {
     if (_result->result) return;
   }
 }
+
+test_fn(result_catch_execute) {
+  check_generated_c(allocator, _result, "test/result_catch.cshl");
+}

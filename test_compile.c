@@ -337,6 +337,7 @@ test_file_1(cout_union_bool);
 test_file_1(cout_comptime_constants);
 test_file_1(cout_recursive_const);
 test_file_1(anonymous_conversion);
+test_file_1(result_catch);
 test_file_1(interpret_import);
 test_file_1(interpret_using);
 test_file_1(typeof_strips_reference_and_isref_reports_it);

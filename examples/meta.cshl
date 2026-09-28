@@ -10,7 +10,14 @@ arr(3) i8;
       err_text ~(@ptr @sint 8);
       result ~T;
     };
-    catch ~~ fn (self ~ast) inline {;};
+    catch ~~ fn (self ~ast, fallback ~ast) inline return @qot {
+      this ~~ @uqot(self);
+      value ~@typeof(this.data.result);
+      if this.has_err {
+        value = @uqot(fallback);
+      } else value = this.data.result;
+      value;
+    };
     try ~~ fn (self ~ast) inline return @qot {
         this ~~ @uqot(self);
         if this.has_err {
@@ -33,11 +40,9 @@ arr(3) i8;
 };
 otherfn ~~ fn () (! i32) 
   return [true,[@where "error"[0]]];
-otherfn ~~ fn () (! i32) 
-  return [
-    has_err = true,
-    data = [err_text = @where "error"[0]] ];
 main ~~ fn () (! void) {
+  otherfn()
+    :catch { 5; };
   otherfn():try();
   result ~@returntype();
   return result;
