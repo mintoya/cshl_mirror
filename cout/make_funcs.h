@@ -80,10 +80,6 @@ static u32 function_sign_bits(Type t, typeenv e) {
   return tu_is(r_sint, t.t) ? t.t.r_sint.bits : 0;
 }
 
-static bool function_is_non_int_comptime(Type t) {
-  return Type_is_comptime(t) && !tu_is(c_int, t.t);
-}
-
 static bool scope_register_written(scope *s, u32 reg) {
   foreach (let instruction, span(s->instructions, msList_len(s->instructions))) {
     u32 destination = tu_match_exp(
@@ -163,6 +159,8 @@ static void makeCStringLiteral(printerfunction_context _ctx, const unsigned char
   PUTS("\\0\"");
 }
 
+static void makeVariableInit(superscope *ss, printerfunction_context _ctx, scope *s, u32 reg);
+
 static void makeRegisterPlace(superscope *ss, printerfunction_context _ctx, scope *s, u32 reg) {
   Type t = function_register_type(ss, s, reg);
   typed_value *value = scope_find(ss, s, reg);
@@ -172,6 +170,20 @@ static void makeRegisterPlace(superscope *ss, printerfunction_context _ctx, scop
   }
   if (Type_is_comptime(t)) {
     Type base = Type_stripTag(t, ss_typeenv(ss));
+    if (!base.ref_kind && !base.ptr_level &&
+        (tu_is(r_bool, base.t) || tu_is(r_sint, base.t) || tu_is(r_uint, base.t))) {
+      assertMessage(value->v.value, "missing comptime constant in C output");
+      base.iscomptime = base.isconst = base.isvolatile = false;
+      // Compound literals can also be addressed by cshl_write and wide operations.
+      PUTS("((");
+      makeType(ss, _ctx, base);
+      PUTS(")");
+      if (!function_is_wide(ss, base)) PUTS("{ ");
+      makeVariableInit(ss, _ctx, s, reg);
+      if (!function_is_wide(ss, base)) PUTS(" }");
+      PUTS(")");
+      return;
+    }
     if (tu_is(r_arr, base.t)) {
       r_arr arr = base.t.r_arr;
       Type elem = Type_at(ss_typeenv(ss), arr.t);
@@ -182,8 +194,8 @@ static void makeRegisterPlace(superscope *ss, printerfunction_context _ctx, scop
     }
   }
   if (!scope_register_written((scope *)scope_owner(s, reg), reg) && tu_is(r_bool, t.t) && value->v.value) {
-    if (*(bool *)value->v.value) PUTS("((_Bool)1)");
-    else PUTS("((_Bool)0)");
+    if (*(bool *)value->v.value) PUTS("((_Bool){1})");
+    else PUTS("((_Bool){0})");
     return;
   }
   assertMessage(!Type_is_comptime(t), "unsupported comptime value in C output");
@@ -322,7 +334,7 @@ static void makeWideOperandAs(
       PUTS("->bytes");
     } else {
       PUTS("(");
-      makeVariable(_ctx, s, reg);
+      makeRegisterPlace(ss, _ctx, s, reg);
       PUTS(".bytes)");
     }
     return;
@@ -729,24 +741,6 @@ static void makeScopeCout(superscope *ss, printerfunction_context _ctx, scope *s
 }
 
 static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx, scope *s, ir inst) {
-  if (tu_is(ir_set, inst) &&
-      (Type_is_comptime(function_register_type(ss, s, inst.ir_set.d)) ||
-       function_is_non_int_comptime(function_register_type(ss, s, inst.ir_set.l))))
-    assertMessage(false, "should not be here");
-  if (tu_is(ir_cast, inst) &&
-      (Type_is_comptime(function_register_type(ss, s, inst.ir_cast.d)) ||
-       function_is_non_int_comptime(function_register_type(ss, s, inst.ir_cast.l))))
-    assertMessage(false, "should not be here");
-  if (tu_is(ir_rawop, inst) &&
-      (Type_is_comptime(function_register_type(ss, s, inst.ir_rawop.d)) ||
-       function_is_non_int_comptime(function_register_type(ss, s, inst.ir_rawop.l)) ||
-       function_is_non_int_comptime(function_register_type(ss, s, inst.ir_rawop.r))))
-    assertMessage(false, "should not be here");
-  if (tu_is(ir_call, inst) && Type_is_comptime(function_register_type(ss, s, inst.ir_call.d)))
-    assertMessage(false, "should not be here");
-  if (tu_is(ir_ret, inst) && Type_is_comptime(function_register_type(ss, s, inst.ir_ret)))
-    assertMessage(false, "should not be here");
-  // if (tu_is(ir_rawdot, inst)) PUTS("  // ir_rawdot");
   tu_match_void(
       inst,
       (ir_cout, _, ), // handled

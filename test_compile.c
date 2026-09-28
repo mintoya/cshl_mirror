@@ -334,6 +334,7 @@ test_file_1(cout_signed_shifts);
 test_file_1(cout_packed_return);
 test_file_1(cout_non_power_alignment);
 test_file_1(cout_union_bool);
+test_file_1(cout_comptime_constants);
 test_file_1(interpret_import);
 test_file_1(interpret_using);
 test_file_1(typeof_strips_reference_and_isref_reports_it);

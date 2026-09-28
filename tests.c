@@ -114,3 +114,25 @@ test_fn(cout_preserves_ir_values) {
   let result = interpret(nullptr, ss, ss->outermost);
   test_assert(*(bool *)result.v.value);
 }
+
+// Execute generated C: interpreter-only checks cannot detect dropped stores.
+test_fn(cout_comptime_constants_execute) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let ctx = parse_source(nullptr, arena, nullFptr, "test/cout_comptime_constants.cshl");
+  let ss = ss_init(arena, ctx);
+  lower(nullptr, ss, ss->outermost, ctx.idx);
+  scope_finish(ss, ss->outermost);
+  char executable[] = "/tmp/cshl-cout-XXXXXX";
+  int fd = mkstemp(executable);
+  test_assert(fd >= 0);
+  close(fd);
+  defer { unlink(executable); };
+  char command[256];
+  snprintf(command, sizeof(command), "clang -std=c23 -x c -o %s -", executable);
+  let pipe = popen(command, "w");
+  test_assert(pipe);
+  makeC(ss, (printerfunction_context){.put = fileprint, .arb = pipe, .allocator = arena});
+  test_inteq(0, pclose(pipe));
+  test_inteq(0, system(executable));
+}
