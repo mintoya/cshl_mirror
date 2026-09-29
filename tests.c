@@ -145,7 +145,7 @@ test_fn(cout_comptime_constants_execute) {
 
 // stdout is part of the contract: a @cout must run where it is written, after
 // the statements before it and only when its branch runs.
-test_fn(cout_emits_in_source_order) {
+static void check_cout_output(allocfn allocator, test_result *_result, const char *filename, fptr expected) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   char executable[] = "/tmp/cshl-cout-order-XXXXXX";
@@ -164,7 +164,7 @@ test_fn(cout_emits_in_source_order) {
   snprintf(command, sizeof(command), "clang -std=c23 -x c -o %s -", executable);
   let pipe = popen(command, "w");
   test_assert(pipe);
-  let ctx = parse_source(nullptr, arena, nullFptr, "test/cout_order.cshl");
+  let ctx = parse_source(nullptr, arena, nullFptr, filename);
   let ss = ss_init(arena, ctx);
   lower(nullptr, ss, ss->outermost, ctx.idx);
   makeC(ss, (printerfunction_context){.put = fileprint, .arb = pipe, .allocator = arena});
@@ -176,7 +176,17 @@ test_fn(cout_emits_in_source_order) {
   test_assert(file);
   usize len = fread(buffer, 1, sizeof(buffer) - 1, file);
   fclose(file);
-  test_fpeq(((fptr){len, (u8 *)buffer}), "body1\ncond\nafter\n");
+  test_fpeq(((fptr){len, (u8 *)buffer}), expected);
+}
+
+test_fn(cout_emits_in_source_order) {
+  check_cout_output(allocator, _result, "test/cout_order.cshl", fp("body1\ncond\nafter\n"));
+}
+
+// Short-circuit is observable through @cout: the operand that is skipped must
+// never reach the output, while the one that has to run still does.
+test_fn(cout_and_or_short_circuit) {
+  check_cout_output(allocator, _result, "test/cout_short_circuit.cshl", fp("or ran\ndone\n"));
 }
 
 test_fn(anonymous_conversion_execute) {

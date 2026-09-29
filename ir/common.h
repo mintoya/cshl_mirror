@@ -167,7 +167,7 @@ static inline void scope_bind errs(superscope *env, scope *s, u32 idx, fptr name
 
 u32 lower errs /*                      */ (superscope *ss, scope *s, astidx a);
 typed_value interpret errs /*          */ (superscope *ss, scope *s);
-static u32 lower_function_call_values errs(superscope *ss, scope *s, u32 fn, slice(u32) vals);
+u32 lower_function_call_values errs(superscope *ss, scope *s, u32 fn, slice(u32) vals);
 
 typed_value_full ss_tvf(superscope *ss, typed_value tv) {
   return (typed_value_full){

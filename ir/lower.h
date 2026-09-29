@@ -18,7 +18,7 @@ u32 lower_op_wrap errs(superscope *ss, scope *s, astidx left, astidx right, u32 
   }
   return try_err(lower_op, (ss, s, try_err(lower, (ss, s, left), 0), right, number), 0);
 }
-static  u32 lower_anon_struct errs(superscope *ss, scope *s, astidx a) {
+static u32 lower_anon_struct errs(superscope *ss, scope *s, astidx a) {
   let elems = ast_block_children(ss, a);
   let n = elems.len;
 
@@ -143,11 +143,9 @@ u32 lower_low errs(superscope *ss, scope *s, astidx a) {
            vt.isconst = true;
            v->t = ss_type_intern(ss, vt);
          }
-         if (nameidx) {
-           let nn = try_err(id_from_ast, (ss, s, nameidx), 0);
-           try_err(scope_bind, (ss, s, value, nn), 0);
-           // println("[LOG:decl] bound {typed_value_full} to {slice(c8)}", ((typed_value_full){*scope_find(ss, s, value), ss_typeenv(ss)}), nn);
-         }
+         if (nameidx)
+           P$(try_err(id_from_ast, (ss, s, nameidx), 0),
+              try_err(scope_bind, (ss, s, value, $), 0));
          value;
        })),
   );

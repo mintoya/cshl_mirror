@@ -223,8 +223,6 @@ static u32 tcheck_cast_into_target errs(superscope *ss, scope *s, u32 left, Type
 }
 static bool tcheck_cast_overload errs(superscope *ss, scope *s, u32 left, Type to, u32 *result) {
   let from = scope_regType(ss, s, left);
-  // Binding a reference and loading the same nominal type are primitive
-  // operations, including when preparing the overload's own self argument.
   if (to.ref_kind || tu_is(c_any, to.t) ||
       !Type_cmp_ndecor(P$(from, ($.ref_kind = ref_none, $)), to, ss_typeenv(ss))) return false;
   let source = tcheck_operator(ss, from, opNumbers.as);
@@ -238,7 +236,6 @@ static bool tcheck_cast_overload errs(superscope *ss, scope *s, u32 left, Type t
   return true;
 }
 static void tcheck_cast_copy_result errs(superscope *ss, scope *s, ir_cast cv, u32 result) {
-  // The conversion already ran. Transfer its result without invoking `=` again.
   try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_set, {.l = result, .d = cv.d})));
 }
 void tcheck_set errs(superscope *ss, scope *s, ir_set st) {
@@ -423,4 +420,3 @@ void scope_add_inst_typecheck(err_t *err, superscope *env, scope *s, ir i) {
   );
 }
 
-#undef TC

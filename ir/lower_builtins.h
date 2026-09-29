@@ -27,13 +27,17 @@ static u32 lower_builtin_cif errs(superscope *ss, scope *s, astidx args) {
 
   return s->start + 1;
 }
-static u32 lower_builtin_if errs(superscope *ss, scope *s, astidx args) {
-  let list = builtin_args(ss, args, 2, 3);
-  u32 cnd = try_err(lower_condition, (ss, s, list.start + 0), 0);
+static u32 lower_builtin_if errs(superscope *ss, scope *s, u32 cnd, u32 dest, astidx then_ast, astidx else_ast) {
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_ifs, cnd)), 0);
-  try_err(lower, (ss, s, list.start + 1), 0);
+  if (then_ast) {
+    let value = try_err(lower, (ss, s, then_ast), 0);
+    if (dest) try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = dest, .l = value})), 0);
+  }
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_ifd, {})), 0);
-  if (list.len == 3) try_err(lower, (ss, s, list.start + 2), 0);
+  if (else_ast) {
+    let value = try_err(lower, (ss, s, else_ast), 0);
+    if (dest) try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = dest, .l = value})), 0);
+  }
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_ife, {})), 0);
   return s->start + 1;
 }
@@ -96,7 +100,6 @@ static u32 lower_builtin_cout errs(superscope *ss, scope *s, astidx args) {
   return scope_add_value(ss, s, TV_void(ss));
 }
 static u32 lower_builtin_cinclude errs(superscope *ss, scope *s, astidx args) {
-  // An include is a file-level declaration, so it cannot come from a function body.
   if (s->instance.fn) return_err("CINCLUDE_INSIDE_FUNCTION", 0);
   let list = builtin_args(ss, args, 1);
   let str = try_err(temporary_interpret, (ss, s, list.start), 0);
@@ -104,7 +107,6 @@ static u32 lower_builtin_cinclude errs(superscope *ss, scope *s, astidx args) {
   if (tu_catchr(r_sint, type_tree(ss_typeenv(ss), arr.t), return_err("CINCLUDE_NEEDS_STRING", 0)).bits != 8)
     return_err("CINCLUDE_NEEDS_STRING", 0);
   let header = (fptr){arr.count, (u8 *)str.v.value};
-  // A leading < or " already picks the search rules; otherwise default to a system header.
   bool verbatim = header.len && (header.ptr[0] == '<' || header.ptr[0] == '"');
   const char *prefix = verbatim ? "#include " : "#include <";
   usize prefix_len = strlen(prefix);
@@ -302,8 +304,6 @@ static u32 lower_builtin_qot errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_arg_list(ss, args);
   if (!list.len) arg = ast_make_empty(ss);
   else if (list.len == 1) arg = list.start + 0;
-  // a parenthesized list of several items is quoted as the list itself, so the macro can index
-  // into it; a single item is still the item, which is how @qot(expr) reads
   else arg = args;
   assertMessage(arg);
   return scope_add_value(ss, s, TV_ast(ss, try_err(qot_walk, (ss, s, arg), 0)));
@@ -412,8 +412,6 @@ static u32 lower_builtin_returntype errs(superscope *ss, scope *s, astidx args) 
 }
 static u32 lower_builtin_typeof errs(superscope *ss, scope *s, astidx args) {
   let v = try_err(lower, (ss, s, args), 0);
-  // reading a name yields the place, not what the place holds; @typeof answers
-  // the second question, so it strips. @isref is the first question.
   return scope_add_value(ss, s, Type_asValue(ss, Type_stripRef(ss_type(ss, scope_find(ss, s, v)->t))));
 }
 static u32 lower_builtin_isref errs(superscope *ss, scope *s, astidx args) {
@@ -485,7 +483,6 @@ static u32 lower_builtin_struct errs(superscope *ss, scope *s, astidx args) {
   let stmts = ast_block_children(ss, list.start);
 
   let members = (r_struct){.start = ss_member_reserve(ss, stmts.len)};
-  // The member list is incomplete: interning it could alias another unfinished struct.
   let inner = ss_type_reserve(ss, 0);
   sglist_get(ss->tlist, inner - 1) = T(tu_of(r_struct, members));
   let _this = T(tu_of(r_tag, {inner, unique_type_name(ss)}));
@@ -645,7 +642,11 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
   return switch_exp(
       builtin,
       (builtin_fn, /*      */ try_err(lower_builtin_fn, (ss, s, args), 0)),
-      (builtin_if, /*      */ try_err(lower_builtin_if, (ss, s, args), 0)),
+      (builtin_if, /*      */ ({
+        let list = builtin_args(ss, args, 2, 3);
+        u32 cnd = try_err(lower_condition, (ss, s, list.start + 0), 0);
+        try_err(lower_builtin_if, (ss, s, cnd, 0, list.start + 1, list.len == 3 ? list.start + 2 : 0), 0);
+      })),
       (builtin_cif, /*     */ try_err(lower_builtin_cif, (ss, s, args), 0)),
       (builtin_loop, /*    */ try_err(lower_builtin_loop, (ss, s, args), 0)),
       (builtin_return, /*  */ try_err(lower_builtin_return, (ss, s, args), 0)),
