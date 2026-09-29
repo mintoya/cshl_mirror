@@ -1,4 +1,3 @@
-@cout "#include <stdio.h>";
 @using @import "module.cshl";
 
 range ~~ fn (start~i32, end~i32) any {
@@ -7,10 +6,9 @@ range ~~ fn (start~i32, end~i32) any {
     state ~ i32;
     end   ~ i32;
     next ~~ fn (this~@refT(Self)) (? i32) {
-      result ~ @returntype();
+      result ~ @returntype() = null;
       if (this.state < this.end) {
-        result.isnnull = true;
-        result.value = this.state;
+        result = this.state;
         this.state = this.state + 1;
       };
       return result;
@@ -28,10 +26,9 @@ arrayiter ~~ fn (array ~any) any {
     place ~ u32;
     length ~ u32;
     next  ~~ fn (this~@refT(@this())) (? this.arrayIT) {
-      result ~@returntype();
+      result ~@returntype() = null;
       if ( this.place < this.length) {
-        result.isnnull = 1;
-        result.value   = @ref this.data[this.place];
+        result = @ref this.data[this.place];
         this.place = this.place+1;
       };
       return result;
@@ -78,6 +75,9 @@ map ~~ fn (body ~ast) inline return @qot {
 
 iterate ~~ fn () inline return @qot while (_:next() as bool);
 
+@cout "#include <stdio.h>";
+puti ~~ fn (in ~i32) void @cout "printf(\"%i\\n\",arg0);";
+
 sum ~i32~0;
 range(0 , 6) 
   |> filter { not (_ band 1);} 
@@ -86,10 +86,9 @@ range(0 , 6)
 |> iterate();
 sum;
 
-i85 ~arr(4) i8;
+i85 ~arr(5) i8;
 counter~i32;
 
-puti ~~ fn (in ~i32) void @cout "printf(\"%i\\n\",arg0);";
 
 arrayiter(i85) |> map {
   counter = counter + 1;

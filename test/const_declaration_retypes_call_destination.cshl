@@ -1,6 +1,5 @@
 type ~~ @type();
 s32 ~~ @sint(32);
-ref ~~ @refT;
 f ~~ @fn (), s32, { return 7; };
 a ~~ f();
 // reading a name yields the place, not what the place holds, so @typeof reports

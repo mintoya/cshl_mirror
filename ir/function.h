@@ -190,7 +190,6 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
   ret = ss->functions[fn - 1].instances[spec_number].ret;
   let fallback = scope_add_value(ss, spec, tu_is(c_any, ret.t) ? TV_void(ss) : TV_of(ss, ret));
   try_err(scope_add_inst, (ss, spec, (ir)tu_of(ir_ret, fallback)), 0);
-  scope_finish(ss, spec);
   ret = ss->functions[fn - 1].instances[spec_number].ret;
 
   if (Type_is_comptime(ret)) {

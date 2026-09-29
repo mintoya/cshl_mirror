@@ -35,8 +35,8 @@ typed_value *scope_find(superscope *env, const scope *s, u32 idx) {
 }
 scope *scope_inferior(superscope *b, scope *s) {
   let named = avalue(b->alloc, ((name_env){
-      .bindings = moxmap_init(b->alloc, fptr, u32, (oxmap_cmp){cmpfptr}),
-  }));
+                                   .bindings = moxmap_init(b->alloc, fptr, u32, (oxmap_cmp){cmpfptr}),
+                               }));
   let res = avalue(
       b->alloc,
       ((scope){
@@ -53,9 +53,9 @@ scope *scope_inferior(superscope *b, scope *s) {
 }
 static inline void scope_push_named(superscope *b, scope *s) {
   s->named = avalue(b->alloc, ((name_env){
-      .parent = s->named,
-      .bindings = moxmap_init(b->alloc, fptr, u32, (oxmap_cmp){cmpfptr}),
-  }));
+                                  .parent = s->named,
+                                  .bindings = moxmap_init(b->alloc, fptr, u32, (oxmap_cmp){cmpfptr}),
+                              }));
 }
 static inline void scope_pop_named(scope *s) {
   // Functions may still refer to this environment after the block exits.
@@ -139,7 +139,7 @@ static inline void scope_emit_inst errs(superscope *env, scope *s, ir i) {
 static bool Type_ncmp_nptr(Type a, Type b, typeenv e) { return a.ptr_level == b.ptr_level && !TypeTree_cmp(e, a.t, b.t); }
 static inline bool Type_isnull(Type t) { return tu_is(r_null, t.t); }
 static inline void scope_add_inst errs(superscope *env, scope *s, ir i);
-static inline void scope_add_inst_typecheck errs(superscope *env, scope *s, ir i);
+static void scope_add_inst_typecheck errs(superscope *env, scope *s, ir i);
 
 static inline void scope_add_inst errs(superscope *env, scope *s, ir i) {
   if (tu_is(ir_blocks, i)) scope_push_named(env, s);
@@ -312,5 +312,3 @@ static inline void ss_deInit(superscope *ss) {
   cba_deinit(ss->alloc);
   adestroy(allocator, ss);
 }
-
-#include "coerce.h"

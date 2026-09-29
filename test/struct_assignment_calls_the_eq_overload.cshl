@@ -35,6 +35,7 @@ c ~ split = 66051;
 d ~ split;
 d = 9;
 k ~ split ~ d;
+m ~ split ~ (d as u32);
 
 ((a as u32) == 16909060)
   and ((b.second as u32) == 3232235777)
@@ -42,4 +43,6 @@ k ~ split ~ d;
   and ((c as u32) == 66051)
   and ((d as u32) == 9)
   and ((k as u32) == 9)
-  and (writes == 4);
+  and ((m as u32) == 9)
+  // a, b.second, c, d, k, and m each invoke assignment.
+  and (writes == 6);

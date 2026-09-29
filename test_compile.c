@@ -254,11 +254,10 @@ test_fn(struct_operator_overload_vector_equality_false) {
       arena,
       fp(
           "type ~~ @type();\n"
-          "i ~~ @sint;\n"
           "vec2 ~type~ @struct{\n"
           "  Self ~type~ @this();\n"
-          "  x ~ i 32;\n"
-          "  y ~ i 32;\n"
+          "  x ~ @sint(32);\n"
+          "  y ~ @sint(32);\n"
           "  @id(\"==\") ~~ @fn (self~Self,other~Self),@bool(),{\n"
           "    return (self.x == other.x) and (self.y == other.y);\n"
           "  };\n"
@@ -721,38 +720,7 @@ test_fn(interpret_recursion_heap_allocator) {
   test_assert(*(bool *)result.v.value);
 }
 
-test_fn(simplify_void_instructions) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-  let ss = ss_init(arena, (astidx_full){});
-  let s = ss->outermost;
-  let v = scope_add_value(ss, s, TV_void(ss));
-  let ref = scope_add_value(ss, s, TV_of(ss, P$(ss_type(ss, ss->t_void), ($.ref_kind = ref_ref, $))));
-  let ptr = scope_add_value(ss, s, TV_of(ss, P$(ss_type(ss, ss->t_void), ($.ptr_level = 1, $))));
-  let source = scope_add_value(ss, s, TV_bigint(ss, BInt.from.i64(arena, 5)));
-  msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_set, {.l = v, .d = v}));
-  msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_getref, {.l = v, .d = ref}));
-  msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_putptr, {.l = ptr, .d = ref}));
-  msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_farg, {.l = 0, .d = v}));
-  msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_getptr, {.l = source, .d = ptr}));
-  msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_call, {.l = source, .d = ref, .r = v, .e = v + 1}));
-  msList_push(ss->alloc, s->instructions, (ir)tu_of(ir_ret, ref));
-  usize values = msList_len(s->values);
-  scope_finish(ss, s);
-  test_inteq(msList_len(s->instructions), 3);
-  test_inteq(msList_len(s->values), values);
-  test_inteq(scope_find(ss, s, ref)->t, ss->t_void);
-  test_inteq(ss_type(ss, scope_find(ss, s, ptr)->t).ptr_level, 1);
-  test_assert(tu_is(ir_getptr, s->instructions[0]));
-  test_inteq(s->instructions[1].ir_call.d, s->start + 1);
-  test_inteq(s->instructions[1].ir_call.r, v);
-  test_inteq(s->instructions[1].ir_call.e, v + 1);
-  test_inteq(s->instructions[2].ir_ret, s->start + 1);
-  scope_finish(ss, s);
-  test_inteq(msList_len(s->instructions), 3);
-}
-
-test_fn(simplify_void_calls_keep_effects_and_returns) {
+test_fn(void_calls_keep_effects_and_returns) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   let r = interpret_source(
@@ -891,7 +859,6 @@ test_fn(interpret_packed_reads_bounded_memory) {
                          nullptr);
   let ss = ss_init(arena, ctx);
   lower(nullptr, ss, ss->outermost, ctx.idx);
-  scope_finish(ss, ss->outermost);
   let is = intstate_new(ss);
   intstate_pushs(is, ss->outermost, (slice(typed_value)){}, 0);
   usize initial = arena_totalMem(is->temp);
@@ -1070,4 +1037,17 @@ test_fn(sizeof_of_typeof_through_this_lowers) {
       "test/sizeof_of_typeof.cshl"
   );
   test_assert(!e.err_code);
+}
+
+test_file_1(cast_overload_directions);
+
+test_fn(implicit_as_overload_checks_requested_return_type) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp(
+      "T ~~ @struct { Self ~~ @this(); x ~@sint(32);"
+      " @id(\"as\") ~~ @fn (self ~Self, target ~@type()), @any(), { return self.x; }; };"
+      "f ~~ @fn (input ~T), @bool(), { return input; }; v ~T; f(v);"));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "AS_OVERLOAD_RETURN_TYPE");
 }

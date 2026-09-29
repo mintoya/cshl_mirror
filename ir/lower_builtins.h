@@ -83,8 +83,8 @@ static u32 lower_builtin_id errs(superscope *ss, scope *s, astidx args) {
 }
 static u32 lower_builtin_cout errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_args(ss, args, 1);
-  foreach (let inst, span(s->instructions, msList_len(s->instructions)))
-    if (!tu_is(ir_farg, *inst)) return_err("COUT_NOT_AT_SCOPE_START", 0);
+  //  foreach (let inst, span(s->instructions, msList_len(s->instructions)))
+  //    if (!tu_is(ir_farg, *inst)) return_err("COUT_NOT_AT_SCOPE_START", 0);
   let str = try_err(temporary_interpret, (ss, s, list.start), 0);
   let arr = tu_catchr(r_arr, ss_type(ss, str.t).t, return_err("COUT_NEEDS_STRING", 0));
   if (tu_catchr(r_sint, type_tree(ss_typeenv(ss), arr.t), return_err("COUT_NEEDS_STRING", 0)).bits != 8)

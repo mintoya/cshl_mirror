@@ -63,7 +63,6 @@ cmd_main(
   if (lowerast || execute || c_output) {
     let env = ss_init(allocator, ctx);
     catch_errcall((lower, (env, env->outermost, ctx.idx)), e, (err_panic(e), (u32)0));
-    scope_finish(env, env->outermost);
     if (lowerast || execute)
       print_wf(sexplike, "{scope_full}\n", ((scope_full){env->outermost, env}));
     if (c_output) {

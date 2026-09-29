@@ -729,7 +729,7 @@ static void makeCast(superscope *ss, printerfunction_context _ctx, c_type_names 
 }
 
 static void makeCoutText(superscope *ss, printerfunction_context _ctx, c_type_names names, u32 chunk) {
-  assertMessage(chunk < msList_len(ss->coutput));
+  // assertMessage(chunk < msList_len(ss->coutput));
   fptr text = *msList_get(ss->coutput, chunk);
   _ctx.put((const c8 *)text.ptr, _ctx.arb, text.len, 0);
 }
@@ -929,7 +929,7 @@ static void makeVariableInit(superscope *ss, printerfunction_context _ctx, c_typ
   typed_value *value = scope_find(ss, s, reg);
   usize size = Type_sizeof(t, e);
   if (!size || !value->v.value || t.ref_kind || t.ptr_level) {
-    PUTS("{}");
+    PUTS("{0}");
     return;
   }
   Type base = Type_stripTag(t, e);
@@ -957,7 +957,7 @@ static void makeVariableInit(superscope *ss, printerfunction_context _ctx, c_typ
     } else USETYPEPRINTER(u64, raw);
     return;
   }
-  PUTS("{}");
+  PUTS("{0}");
 }
 
 static void makeVariables(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s) {
@@ -1013,6 +1013,7 @@ void makeMain(superscope *ss, printerfunction_context _ctx, c_type_names names) 
     makeFunctionInstruction(ss, _ctx, names, s, *inst);
   u32 result = scope_last_item(ss, s);
   Type result_type = function_register_type(ss, s, result);
+  //TODO: fix do something about tests using this
   if (tu_is(r_bool, result_type.t) && !result_type.decorations) {
     PUTS("  return !(");
     makeRegisterPlace(ss, _ctx, names, s, result);

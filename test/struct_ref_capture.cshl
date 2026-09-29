@@ -1,12 +1,11 @@
 type ~~ @type();
 s32 ~~ @sint(32);
-ref ~~ @refT;
 counter ~s32 = 5;
 cell ~type~ @struct{
   Self ~type~ @this();
-  r ~ (ref s32);
+  r ~ (@refT(s32));
   @id("()") ~~ @fn (self ~Self, j ~s32), s32, {
-    v ~(ref s32) = self.r;
+    v ~(@refT(s32)) = self.r;
     v = v + j;
     return v;
   };

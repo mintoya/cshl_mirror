@@ -1,7 +1,6 @@
 type ~~ @type();
 s32 ~~ @sint(32);
 i32 ~~ @sint(32);
-ref ~~ @refT;
 arr ~~ @fn((i ~@int()), @any(), {
   return @fn((T ~type), type, {
     return @arr(i, T);
@@ -10,7 +9,7 @@ arr ~~ @fn((i ~@int()), @any(), {
 
 counter ~s32 = 5;
 get ~~ @fn (), s32, { return 3; };
-refT ~type~ ref s32;
+refT ~type~ @refT(s32);
 five ~~ arr(5);
 row ~five(s32);
 

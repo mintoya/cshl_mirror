@@ -1,9 +1,8 @@
 type ~~ @type();
-i ~~ @sint;
 vec2 ~type~ @struct{
   Self ~type~ @this();
-  x ~ i 32;
-  y ~ i 32;
+  x ~ @sint(32);
+  y ~ @sint(32);
   @id("==") ~~ @fn (self~Self,other~Self),@bool(),{
     return (self.x == other.x) and (self.y == other.y);
   };

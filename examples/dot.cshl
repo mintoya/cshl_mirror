@@ -1,15 +1,5 @@
-type ~~ @type();
-ast ~~ @ast();
-any ~~ @any();
-i32 ~type~ @sint(32);
-fn  ~~ @fn (a ~ast),@inlineast(),{
-  return 
-    @qot @fn(
-      @uqot(a."()".opleft),
-      @uqot(a."()".opright."()".opleft),
-      @uqot(a."()".opright."()".opright),
-    );
-};
+@using @import "module.cshl";
+
 Point ~type~ @struct{
   Self ~type~ @this();
   x ~i32;
@@ -17,6 +7,7 @@ Point ~type~ @struct{
   @id(".") ~~ fn (this~@refT(Self) ,l~ast)( @refT(i32) ){
     @cif((l == "x"),(return @ref(@rawget(this, "y"))));
     @cif((l == "y"),(return @ref(@rawget(this, "x"))));
+    return @ref(@rawget(this, "x"));
   };
   @id("+") ~~ fn (
     this~Self,
@@ -31,4 +22,5 @@ Point ~type~ @struct{
 a ~Point;
 a.x = 5;
 a.y = 4;
+a.z = 4;
 a;

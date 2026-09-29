@@ -18,19 +18,17 @@ u32 lower_op_wrap errs(superscope *ss, scope *s, astidx left, astidx right, u32 
   }
   return try_err(lower_op, (ss, s, try_err(lower, (ss, s, left), 0), right, number), 0);
 }
-static u32 lower_anon_struct errs(superscope *ss, scope *s, astidx a) {
+static  u32 lower_anon_struct errs(superscope *ss, scope *s, astidx a) {
   let elems = ast_block_children(ss, a);
   let n = elems.len;
 
   let members = (r_struct){.start = ss_member_reserve(ss, n)};
-  // The member list is incomplete: interning it could alias another unfinished struct.
   let inner = ss_type_reserve(ss, 0);
   sglist_get(ss->tlist, inner - 1) = T(tu_of(r_struct, members));
   let _this = T(tu_of(r_tag, {inner, unique_type_name(ss)}));
   let ns = scope_inferior(ss, s);
   bool is_positional = true;
-  moxmap_set(ss->type_info, type_name(ss_typeenv(ss), _this.t.r_tag.name),
-      ((type_metadata){.namespace = ns, .is_anonymous = true, .is_positional = true}));
+  moxmap_set(ss->type_info, type_name(ss_typeenv(ss), _this.t.r_tag.name), ((type_metadata){.namespace = ns, .is_anonymous = true, .is_positional = true}));
 
   let res = scope_add_value(ss, s, TV_of(ss, _this));
   usize offset = 0;
@@ -132,17 +130,13 @@ u32 lower_low errs(superscope *ss, scope *s, astidx a) {
          if (valueidx) {
            value = try_err(lower, (ss, s, valueidx), 0);
            assertMessage(value);
-           if (!dcl.isconst && tag_set_member(ss, type).owner) {
-             let slot = scope_add_value(ss, s, TV_of(ss, type));
-             try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = value, .d = slot})), 0);
-             value = slot;
-           }
+           let temp = scope_add_value(ss, s, TV_of(ss, type));
+           try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.l = value, .d = temp})), 0);
+           value = temp;
          } else {
            if (!typeidx) return_err("DECL_NO_TYPE_OR_VALUE", 0);
            value = scope_add_value(ss, s, TV_of(ss, type));
          }
-         value = try_err(scope_cast_value, (ss, s, value, type), 0);
-
          if (dcl.isconst) {
            let v = scope_find(ss, s, value);
            let vt = ss_type(ss, v->t);

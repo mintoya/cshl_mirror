@@ -1,7 +1,6 @@
 #pragma once
 #include "common.h"
 #include "scope.h"
-#include "simplify.h"
 #include "wheels/sList.h"
 extern ptrstype(outputFunction) sexplike;
 sliceDef(typed_value);
@@ -581,7 +580,6 @@ static void intstate_run errs(intstate is) {
 }
 
 typed_value interpret errs(superscope *ss, scope *s) {
-  scope_finish(ss, s);
   let is = intstate_new(ss);
 
   intstate_pushs(is, s, (slice(typed_value)){}, 0);

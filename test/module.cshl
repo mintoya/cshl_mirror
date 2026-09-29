@@ -178,7 +178,6 @@ arr ~~ fn (i~int) any
   getstate ~~ getstate;
 
   fn ~~ fn;
-  @closure ~~ @closure;
   closure ~~ closure;
   if ~~ if;
   while ~~ while;

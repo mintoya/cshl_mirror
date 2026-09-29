@@ -103,7 +103,6 @@ test_fn(cout_preserves_ir_values) {
   let ctx = parse_source(nullptr, arena, fp("x ~@sint(32) = 3 + 4; x == 7;"), nullptr);
   let ss = ss_init(arena, ctx);
   lower(nullptr, ss, ss->outermost, ctx.idx);
-  scope_finish(ss, ss->outermost);
   let copy = slice_alloc(arena, typed_value, msList_len(ss->outermost->values));
   memcpy(copy.ptr, ss->outermost->values, copy.len * sizeof(typed_value));
   let out = tmpfile();
@@ -117,13 +116,7 @@ test_fn(cout_preserves_ir_values) {
 }
 
 // Execute generated C: interpreter-only checks cannot detect dropped stores.
-static void check_generated_c(allocfn allocator, test_result *_result, const char *filename) {
-  let arena = arena_new_ext(allocator, 1 << 16);
-  defer { arena_cleanup(arena); };
-  let ctx = parse_source(nullptr, arena, nullFptr, filename);
-  let ss = ss_init(arena, ctx);
-  lower(nullptr, ss, ss->outermost, ctx.idx);
-  scope_finish(ss, ss->outermost);
+static void check_generated_scope(allocfn arena, test_result *_result, superscope *ss) {
   char executable[] = "/tmp/cshl-cout-XXXXXX";
   int fd = mkstemp(executable);
   test_assert(fd >= 0);
@@ -136,6 +129,14 @@ static void check_generated_c(allocfn allocator, test_result *_result, const cha
   makeC(ss, (printerfunction_context){.put = fileprint, .arb = pipe, .allocator = arena});
   test_inteq(0, pclose(pipe));
   test_inteq(0, system(executable));
+}
+static void check_generated_c(allocfn allocator, test_result *_result, const char *filename) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let ctx = parse_source(nullptr, arena, nullFptr, filename);
+  let ss = ss_init(arena, ctx);
+  lower(nullptr, ss, ss->outermost, ctx.idx);
+  check_generated_scope(arena, _result, ss);
 }
 
 test_fn(cout_comptime_constants_execute) {
@@ -198,4 +199,61 @@ test_fn(cout_dispatch_existing_programs) {
 
 test_fn(result_catch_execute) {
   check_generated_c(allocator, _result, "test/result_catch.cshl");
+}
+
+// Drive instructions with an already-typed destination. Source lowering usually
+// supplies `any`, which used to hide handlers overwriting the destination type.
+test_fn(coerce_operations_use_destination_assignment) {
+  foreach (let kind, range(0, 5)) {
+    let arena = arena_new_ext(allocator, 1 << 16);
+    defer { arena_cleanup(arena); };
+    let ctx = parse_source(nullptr, arena, fp(
+        "i32 ~~ @sint(32); type ~~ @type();\n"
+        "S ~~ @struct { Self ~~ @this(); v ~i32;\n"
+        " @id(\"=\") ~~ @fn (self ~@refT(Self), value ~i32), @void(), { self.v = value; }; };\n"
+        "dest ~S; x ~i32 = 37; p ~= @where x;\n"
+        "box ~@struct { v ~i32; }; box.v = 37;\n"
+        "a ~@arr(2, i32); a[0] = 37;\n"
+        "f ~~ @fn (), i32, { return 37; };\n"), nullptr);
+    let ss = ss_init(arena, ctx);
+    let s = ss->outermost;
+    let statements = ast_block_children(ss, ctx.idx);
+    foreach (let i, range(0, statements.len)) lower(nullptr, ss, s, statements.start + i);
+    let dest = ss_get_named_failable_noref(ss, s, fp("dest"));
+    let x = ss_get_named_failable_noref(ss, s, fp("x"));
+    let expected_type = scope_find(ss, s, dest)->t;
+    ir instruction;
+    switch (kind) {
+      case 0: instruction = (ir)tu_of(ir_putptr, {.l = ss_get_named_failable_noref(ss, s, fp("p")), .d = dest}); break;
+      case 1: instruction = (ir)tu_of(ir_field, {.l = ss_get_named_failable_noref(ss, s, fp("box")), .d = dest, .i = 0}); break;
+      case 2: instruction = (ir)tu_of(ir_array, {.l = ss_get_named_failable_noref(ss, s, fp("a")), .d = dest,
+          .r = scope_add_value(ss, s, TV_bigint(ss, BInt.from.i64(arena, 0)))}); break;
+      case 3: instruction = (ir)tu_of(ir_rawop, {.l = x, .r = scope_add_value(ss, s, TV_bigint(ss, BInt.from.i64(arena, 0))),
+          .d = dest, .o = opNumbers.plus}); break;
+      default: {
+        let fn = ss_get_named_failable_noref(ss, s, fp("f"));
+        // Instantiate the function first, then reuse its callee with our destination.
+        lower_function_call_values(nullptr, ss, s, fn, (slice(u32)){});
+        ir_call call = {};
+        foreach (let i, span(s->instructions, msList_len(s->instructions)))
+          if (tu_is(ir_call, *i)) call = i->ir_call;
+        call.d = dest;
+        instruction = (ir)tu_of(ir_call, call);
+      }
+    }
+    scope_add_inst(nullptr, ss, s, instruction);
+    test_inteq(expected_type, scope_find(ss, s, dest)->t);
+    let member = scope_add_value(ss, s, TV_any(ss));
+    scope_add_inst(nullptr, ss, s, (ir)tu_of(ir_field, {.l = dest, .d = member, .i = 1}));
+    let expected = scope_add_value(ss, s, TV_bigint(ss, BInt.from.i64(arena, 37)));
+    let result_slot = scope_add_value(ss, s, TV_any(ss));
+    scope_add_inst(nullptr, ss, s, (ir)tu_of(ir_rawop, {.l = member, .r = expected, .d = result_slot, .o = opNumbers.eq}));
+    let result = interpret(nullptr, ss, s);
+    test_assert(*(bool *)result.v.value);
+    check_generated_scope(arena, _result, ss);
+  }
+}
+
+test_fn(cast_overload_directions_execute) {
+  check_generated_c(allocator, _result, "test/cast_overload_directions.cshl");
 }

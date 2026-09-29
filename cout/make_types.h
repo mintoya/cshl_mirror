@@ -249,7 +249,8 @@ void makeFullType(superscope *ss, printerfunction_context _ctx, c_type_names nam
         if (fallback) {
           usize size = Type_sizeof(t, e);
           PUTS("unsigned char cshl_storage[");
-          USETYPEPRINTER(usize, size - storage_start);
+          // Empty aggregates need a compatibility byte in C99.
+          USETYPEPRINTER(usize, size ? size - storage_start : 1);
           PUTS("];\n");
         } else if (!has_storage) {
           // C99 does not permit an empty structure declaration.

@@ -1,6 +1,19 @@
 @using @import "module.cshl";
+error_t ~~ @struct{
+  emsg ~ @ptr(i8);
+};
+@cout "#include <stdio.h>";
+pstr ~~ fn (len ~ i32 ,msg ~(@ptr i8)) void
+  @cout "printf(\"%.*s\",arg0,arg1);";
 
-arr(3) i8;
+pstrarr ~~ fn (str ~any) void {
+  cif (@typeof(str) == (@ptr i8)) {
+    pstr(999,str);
+  } else {
+    len ~~ @sizeof @typeof str;
+    pstr(len , (@where str[0]));
+  };
+};
 
 ! ~~ fn (T~type) type {
   return @struct{
@@ -10,12 +23,22 @@ arr(3) i8;
       err_text ~(@ptr @sint 8);
       result ~T;
     };
+    @id("=") ~~ fn (this ~@refT(Self) , other ~any) void {
+      cif (@typeof(other) == Self) {
+        this.has_err = other.has_err;
+        this.data = other.data;
+      } else cif (@typeof(other) == error_t) {
+        this.has_err = true;
+        this.data.err_text = other.emsg;
+      } else call_to_unbound_thing();
+    };
     catch ~~ fn (self ~ast, fallback ~ast) inline return @qot {
       this ~~ @uqot(self);
       value ~@typeof(this.data.result);
       if this.has_err {
-        value = @uqot(fallback);
-      } else value = this.data.result;
+        this.data.err_text 
+        |> ( value = @uqot(fallback) );
+      } else (value = this.data.result );
       value;
     };
     try ~~ fn (self ~ast) inline return @qot {
@@ -30,6 +53,9 @@ arr(3) i8;
               error ~RT;
               error.has_err = true;
               error.data.err_text = this.data.err_text;
+              pstrarr("throwing error:");
+              pstrarr(error.data.err_text);
+              pstrarr("\n");
               return error;
             } else call_to_unbound_thing();
           } else call_to_unbound_thing();
@@ -38,14 +64,25 @@ arr(3) i8;
     };
   };
 };
+error ~~ fn (msg ~any) error_t {
+  cif ((@typeof msg ) == (@ptr i8)) {
+    return [msg];
+  } else {
+    return [(@where msg[0])];
+  };
+};
 otherfn ~~ fn () (! i32) 
-  return [true,[@where "error"[0]]];
+  return error "someError";
+
 main ~~ fn () (! void) {
-  otherfn()
-    :catch { 5; };
+  otherfn(): catch {
+    pstrarr("cought error:");
+    pstrarr(_);
+    pstrarr("\n");
+    5;
+  };
   otherfn():try();
   result ~@returntype();
   return result;
 };
 result ~~ main();
-result.has_err;
