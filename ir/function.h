@@ -1,4 +1,5 @@
 #pragma once
+#include "coerce_helpers.h"
 #include "common.h"
 #include "interpret.h"
 #include "scope.h"
@@ -31,25 +32,26 @@ static cmpres typed_value_cmp_typed(Type ta, value_store av, Type tb, value_stor
   return tu_match_exp(
       ta.t,
       (r_void, _, cmp_eq),
-      (builtin, _, cmp_eq), // store no data, and cought in type_cmp
+      (builtin, _, cmp_eq),
       (c_int, _, BInt.cmp(av.c_int, bv.c_int)),
       (c_fun, _, (cmpres)(icmp(av.c_fun.fn, bv.c_fun.fn) ?: icmp(av.c_fun.spec, bv.c_fun.spec))),
       (c_type, _, icmp(av.c_type, bv.c_type)),
       (c_namespace, _, icmp((usize)av.c_namespace, (usize)bv.c_namespace)),
       (c_typeinfo, _, ({
-        let a = av.c_typeinfo;
-        let b = bv.c_typeinfo;
-        (cmpres)(!a || !b ? icmp((usize)a, (usize)b) :
-            (icmp(a->view, b->view) ?: (a->view == typeinfo_invalid ? cmp_eq : typed_value_cmp_typed(
-                Type_at(e, a->subject.t), a->subject.v,
-                Type_at(e, b->subject.t), b->subject.v, e))));
-      })),
-      // asts have no size, so memcmp below would call every ast equal
+         let a = av.c_typeinfo;
+         let b = bv.c_typeinfo;
+         (cmpres)(!a || !b ? icmp((usize)a, (usize)b) : (icmp(a->view, b->view) ?: (a->view == typeinfo_invalid ? cmp_eq : typed_value_cmp_typed(Type_at(e, a->subject.t), a->subject.v, Type_at(e, b->subject.t), b->subject.v, e))));
+       })),
       (c_ast, _, icmp(av.c_ast, bv.c_ast)),
       (c_inlineast, _, icmp(av.c_ast, bv.c_ast)),
       (default, ({
-         assertMessage(!Type_is_comptime(ta));
-         cmp_memcmp(av.value, bv.value, Type_sizeof(ta, e));
+         cmpres result = cmp_eq;
+         let size = Type_sizeof(ta, e);
+         if (!size) result = cmp_eq;
+         else if (!(av.value && bv.value))
+           result = icmp((isize)av.value, (isize)bv.value);
+         else result = cmp_memcmp(av.value, bv.value, size);
+         result;
        })),
   );
 }
@@ -247,7 +249,9 @@ u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astidx args,
     if (nparams) slice_free(ss->alloc, regs);
   };
   bool receiver_named = false;
-  defer { if (receiver_named) scope_pop_named(s); };
+  defer {
+    if (receiver_named) scope_pop_named(s);
+  };
   usize idx = 0;
   if (lead) {
     let want0 = Type_at(env, type_run_at(env, generic_signature.start, 0));
