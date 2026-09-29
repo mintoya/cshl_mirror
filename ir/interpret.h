@@ -1,6 +1,9 @@
 #pragma once
+#include "../type.h"
+#include "coerce_helpers.h"
 #include "common.h"
 #include "scope.h"
+#include "wheels/macros.h"
 #include "wheels/sList.h"
 extern ptrstype(outputFunction) sexplike;
 sliceDef(typed_value);
@@ -106,6 +109,15 @@ intstate intstate_new(superscope *ss) {
           .reads = arena_new_ext(ss->alloc, 1024),
       })
   );
+}
+void intstate_free(intstate is) {
+  let ss = is->ss;
+  mxmap_deinit(is->vmap);
+  msList_deInit(ss->alloc, is->cs);
+  arena_cleanup(is->temp);
+  arena_cleanup(is->reads);
+  if (is->scratch) arena_cleanup(is->scratch);
+  adestroy(ss->alloc, is);
 }
 void intstate_pushs(intstate is, const scope *s, slice(typed_value) fnargs, typeidx retT) {
   let npl = P$(mxmap_get(is->vmap, s), ($ ? *$ : msList_init(is->temp, itypeof(intframe, vals))));
@@ -515,7 +527,6 @@ static void intstate_inst errs(intstate is, usize at, ir inst) {
   );
 }
 
-// Execute against the lowering slots directly, without creating runtime copies.
 static bool scope_exec_comptime errs(superscope *env, scope *s, ir i) {
   u32 l = 0, r = 0, d = 0;
   tu_match_void(
@@ -536,22 +547,13 @@ static bool scope_exec_comptime errs(superscope *env, scope *s, ir i) {
     let rt = Type_stripTag(scope_reg_type(env, s, r), ss_typeenv(env));
     if (rt.ref_kind || !Type_is_comptime(rt) || tu_is(c_any, rt.t)) return false;
   }
-  // A set into runtime storage must still happen at runtime.
   let dt = Type_stripTag(scope_reg_type(env, s, d), ss_typeenv(env));
   if (dt.ref_kind || tu_is(c_any, dt.t)) return false;
   if (tu_is(ir_set, i) && !Type_is_comptime(dt)) return false;
 
-  let is = intstate_new(env);
-  defer {
-    mxmap_deinit(is->vmap);
-    msList_deInit(env->alloc, is->cs);
-    arena_cleanup(is->temp);
-    arena_cleanup(is->reads);
-    if (is->scratch) arena_cleanup(is->scratch);
-    adestroy(env->alloc, is);
-  };
-  msList_push(env->alloc, is->cs, ((intframe){.sp = s}));
-  try_err(intstate_inst, (is, 0, i), false);
+  let scratch = scope_inferior(env, s);
+  msList_push(env->alloc, scratch->instructions, i);
+  try_err(interpret, (env, scratch), false);
   return true;
 }
 
@@ -599,12 +601,6 @@ typed_value interpret errs(superscope *ss, scope *s) {
     }
   }
 
-  mxmap_deinit(is->vmap);
-  msList_deInit(ss->alloc, is->cs);
-  arena_cleanup(is->temp);
-  arena_cleanup(is->reads);
-  if (is->scratch)
-    arena_cleanup(is->scratch);
-
+  intstate_free(is);
   return r;
 }

@@ -24,6 +24,18 @@ fn  ~~ @fn (a ~ast),inline,{
       @uqot(a."()".opright."()".opright),
     );
 };
+bfn ~~ fn (block~ast) any 
+  return @uqot fn (a~any) any {a|>@uqot(block);};
+np ~~ fn (block~ast) inline {
+  argn ~ast~block."()".opleft.pblock[0];
+  body ~ast~block."()".opright;
+  return @qot {
+    @uqot(argn) ~= _;
+    @unbind "_";
+    @uqot(body);
+  };
+};
+
 @closure ~~ fn (caps ~ast, args ~ast, ret ~ast, body ~ast) any {
   capture ~~ @fn (mode ~@int(), inst ~ast, c ~ast), ast, {
     cif (mode == 0)
@@ -122,7 +134,7 @@ while ~~ fn (a ~ast) inline {
     };
   };
 };
-not ~~ fn (in ~bool) bool return in bxor 1;
+not ~~ fn (in ~bool) bool return in as bool bxor 1;
 some_state ~~ @sint(32);
 getstate ~~ fn () (@typeof(some_state)) 
   return (some_state = some_state + 1);
@@ -136,19 +148,23 @@ arr ~~ fn (i~int) any
     @id("as") ~~ fn (this~Self , t~type) any {
       cif (t == bool) {
         return this.isnnull; 
-      } else  @error(); // not bound to anything, regular unbound id
+      } else cif (t == Self) {
+        return this;
+      } else unbound_thing(); // not bound to anything, regular unbound id
     };
-    /*
-    @id("=") ~~ fn (this~@refT(Self) , o~any) any {
+    @id("=") ~~ fn (this~@refT(Self) , o~any) void {
       cif (@typeof(o) == t) {
-        result ~Self;
-        result.isnnull = true;
-        result.value = o;
-        return result;
+        this.isnnull = true;
+        this.value = o;
+      } else cif (@typeof(o) == Self) {
+        this = o;
       } else @error();
 
     };
-    */
+    unwrap ~~ fn (this~ @refT(Self)) (@refT t) {
+      if (not this.isnnull) {}; // do something
+      return @ref this.value; 
+    };
     orelse ~~ fn (this~ast , a~ast) inline {
       return @qot {
         result ~= @uqot(this);
@@ -159,6 +175,8 @@ arr ~~ fn (i~int) any
     };
 };
 
+// something like ccall printf((@where "%i\n"[0]),5) as void;
+// ccall ~~ fn () any {};
 @struct{
   inline  ~~ inline;
   bool  ~~ bool;
@@ -187,4 +205,6 @@ arr ~~ fn (i~int) any
   true  ~~ true;
   false ~~ false;
   not ~~ not;
+
+  bfn ~~ bfn;
 };

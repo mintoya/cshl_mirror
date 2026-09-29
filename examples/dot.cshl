@@ -5,9 +5,11 @@ Point ~type~ @struct{
   x ~i32;
   y ~i32;
   @id(".") ~~ fn (this~@refT(Self) ,l~ast)( @refT(i32) ){
-    @cif((l == "x"),(return @ref(@rawget(this, "y"))));
-    @cif((l == "y"),(return @ref(@rawget(this, "x"))));
-    return @ref(@rawget(this, "x"));
+    cif (l == "x") {
+      return @ref @rawget(this, "y");
+    } else cif (l == "y") {
+      return @ref @rawget(this, "x");
+    } else return @ref @rawget(this, "x");
   };
   @id("+") ~~ fn (
     this~Self,
@@ -19,8 +21,5 @@ Point ~type~ @struct{
     return result;
   };
 };
+
 a ~Point;
-a.x = 5;
-a.y = 4;
-a.z = 4;
-a;

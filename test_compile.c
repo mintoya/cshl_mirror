@@ -339,6 +339,8 @@ test_file_1(anonymous_conversion);
 test_file_1(result_catch);
 test_file_1(interpret_import);
 test_file_1(interpret_using);
+test_file_1(unbind_removes_a_binding);
+test_file_1(unbind_removes_a_using_import);
 test_file_1(typeof_strips_reference_and_isref_reports_it);
 test_file_1(namespace_enclosing_function);
 
@@ -419,6 +421,23 @@ test_fn(using_names_stay_in_block) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("{ @using(@struct { x ~~ 2; }); }; x;"));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "UNBOUND_ID");
+}
+
+test_fn(unbind_rejects_unbound_name) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("@unbind(nothing);"));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "UNBOUND_ID");
+}
+
+// a nested block cannot reach out and unbind a name from its enclosing scope
+test_fn(unbind_leaves_enclosing_scopes_alone) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("x ~~ 1; { @unbind(\"x\"); }; x;"));
   test_assert(e.err_code);
   test_streq(e.err_code, "UNBOUND_ID");
 }

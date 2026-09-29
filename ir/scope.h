@@ -130,10 +130,10 @@ static inline cmpres Type_cmp_ndecor(Type a, Type b, typeenv e) {
       P$(b, ($.decorations &= x, $))
   );
 }
-static bool scope_exec_comptime errs(superscope *env, scope *s, ir i);
+bool scope_exec_comptime errs(superscope *env, scope *s, ir i);
 static inline void scope_emit_inst errs(superscope *env, scope *s, ir i) {
-  if (try_err(scope_exec_comptime, (env, s, i))) return;
-  msList_push(env->alloc, s->instructions, i);
+  if (!try_err(scope_exec_comptime, (env, s, i)))
+    msList_push(env->alloc, s->instructions, i);
 }
 
 static bool Type_ncmp_nptr(Type a, Type b, typeenv e) { return a.ptr_level == b.ptr_level && !TypeTree_cmp(e, a.t, b.t); }
@@ -151,6 +151,10 @@ static inline void scope_bind errs(superscope *env, scope *s, u32 idx, fptr name
   assertMessage(!moxmap_get(s->named->bindings, name));
   assertMessage(idx <= msList_len(s->values) + s->start, "%zu <= %zu + %zu", idx, msList_len(s->values), s->start);
   moxmap_set(s->named->bindings, name, idx);
+}
+static inline void scope_unbind errs(scope *s, fptr name) {
+  if (!moxmap_get(s->named->bindings, name)) return_err("UNBOUND_ID");
+  moxmap_rem(s->named->bindings, name);
 }
 
 static u32 ss_get_named_failable_noref(superscope *env, scope *s, fptr n) {
@@ -283,6 +287,7 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
       {"@loop", builtin_loop},
       {"@import", builtin_import},
       {"@using", builtin_using},
+      {"@unbind", builtin_unbind},
       {"@cout", builtin_cout},
       {"@cinclude", builtin_cinclude},
   };

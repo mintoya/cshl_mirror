@@ -74,7 +74,7 @@ static u32 lower_builtin_return errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_args(ss, args, 0, 1);
   let val = list.len ? try_err(lower, (ss, s, list.start + 0), 0) : s->start + 1;
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_ret, val)), 0);
-  return scope_add_value(ss, s, TV_void(ss));
+  return s->start + 1;
 }
 
 static u32 lower_builtin_id errs(superscope *ss, scope *s, astidx args) {
@@ -97,7 +97,7 @@ static u32 lower_builtin_cout errs(superscope *ss, scope *s, astidx args) {
   u32 chunk = msList_len(ss->coutput);
   msList_push(ss->alloc, ss->coutput, copy);
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_cout, chunk)), 0);
-  return scope_add_value(ss, s, TV_void(ss));
+  return s->start + 1;
 }
 static u32 lower_builtin_cinclude errs(superscope *ss, scope *s, astidx args) {
   if (s->instance.fn) return_err("CINCLUDE_INSIDE_FUNCTION", 0);
@@ -116,7 +116,7 @@ static u32 lower_builtin_cinclude errs(superscope *ss, scope *s, astidx args) {
   memcpy(text.ptr + prefix_len, header.ptr, header.len);
   if (!verbatim) text.ptr[total - 1] = '>';
   msList_push(ss->alloc, ss->cprologue, (fptr){text.len, (u8 *)text.ptr});
-  return scope_add_value(ss, s, TV_void(ss));
+  return s->start + 1;
 }
 
 static u32 lower_builtin_import errs(superscope *ss, scope *s, astidx args) {
@@ -171,7 +171,16 @@ static u32 lower_builtin_using errs(superscope *ss, scope *s, astidx args) {
     let copy = scope_add_value(ss, s, *scope_find(ss, owner->namespace, *member.val));
     try_err(scope_bind, (ss, s, copy, member.key), 0);
   }
-  return scope_add_value(ss, s, TV_void(ss));
+  return s->start + 1;
+}
+
+static u32 lower_builtin_unbind errs(superscope *ss, scope *s, astidx args) {
+  let str = try_err(temporary_interpret, (ss, s, args), 0);
+  let arr = tu_catchr(r_arr, ss_type(ss, str.t).t, return_err("ID_TYPE_ERROR", 0));
+  if (tu_catchr(r_sint, type_tree(ss_typeenv(ss), arr.t), return_err("ID_TYPE_ERROR", 0)).bits != 8)
+    return_err("ID_TYPE_ERROR", 0);
+  try_err(scope_unbind, (s, ((fptr){arr.count, (u8 *)str.v.value})), 0);
+  return s->start + 1;
 }
 
 static astidx_span ast_list_span(superscope *ss, astidx a) {
@@ -643,10 +652,10 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
       builtin,
       (builtin_fn, /*      */ try_err(lower_builtin_fn, (ss, s, args), 0)),
       (builtin_if, /*      */ ({
-        let list = builtin_args(ss, args, 2, 3);
-        u32 cnd = try_err(lower_condition, (ss, s, list.start + 0), 0);
-        try_err(lower_builtin_if, (ss, s, cnd, 0, list.start + 1, list.len == 3 ? list.start + 2 : 0), 0);
-      })),
+         let list = builtin_args(ss, args, 2, 3);
+         u32 cnd = try_err(lower_condition, (ss, s, list.start + 0), 0);
+         try_err(lower_builtin_if, (ss, s, cnd, 0, list.start + 1, list.len == 3 ? list.start + 2 : 0), 0);
+       })),
       (builtin_cif, /*     */ try_err(lower_builtin_cif, (ss, s, args), 0)),
       (builtin_loop, /*    */ try_err(lower_builtin_loop, (ss, s, args), 0)),
       (builtin_return, /*  */ try_err(lower_builtin_return, (ss, s, args), 0)),
@@ -658,6 +667,7 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
       (builtin_comptime, /**/ try_err(lower_builtin_decor, (ss, s, args, 0, 0, 1), 0)),
       (builtin_import, /*  */ try_err(lower_builtin_import, (ss, s, args), 0)),
       (builtin_using, /*   */ try_err(lower_builtin_using, (ss, s, args), 0)),
+      (builtin_unbind, /*  */ try_err(lower_builtin_unbind, (ss, s, args), 0)),
       (builtin_sint, /*    */ try_err(lower_builtin_intty, (ss, s, args, true), 0)),
       (builtin_uint, /*    */ try_err(lower_builtin_intty, (ss, s, args, false), 0)),
       (builtin_returntype, /**/ try_err(lower_builtin_returntype, (ss, s, args), 0)),

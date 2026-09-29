@@ -59,6 +59,7 @@ typedef enum : u8 {
   builtin_cout,       // @cout(str) put the string into generated C 
   builtin_cinclude,   // @cinclude(header) emit #include into the file prologue
   builtin_using,      // @using(struct) take a structs members and add them to this namespace
+  builtin_unbind,     // @unbind(name) drop name's binding from the current scope
 } builtin_id;
 //{type
 // one based index into a typelist, 0 means null. same as astidx but for types
@@ -493,6 +494,7 @@ typePrinter(builtin_id) {
       (builtin_cout, /*      */ PUTS("cout")),
       (builtin_cinclude, /*  */ PUTS("cinclude")),
       (builtin_using, /*     */ PUTS("using")),
+      (builtin_unbind, /*    */ PUTS("unbind")),
       (builtin_rawget, /*    */ PUTS("rawget")),
       (builtin_import, /*    */ PUTS("import")),
       (builtin_alignof, /*   */ PUTS("alignof")),
