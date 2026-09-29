@@ -848,6 +848,23 @@ test_fn(inlineast_expands_at_call_site) {
   test_assert(*(bool *)r.v.value);
 }
 
+test_fn(ast_calls_interpret_without_caching) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let ctx = parse_source(nullptr, arena,
+                         fp("f ~~ @fn((a ~@ast()), @sint(32), { return 7; });"
+                            "node ~~ @qot(1);"
+                            "@apply(f, node) + @apply(f, node) == 14;"), nullptr);
+  let ss = ss_init(arena, ctx);
+  catch_errcall((lower, (ss, ss->outermost, ctx.idx)), e, (err_panic(e), (u32)0));
+  test_inteq(0, moxmap_tox(ss->functions[0].mp)->keys->length);
+  foreach (let inst, span(ss->outermost->instructions, msList_len(ss->outermost->instructions)))
+    test_assert(!tu_is(ir_call, *inst));
+  let result = interpret(nullptr, ss, ss->outermost);
+  test_assert(tu_is(r_bool, ss_type(ss, result.t).t));
+  test_assert(*(bool *)result.v.value);
+}
+
 test_fn(inlineast_cached_calls_use_caller_scope) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };

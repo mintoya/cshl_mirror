@@ -16,6 +16,51 @@ __attribute__((constructor)) static void unbuffer_test_output(void) {
 #include "indentprinter.h"
 #include "test_compile.c"
 
+test_fn(owned_allocator_reclaims_and_cleans_up) {
+  let heap = debugAllocator(.allocator = stdAlloc);
+  defer { debugAllocatorDeInit(heap); };
+  let baseline = debugAllocator_stats(heap);
+  let owned = owned_allocator_new(heap);
+  let a = acreate(owned, u8[32]);
+  let b = acreate(owned, u8[64]);
+  let c = acreate(owned, u8[96]);
+  (*b)[0] = 42;
+  test_inteq(0, (uptr)b % alignof(myAlign));
+  let grown = aresize(owned, b, u8[65536]);
+  test_inteq(42, (*grown)[0]);
+  test_inteq(0, (uptr)grown % alignof(myAlign));
+  let before_free = debugAllocator_stats(heap);
+  adestroy(owned, a);
+  let after_free = debugAllocator_stats(heap);
+  test_assert(after_free.current_memory < before_free.current_memory);
+  test_inteq(before_free.total_active_allocations - 1, after_free.total_active_allocations);
+  let shrunk = aresize(owned, grown, u8[16]);
+  test_inteq(42, (*shrunk)[0]);
+  // Leave the resized block and c live: bulk cleanup must release both.
+  (void)c;
+  owned_allocator_cleanup(owned);
+  let after = debugAllocator_stats(heap);
+  test_inteq(baseline.current_memory, after.current_memory);
+  test_inteq(baseline.total_active_allocations, after.total_active_allocations);
+}
+
+test_fn(compiler_owned_allocator_cleanup) {
+  let heap = debugAllocator(.allocator = stdAlloc);
+  defer { debugAllocatorDeInit(heap); };
+  let ctx = parse_source(nullptr, heap,
+      fp("f ~~ @fn((a ~@ast()), @inlineast(), { return a; }); f(2 + 3);"), nullptr);
+  let before = debugAllocator_stats(heap);
+  let ss = ss_init(heap, ctx);
+  lower(nullptr, ss, ss->outermost, ctx.idx);
+  let result = interpret(nullptr, ss, ss->outermost);
+  test_assert(tu_is(c_int, ss_type(ss, result.t).t));
+  test_assert(!BInt.cmp(result.v.c_int, BInt.from.i64(ss->alloc, 5)));
+  ss_deInit(ss);
+  let after = debugAllocator_stats(heap);
+  test_inteq(before.current_memory, after.current_memory);
+  test_inteq(before.total_active_allocations, after.total_active_allocations);
+}
+
 test_fn(cout_struct_layout) {
   let arena = arena_new_ext(allocator, 1024);
   defer { arena_cleanup(arena); };

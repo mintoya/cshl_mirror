@@ -28,11 +28,18 @@ cmd_main(
     (bool, c_output /*  */, ("-C", "--cout") /*  */, "c output" /*                */, false),
     (bool, echo_ast /*  */, ("--log-ast") /*     */, "log the ast" /*             */, false),
     (bool, echo_file /* */, ("--log-file") /*    */, "echo read file" /*          */, false),
+    (bool, no_debug_alloc /* */, ("--no-debug-alloc") /* */, "skip the debug allocator (much faster, no leak report)" /* */, false),
 ) {
-  let allocator = debugAllocator(.allocator = stdAlloc, .onalloc = on_allocation);
+  // the debug allocator hashes every allocation it hands out, so it is worth
+  // turning off when the leak report is not what is being measured
+  bool dbga = !no_debug_alloc;
+  allocfn allocator = stdAlloc;
+  if (dbga) allocator = debugAllocator(.allocator = stdAlloc, .onalloc = on_allocation);
   defer {
-    println("(log) stats : {dbga_stats}", debugAllocator_stats(allocator));
-    debugAllocatorDeInit(allocator);
+    if (dbga) {
+      println("(log) stats : {dbga_stats}", debugAllocator_stats(allocator));
+      debugAllocatorDeInit(allocator);
+    }
   };
 
   char *progname = nargs ? *args : "cshl";
@@ -51,17 +58,18 @@ cmd_main(
     buffer = read_file(allocator, args[1]);
     println("file : \n{slice(c8)}\n", buffer);
   }
-  println("(log) after fread : {dbga_stats}", debugAllocator_stats(allocator));
+  if (dbga) println("(log) after fread : {dbga_stats}", debugAllocator_stats(allocator));
 
   // parse_source reads the file itself when given a filename, so pass exactly one source
   let ctx = catch_errcall((parse_source, (allocator, (fptr){}, args[1])), e, (err_panic(e), (astidx_full){}));
-  println("(log) after ast : {dbga_stats}", debugAllocator_stats(allocator));
+  if (dbga) println("(log) after ast : {dbga_stats}", debugAllocator_stats(allocator));
 
   if (echo_ast)
     print_wfO(sexplike, nullptr, "{astidx_full}\n", ctx);
 
   if (lowerast || execute || c_output) {
     let env = ss_init(allocator, ctx);
+    defer { ss_deInit(env); };
     catch_errcall((lower, (env, env->outermost, ctx.idx)), e, (err_panic(e), (u32)0));
     if (lowerast || execute)
       print_wf(sexplike, "{scope_full}\n", ((scope_full){env->outermost, env}));

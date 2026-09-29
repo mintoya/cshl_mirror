@@ -67,7 +67,6 @@ struct superscope {
   };
 
   moxmap(Type, typeidx) typeindex;
-  mxmap(void *, usize) pointers;
   msList(typeidx) thisstack;
   moxmap(fptr, type_metadata) type_info;
   msList(function) functions;

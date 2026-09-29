@@ -16,14 +16,11 @@ true ~@comptime(bool)~1;
 false~@comptime(bool)~0;
 null ~ @comptime(@struct{});
 void ~~ @void();
-fn  ~~ @fn (a ~ast),inline,{
-  return 
-    @qot @fn(
-      @uqot(a."()".opleft),
-      @uqot(a."()".opright."()".opleft),
-      @uqot(a."()".opright."()".opright),
-    );
-};
+fn  ~~ @fn (a ~ast),inline,(return @qot @fn(
+  @uqot(a."()".opleft),
+  @uqot(a."()".opright."()".opleft),
+  @uqot(a."()".opright."()".opright),
+));
 @closure ~~ fn (caps ~ast, args ~ast, ret ~ast, body ~ast) any {
   capture ~~ @fn (mode ~@int(), inst ~ast, c ~ast), ast, {
     cif (mode == 0)

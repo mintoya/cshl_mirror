@@ -22,3 +22,5 @@ a.pdb
 /.tsconfig.json
 /nob.old.exe
 *.cshl.c*
+/flamegraph.svg
+/perf.data

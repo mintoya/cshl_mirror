@@ -1,8 +1,9 @@
 #pragma once
 #include "common.h"
+#include "../owned_allocator.h"
 #include "wheels/macros.h"
 #include "wheels/print/print_pre.h"
-#include <wheels/allocators/cballocator.h>
+#include <wheels/allocators/arenaAllocator.h>
 #include <wheels/smap.h>
 
 sliceDef(u32);
@@ -204,39 +205,33 @@ typeidx ss_type_intern(superscope *ss, Type t) {
   return idx;
 }
 
-static inline void irb_cbb(const callbackallocatorhandle *h, void *p) {
-  let _map = (itypeof(superscope, pointers))h->cbself->udata;
-  if (p == h->inptr)
-    return (void)mxmap_set(_map, p, h->outsize);
-  mxmap_rem(_map, h->inptr);
-  if (p) mxmap_set(_map, p, h->outsize);
-}
-
 static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
+  // Reclaim temporary allocations and replaced container buffers immediately,
+  // while retaining bulk cleanup for scopes and other compiler-owned objects.
+  allocfn owned = owned_allocator_new(allocator);
   // clang-format off
-  superscope* res = avalue(allocator, ((superscope){
+  superscope* res = avalue(owned, ((superscope){
+    .alloc = owned,
     .asts = ctx.alist,
     .plist = ctx.plist,
     .flist  = ctx.flist,
-    .tlist = {.allocator = allocator},
-    .sitems = {.allocator = allocator},
-    .bitems = {.allocator = allocator},
-    .pointers = mxmap_init(allocator, void*, usize),
-    .thisstack = msList_init(allocator , typeidx),
-    .functions = msList_init(allocator,function),
-    .coutput = msList_init(allocator, fptr),
-    .cprologue = msList_init(allocator, fptr),
+    .tlist = {.allocator = owned},
+    .sitems = {.allocator = owned},
+    .bitems = {.allocator = owned},
+    .thisstack = msList_init(owned, typeidx),
+    .functions = msList_init(owned,function),
+    .coutput = msList_init(owned, fptr),
+    .cprologue = msList_init(owned, fptr),
   }));
   // clang-format on
-  res->typeindex = moxmap_init(allocator, Type, typeidx, (oxmap_cmp){Type_cmp_hash_ss, res});
-  res->type_info = moxmap_init(allocator, fptr, type_metadata, (oxmap_cmp){fptr_cmp_hash, res});
+  res->typeindex = moxmap_init(owned, Type, typeidx, (oxmap_cmp){Type_cmp_hash_ss, res});
+  res->type_info = moxmap_init(owned, fptr, type_metadata, (oxmap_cmp){fptr_cmp_hash, res});
   res->t_void = ss_type_intern(res, T(tu_of(r_void, {})));
   res->t_any = ss_type_intern(res, T(tu_of(c_any, {})));
   res->t_int = ss_type_intern(res, T(tu_of(c_int, {})));
   res->t_bool = ss_type_intern(res, T(tu_of(r_bool, {})));
   res->t_ast = ss_type_intern(res, T(tu_of(c_ast, {})));
   res->t_type = ss_type_intern(res, T(tu_of(c_type, {})));
-  res->alloc = cba_init(allocator, nullptr, irb_cbb, res->pointers);
   res->outermost = scope_inferior(res, nullptr);
   struct {
     char *name;
@@ -305,18 +300,5 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
 }
 
 static inline void ss_deInit(superscope *ss) {
-  let allocator = ((struct cballocator *)ss->alloc)->allocator;
-  msList_deInit(allocator, ss->thisstack);
-  msList_deInit(allocator, ss->coutput);
-  msList_deInit(allocator, ss->cprologue);
-  foreach (let it, mxmap_iter(ss->pointers, void *, usize))
-    adestroy(allocator, (u8(*)[*it.val])it.key);
-  mxmap_deinit(ss->pointers);
-  moxmap_deinit(ss->typeindex);
-  moxmap_deinit(ss->type_info);
-  sglist_deinit(ss->tlist);
-  sglist_deinit(ss->sitems);
-  sglist_deinit(ss->bitems);
-  cba_deinit(ss->alloc);
-  adestroy(allocator, ss);
+  owned_allocator_cleanup(ss->alloc);
 }

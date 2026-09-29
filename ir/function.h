@@ -151,8 +151,14 @@ static u32 lower_comptime_call_result errs(superscope *ss, scope *s, scope *spec
 static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg, u32 fn, slice(typed_value) key, u32 rpos, u32 nargs) {
   if (!ss->functions[fn - 1].body) return_err("FUNCTION_NOT_DEFINED", 0);
   let function_item = &ss->functions[fn - 1];
+  bool ast_call = false;
+  bool comptime_args = true;
+  foreach (let arg, span(key.ptr, key.len)) {
+    if (TypeTree_is_ast(ss_type(ss, arg->t).t)) ast_call = true;
+    if (!Type_is_comptime(ss_type(ss, arg->t))) comptime_args = false;
+  }
 
-  if_decl (let inst, moxmap_get(function_item->mp, key)) {
+  if_decl (let inst, ast_call ? nullptr : moxmap_get(function_item->mp, key)) {
     let instance = &function_item->instances[*inst];
     if (Type_is_comptime(instance->ret)) {
       return try_err(lower_comptime_call_result, (ss, s, instance->spec, key), 0);
@@ -163,17 +169,20 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
     return result;
   }
 
-  let stable_key = key.len ? slice_alloc(ss->alloc, typed_value, key.len) : (slice(typed_value)){};
-  if (key.len) memcpy(stable_key.ptr, key.ptr, key.len * sizeof(*key.ptr));
-  foreach (let item, span(stable_key.ptr, stable_key.len))
-    if (tu_is(c_int, ss_type(ss, item->t).t) && item->v.c_int)
-      item->v.c_int = BInt.copy(ss->alloc, item->v.c_int);
+  if (!ast_call) {
+    let stable_key = key.len ? slice_alloc(ss->alloc, typed_value, key.len) : (slice(typed_value)){};
+    if (key.len) memcpy(stable_key.ptr, key.ptr, key.len * sizeof(*key.ptr));
+    foreach (let item, span(stable_key.ptr, stable_key.len))
+      if (tu_is(c_int, ss_type(ss, item->t).t) && item->v.c_int)
+        item->v.c_int = BInt.copy(ss->alloc, item->v.c_int);
+    moxmap_set(function_item->mp, stable_key, (u32)msList_len(function_item->instances));
+  }
 
   let spec = scope_inferior(ss, function_item->defscope);
   spec->parent_named = function_item->defnames;
   let instance = (function_instance){.spec = spec};
   u32 spec_number = (u32)msList_len(function_item->instances);
-  moxmap_set(function_item->mp, stable_key, spec_number);
+  // AST calls use a fresh instance for return bookkeeping, without caching it.
   msList_push(ss->alloc, function_item->instances, instance);
   spec->instance.fn = fn;
   spec->instance.index = spec_number;
@@ -204,7 +213,7 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
   try_err(scope_add_inst, (ss, spec, (ir)tu_of(ir_ret, fallback)), 0);
   ret = ss->functions[fn - 1].instances[spec_number].ret;
 
-  if (Type_is_comptime(ret)) {
+  if ((ast_call && comptime_args) || Type_is_comptime(ret)) {
     return try_err(lower_comptime_call_result, (ss, s, spec, key), 0);
   }
   u32 callee = try_err(function_call_specialize, (ss, s, fnreg, spec_number), 0);

@@ -527,7 +527,7 @@ static void intstate_inst errs(intstate is, usize at, ir inst) {
   );
 }
 
-static bool scope_exec_comptime errs(superscope *env, scope *s, ir i) {
+bool scope_exec_comptime errs(superscope *env, scope *s, ir i) {
   u32 l = 0, r = 0, d = 0;
   tu_match_void(
       i,
@@ -584,7 +584,10 @@ static void intstate_run errs(intstate is) {
 typed_value interpret errs(superscope *ss, scope *s) {
   let is = intstate_new(ss);
 
-  intstate_pushs(is, s, (slice(typed_value)){}, 0);
+  typeidx retT = s->instance.fn
+      ? ss_type_intern(ss, ss->functions[s->instance.fn - 1].instances[s->instance.index].ret)
+      : 0;
+  intstate_pushs(is, s, (slice(typed_value)){}, retT);
   try_err(intstate_run, (is), (typed_value){});
 
   let r = intstate_value(is, intstate_pop(is));
