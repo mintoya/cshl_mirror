@@ -74,7 +74,17 @@ cmpres slice_typed_value_cmp_hash(void *env, const void *a, const void *b) {
 
 static inline Type function_item_type errs(superscope *ss, scope *s, astidx item) {
   let placeholder = scope_find(ss, s, try_err(lower, (ss, s, item), T()));
-  let t = ss_type(ss, placeholder->t);
+  Type t = {};
+  tu_match_void(
+      ast_at(ss, item),
+      (astId, id, {
+        let tempT = ss_type(ss, placeholder->t);
+        if (!tu_is(c_type, tempT.t)) return_err("NON_TYPE_FUNCTION_ARG", T());
+        t = ss_type(ss, placeholder->v.c_type);
+      }),
+      (astDecl, dcl, t = ss_type(ss, placeholder->t)),
+      (default, return_err("NON_DECL_FUNCTION_ARG", T()))
+  );
   if (tu_is(c_type, t.t)) *placeholder = Type_asValue(ss, T(tu_of(c_any, {})));
   return t;
 }

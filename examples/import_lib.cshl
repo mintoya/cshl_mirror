@@ -1,3 +1,0 @@
-[add = @fn ((a ~@sint(32), b ~@sint(32)), @sint(32), {
-  return a + b;
-})];

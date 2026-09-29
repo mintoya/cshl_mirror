@@ -56,7 +56,8 @@ typedef enum : u8 {
   builtin_at,         // @at(arg) dereference arg
   builtin_where,      // @where(arg) referance to arg
   builtin_import,     // @import(path) evaluate another file in its own scope and yield its result
-  builtin_cout,       // @cout(str) splice the string into generated C
+  builtin_cout,       // @cout(str) put the string into generated C 
+  builtin_cinclude,   // @cinclude(header) emit #include into the file prologue
   builtin_using,      // @using(struct) take a structs members and add them to this namespace
 } builtin_id;
 //{type
@@ -490,6 +491,7 @@ typePrinter(builtin_id) {
       (builtin_typeof, /*    */ PUTS("typeof")),
       (builtin_isref, /*     */ PUTS("isref")),
       (builtin_cout, /*      */ PUTS("cout")),
+      (builtin_cinclude, /*  */ PUTS("cinclude")),
       (builtin_using, /*     */ PUTS("using")),
       (builtin_rawget, /*    */ PUTS("rawget")),
       (builtin_import, /*    */ PUTS("import")),

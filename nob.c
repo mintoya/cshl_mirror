@@ -9,7 +9,7 @@
 #endif
 
 #if !defined INPUT_FLAGS
-  #define INPUT_FLAGS "-fdefer-ts", "-fsanitize=address", "-fsanitize=undefined", "-finstrument-functions", "-O0"
+  #define INPUT_FLAGS "-fdefer-ts", "-O0"
 #endif
 
 #if __has_include("deps/nob.h/nob.h")

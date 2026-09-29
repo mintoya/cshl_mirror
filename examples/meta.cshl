@@ -2,9 +2,11 @@
 error_t ~~ @struct{
   emsg ~ @ptr(i8);
 };
-@cout "#include <stdio.h>";
+@cinclude "stdio.h";
 pstr ~~ fn (len ~ i32 ,msg ~(@ptr i8)) void
   @cout "printf(\"%.*s\",arg0,arg1);";
+pint ~~ fn (i~i32) void
+  @cout "printf(\"%i\",arg0);";
 
 pstrarr ~~ fn (str ~any) void {
   cif (@typeof(str) == (@ptr i8)) {
@@ -27,6 +29,8 @@ pstrarr ~~ fn (str ~any) void {
       cif (@typeof(other) == Self) {
         this.has_err = other.has_err;
         this.data = other.data;
+      } else cif (@typeof(other) == T) {
+        this.has_err = false; this.data.result = other;
       } else cif (@typeof(other) == error_t) {
         this.has_err = true;
         this.data.err_text = other.emsg;
@@ -37,8 +41,8 @@ pstrarr ~~ fn (str ~any) void {
       value ~@typeof(this.data.result);
       if this.has_err {
         this.data.err_text 
-        |> ( value = @uqot(fallback) );
-      } else (value = this.data.result );
+        |> (value = @uqot(fallback));
+      } else (value = this.data.result);
       value;
     };
     try ~~ fn (self ~ast) inline return @qot {
@@ -79,10 +83,13 @@ main ~~ fn () (! void) {
     pstrarr("cought error:");
     pstrarr(_);
     pstrarr("\n");
-    5;
+    5 as i32;
   };
   otherfn():try();
-  result ~@returntype();
-  return result;
+  return {};
 };
-result ~~ main();
+result ~~ main() : catch {
+  pstrarr("cought error:");
+  pstrarr(_);
+  pstrarr(":\t in main part\n");
+};

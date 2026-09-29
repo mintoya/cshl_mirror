@@ -1,7 +1,7 @@
 @using @import "module.cshl";
 
-// @cout is emitted before everything else in its scope, so it comes first.
-@cout "#include <stdio.h>";
+// @cinclude lands in the file prologue, ahead of the generated functions.
+@cinclude "stdio.h";
 
 counter ~i32 = 0;
 

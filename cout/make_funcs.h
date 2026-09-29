@@ -734,18 +734,17 @@ static void makeCoutText(superscope *ss, printerfunction_context _ctx, c_type_na
   _ctx.put((const c8 *)text.ptr, _ctx.arb, text.len, 0);
 }
 
-static void makeScopeCout(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s) {
-  foreach (let inst, span(s->instructions, msList_len(s->instructions)))
-    if (tu_is(ir_cout, *inst)) {
-      makeCoutText(ss, _ctx, names, inst->ir_cout);
-      PUTS("\n");
-    }
+static void makeCPrologue(superscope *ss, printerfunction_context _ctx) {
+  foreach (let inc, span(ss->cprologue, msList_len(ss->cprologue))) {
+    _ctx.put((const c8 *)inc->ptr, _ctx.arb, inc->len, 0);
+    PUTS("\n");
+  }
 }
 
 static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s, ir inst) {
   tu_match_void(
       inst,
-      (ir_cout, _, ), // handled
+      (ir_cout, chunk, makeCoutText(ss, _ctx, names, chunk)),
       (ir_getref, op, makeReference(ss, _ctx, names, s, op)),
       (ir_getptr, op, {
         makeVariable(_ctx, s, op.d);
@@ -976,7 +975,6 @@ static void makeVariables(superscope *ss, printerfunction_context _ctx, c_type_n
 }
 
 static void makeFunctionBody(superscope *ss, printerfunction_context _ctx, c_type_names names, function_instance *instance) {
-  makeScopeCout(ss, _ctx, names, instance->spec);
   makeVariables(ss, _ctx, names, instance->spec);
   foreach (let inst, span(instance->spec->instructions, msList_len(instance->spec->instructions)))
     makeFunctionInstruction(ss, _ctx, names, instance->spec, *inst);

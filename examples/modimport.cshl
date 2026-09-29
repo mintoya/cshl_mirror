@@ -1,6 +1,0 @@
-@using @import "module.cshl";
-
-main ~~ fn (i~i32) i32 {
-  return 5;
-};
-main(1);

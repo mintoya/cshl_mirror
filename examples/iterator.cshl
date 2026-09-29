@@ -75,7 +75,7 @@ map ~~ fn (body ~ast) inline return @qot {
 
 iterate ~~ fn () inline return @qot while (_:next() as bool);
 
-@cout "#include <stdio.h>";
+@cinclude "stdio.h";
 puti ~~ fn (in ~i32) void @cout "printf(\"%i\\n\",arg0);";
 
 sum ~i32~0;

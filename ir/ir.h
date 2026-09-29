@@ -13,7 +13,7 @@ tu_def(
     (ir_field, /* */ struct { u32 l, d, i, t; }), // d = ref(l.i), n-th field, t = type of d
     (ir_array, /* */ struct { u32 l, d, r; }),    // d = ref(l[r]), r is index of variable not index itself
     (ir_call, /*  */ struct { u32 l, d, r, e; }), // d = l(r ... e)
-    (ir_cout, /*  */ u32),                        // emit the comptime string in r into the C output
+    (ir_cout, /*  */ u32),                        // emit the comptime string in r into the C output here, in source order
     (ir_set, /*   */ struct { u32 l, d; }),       // d = l
                                                   //
     (ir_blocks, /**/ struct {}),                  //

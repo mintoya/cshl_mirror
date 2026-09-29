@@ -440,6 +440,31 @@ test_fn(import_rejects_sourceless_text) {
   test_streq(e.err_code, "IMPORT_FROM_UNNAMED_SOURCE");
 }
 
+// an include belongs to the file prologue, never to a function body
+static void cinclude_in_function_reports_error(allocfn arena, test_result *_result, const char *source) {
+  let e = lower_source_err(arena, ((fptr){strlen(source), (u8 *)source}));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "CINCLUDE_INSIDE_FUNCTION");
+}
+
+test_fn(cinclude_rejects_function_scope) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  cinclude_in_function_reports_error(
+      arena, _result,
+      "f ~~ @fn((), @void(), { @cinclude \"stdio.h\"; }); f();"
+  );
+}
+
+test_fn(cinclude_rejects_nested_function_scope) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  cinclude_in_function_reports_error(
+      arena, _result,
+      "f ~~ @fn((), @void(), { @if(1, { @cinclude \"stdio.h\"; }); }); f();"
+  );
+}
+
 test_fn(escaped_function_keeps_block_names) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };

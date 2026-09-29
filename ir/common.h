@@ -72,6 +72,7 @@ struct superscope {
   moxmap(fptr, type_metadata) type_info;
   msList(function) functions;
   msList(fptr) coutput;
+  msList(fptr) cprologue;
   scope *outermost;
 
   typeidx t_void, t_any, t_int, t_bool, t_ast, t_type;

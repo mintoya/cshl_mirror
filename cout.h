@@ -12,12 +12,12 @@ static void freeTypeNames(allocfn allocator, c_type_names names);
 void makeFuncs(superscope *ss, printerfunction_context _ctx, c_type_names names);
 void makeMain(superscope *ss, printerfunction_context _ctx, c_type_names names);
 static void makeVariables(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s);
-static void makeScopeCout(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s);
+static void makeCPrologue(superscope *ss, printerfunction_context _ctx);
 void makeC(superscope *ss, printerfunction_context _ctx) {
+  makeCPrologue(ss, _ctx);
   makeRuntime(_ctx);
   let names = makeTypes(ss, _ctx);
   defer { freeTypeNames(_ctx.allocator, names); };
-  makeScopeCout(ss, _ctx, names, ss->outermost);
   makeVariables(ss, _ctx, names, ss->outermost);
   makeFuncs(ss, _ctx, names);
   makeMain(ss, _ctx, names);

@@ -95,6 +95,27 @@ static u32 lower_builtin_cout errs(superscope *ss, scope *s, astidx args) {
   try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_cout, chunk)), 0);
   return scope_add_value(ss, s, TV_void(ss));
 }
+static u32 lower_builtin_cinclude errs(superscope *ss, scope *s, astidx args) {
+  // An include is a file-level declaration, so it cannot come from a function body.
+  if (s->instance.fn) return_err("CINCLUDE_INSIDE_FUNCTION", 0);
+  let list = builtin_args(ss, args, 1);
+  let str = try_err(temporary_interpret, (ss, s, list.start), 0);
+  let arr = tu_catchr(r_arr, ss_type(ss, str.t).t, return_err("CINCLUDE_NEEDS_STRING", 0));
+  if (tu_catchr(r_sint, type_tree(ss_typeenv(ss), arr.t), return_err("CINCLUDE_NEEDS_STRING", 0)).bits != 8)
+    return_err("CINCLUDE_NEEDS_STRING", 0);
+  let header = (fptr){arr.count, (u8 *)str.v.value};
+  // A leading < or " already picks the search rules; otherwise default to a system header.
+  bool verbatim = header.len && (header.ptr[0] == '<' || header.ptr[0] == '"');
+  const char *prefix = verbatim ? "#include " : "#include <";
+  usize prefix_len = strlen(prefix);
+  usize total = prefix_len + header.len + (verbatim ? 0 : 1);
+  slice(c8) text = slice_alloc(ss->alloc, c8, total);
+  memcpy(text.ptr, prefix, prefix_len);
+  memcpy(text.ptr + prefix_len, header.ptr, header.len);
+  if (!verbatim) text.ptr[total - 1] = '>';
+  msList_push(ss->alloc, ss->cprologue, (fptr){text.len, (u8 *)text.ptr});
+  return scope_add_value(ss, s, TV_void(ss));
+}
 
 static u32 lower_builtin_import errs(superscope *ss, scope *s, astidx args) {
   let str = try_err(temporary_interpret, (ss, s, args), 0);
@@ -668,6 +689,7 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
       (builtin_inlineast, /**/ try_err(lower_builtin_bare_type, (ss, s, args, T(tu_of(c_inlineast, {}))), 0)),
       (builtin_typeinfo, /**/ try_err(lower_builtin_typeinfo, (ss, s, args), 0)),
       (builtin_cout, /**/ try_err(lower_builtin_cout, (ss, s, args), 0)),
+      (builtin_cinclude, /**/ try_err(lower_builtin_cinclude, (ss, s, args), 0)),
   );
   assertMessage(false, "unhandled builtin %u", builtin);
 }

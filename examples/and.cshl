@@ -1,0 +1,9 @@
+@using @import "module.cshl";
+@cinclude "stdio.h";
+
+ness ~bool=false;
+ness and {
+  if true @cout "printf(\"should not run\\n\");";
+  true;
+};
+true;

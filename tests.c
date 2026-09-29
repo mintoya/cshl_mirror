@@ -143,6 +143,42 @@ test_fn(cout_comptime_constants_execute) {
   check_generated_c(allocator, _result, "test/cout_comptime_constants.cshl");
 }
 
+// stdout is part of the contract: a @cout must run where it is written, after
+// the statements before it and only when its branch runs.
+test_fn(cout_emits_in_source_order) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  char executable[] = "/tmp/cshl-cout-order-XXXXXX";
+  int fd = mkstemp(executable);
+  test_assert(fd >= 0);
+  close(fd);
+  char output[] = "/tmp/cshl-cout-order-out-XXXXXX";
+  int ofd = mkstemp(output);
+  test_assert(ofd >= 0);
+  close(ofd);
+  defer {
+    unlink(executable);
+    unlink(output);
+  };
+  char command[256];
+  snprintf(command, sizeof(command), "clang -std=c23 -x c -o %s -", executable);
+  let pipe = popen(command, "w");
+  test_assert(pipe);
+  let ctx = parse_source(nullptr, arena, nullFptr, "test/cout_order.cshl");
+  let ss = ss_init(arena, ctx);
+  lower(nullptr, ss, ss->outermost, ctx.idx);
+  makeC(ss, (printerfunction_context){.put = fileprint, .arb = pipe, .allocator = arena});
+  test_inteq(0, pclose(pipe));
+  snprintf(command, sizeof(command), "%s > %s", executable, output);
+  test_inteq(0, system(command));
+  char buffer[128] = {};
+  FILE *file = fopen(output, "r");
+  test_assert(file);
+  usize len = fread(buffer, 1, sizeof(buffer) - 1, file);
+  fclose(file);
+  test_fpeq(((fptr){len, (u8 *)buffer}), "body1\ncond\nafter\n");
+}
+
 test_fn(anonymous_conversion_execute) {
   check_generated_c(allocator, _result, "test/anonymous_conversion.cshl");
 }
