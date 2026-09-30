@@ -196,16 +196,21 @@ static void makeRegisterPlace(superscope *ss, printerfunction_context _ctx, c_ty
   }
   assertMessage(!Type_is_comptime(t), "unsupported comptime value in C output");
   assertMessage(t.ref_kind != ref_dref, "double-offset reference used as a C value");
+  PUTS("(");
+  if (t.ref_kind == ref_ref && tu_is(r_bool, Type_stripTag(t, ss_typeenv(ss)).t))
+    PUTS("!!");
+  PUTS("(");
   if (t.ref_kind == ref_ref && function_register_is_field_ref(ss, s, reg)) {
     PUTS("*(*(");
     makeRegisterType(ss, _ctx, names, s, reg);
     PUTS(" *)");
     makeVariable(_ctx, s, reg);
     PUTS(")");
-    return;
+  } else {
+    if (t.ref_kind == ref_ref) PUTS("*");
+    makeVariable(_ctx, s, reg);
   }
-  if (t.ref_kind == ref_ref) PUTS("*");
-  makeVariable(_ctx, s, reg);
+  PUTS("))");
 }
 
 static void makeDrefSignBits(superscope *ss, printerfunction_context _ctx, c_type_names names, scope *s, u32 reg) {
@@ -933,7 +938,15 @@ static void makeVariableInit(superscope *ss, printerfunction_context _ctx, c_typ
   Type t = function_register_type(ss, s, reg);
   typed_value *value = scope_find(ss, s, reg);
   usize size = Type_sizeof(t, e);
-  if (!size || !value->v.value || t.ref_kind || t.ptr_level) {
+  if (t.ref_kind || t.ptr_level) {
+    PUTS("{0}");
+    return;
+  }
+  if (!size) {
+    PUTS("{}");
+    return;
+  }
+  if (!value->v.value) {
     PUTS("{0}");
     return;
   }

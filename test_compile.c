@@ -1,4 +1,5 @@
 #include "ast.h"
+#include "cout.h"
 #include "ir/interpret.h"
 #include "ir/lower.h"
 #include "ir/scope.h"
@@ -31,7 +32,32 @@ static interp interpret_source(allocfn arena, fptr src, astidx_full *ctx_out) {
   return interpret_source_named(arena, src, nullptr, ctx_out);
 }
 static Type tv_type(interp x) { return Type_at(x.env, x.t); }
-
+// #define HAS_TCC 1
+#if defined HAS_TCC && HAS_TCC == 1
+  #define test_file_2(filename)                                                             \
+    test_fn(filename##_compile) {                                                           \
+      let arena = arena_new_ext(allocator, 1 << 16);                                        \
+      defer { arena_cleanup(arena); };                                                      \
+      let ct = parse_source(                                                                \
+          nullptr,                                                                          \
+          arena,                                                                            \
+          nullFptr,                                                                         \
+          "test/" #filename ".cshl"                                                         \
+      );                                                                                    \
+      let ctx = ss_init(arena, ct);                                                         \
+      lower(nullptr, ctx, ctx->outermost, ct.idx);                                          \
+      let outn = "test/" #filename ".cshl.c";                                               \
+      let out = fopen(outn, "w");                                                           \
+      test_assert(out);                                                                     \
+      P$(((printerfunction_context){.put = fileprint, .arb = out, .allocator = allocator}), \
+         (makeC(ctx, $), 0));                                                               \
+      /* close before running: tcc must see the fully flushed file */                       \
+      test_assert(!fclose(out));                                                            \
+      test_assert(!system("tcc -run test/" #filename ".cshl.c"));                           \
+    };
+#else
+  #define test_file_2(filename)
+#endif
 #define test_file_1(filename)                             \
   test_fn(filename) {                                     \
     let arena = arena_new_ext(allocator, 1 << 16);        \
@@ -49,7 +75,8 @@ static Type tv_type(interp x) { return Type_at(x.env, x.t); }
     test_assert(tu_is(r_bool, rt.t));                     \
     test_assert(!rt.decorations);                         \
     test_assert(*(bool *)result.v.value);                 \
-  };
+  };                                                      \
+  test_file_2(filename);
 
 test_fn(interpret_literal_int) {
   let arena = arena_new_ext(allocator, 1 << 16);
@@ -369,7 +396,10 @@ static err_t lower_source_named_err(allocfn arena, fptr src, const char *filenam
 }
 
 test_fn(as_overload_checks_requested_return_type) {
-  const struct { const char *source; bool valid; } cases[] = {
+  const struct {
+    const char *source;
+    bool valid;
+  } cases[] = {
       {"any ~~ @any(); true ~@comptime(@bool())~1; T ~~ @struct { Self ~~ @this(); x ~@sint(32); @id(\"as\") ~~ @fn (s~Self,t~@type()), any, { return s.x; }; }; v ~T; v as @bool();", false},
       {"any ~~ @any(); true ~@comptime(@bool())~1; T ~~ @struct { Self ~~ @this(); @id(\"as\") ~~ @fn (s~@comptime(Self),t~@type()), any, { return true; }; }; v ~@comptime(T); v as @sint(32);", false},
       {"any ~~ @any(); true ~@comptime(@bool())~1; T ~~ @struct { Self ~~ @this(); x ~@sint(32); @id(\"as\") ~~ @fn (s~Self,t~@type()), any, { return s.x; }; }; v ~T; v as @sint(16);", false},
@@ -389,7 +419,9 @@ test_fn(as_overload_checks_requested_return_type) {
 }
 
 test_fn(anonymous_conversion_rejects_invalid_members) {
-  const struct { const char *source, *error; } cases[] = {
+  const struct {
+    const char *source, *error;
+  } cases[] = {
       {"[x = 1, 2];", "ANONYMOUS_MIXED_MEMBERS"},
       {"[1, x = 2];", "ANONYMOUS_MIXED_MEMBERS"},
       {"[[x = 1, 2]];", "ANONYMOUS_MIXED_MEMBERS"},
@@ -476,8 +508,7 @@ test_fn(cinclude_rejects_function_scope) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   cinclude_in_function_reports_error(
-      arena, _result,
-      "f ~~ @fn((), @void(), { @cinclude \"stdio.h\"; }); f();"
+      arena, _result, "f ~~ @fn((), @void(), { @cinclude \"stdio.h\"; }); f();"
   );
 }
 
@@ -485,8 +516,7 @@ test_fn(cinclude_rejects_nested_function_scope) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   cinclude_in_function_reports_error(
-      arena, _result,
-      "f ~~ @fn((), @void(), { @if(1, { @cinclude \"stdio.h\"; }); }); f();"
+      arena, _result, "f ~~ @fn((), @void(), { @if(1, { @cinclude \"stdio.h\"; }); }); f();"
   );
 }
 
@@ -857,10 +887,10 @@ test_fn(inlineast_expands_at_call_site) {
 test_fn(ast_calls_interpret_without_caching) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let ctx = parse_source(nullptr, arena,
-                         fp("f ~~ @fn((a ~@ast()), @sint(32), { return 7; });"
-                            "node ~~ @qot(1);"
-                            "@apply(f, node) + @apply(f, node) == 14;"), nullptr);
+  let ctx = parse_source(nullptr, arena, fp("f ~~ @fn((a ~@ast()), @sint(32), { return 7; });"
+                                            "node ~~ @qot(1);"
+                                            "@apply(f, node) + @apply(f, node) == 14;"),
+                         nullptr);
   let ss = ss_init(arena, ctx);
   catch_errcall((lower, (ss, ss->outermost, ctx.idx)), e, (err_panic(e), (u32)0));
   test_inteq(0, moxmap_tox(ss->functions[0].mp)->keys->length);
@@ -952,25 +982,23 @@ test_fn(interpret_packed_return_survives_next_instruction) {
   test_assert(*(bool *)result.v.value);
 }
 
-
 test_fn(typeinfo_stored_and_specialized) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let r = interpret_source(arena, fp(
-      "f ~~ @fn((), @sint(32), { return 1; });"
-      "g ~~ @fn((), @sint(32), { return 2; });"
-      "identity ~~ @fn((info ~ @typeinfo()), @int(), { return info.fn.0; });"
-      "info ~ @typeinfo() ~ @typeinfo(f);"
-      "(identity(info) == identity(@typeinfo(f))) and"
-      "(identity(info) != identity(@typeinfo(g)));"), nullptr);
+  let r = interpret_source(arena, fp("f ~~ @fn((), @sint(32), { return 1; });"
+                                     "g ~~ @fn((), @sint(32), { return 2; });"
+                                     "identity ~~ @fn((info ~ @typeinfo()), @int(), { return info.fn.0; });"
+                                     "info ~ @typeinfo() ~ @typeinfo(f);"
+                                     "(identity(info) == identity(@typeinfo(f))) and"
+                                     "(identity(info) != identity(@typeinfo(g)));"),
+                           nullptr);
   test_assert(*(bool *)r.v.value);
 }
 
 test_fn(namespace_outside_function_reports_error) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let e = lower_source_err(arena, fp(
-      "T ~~ @struct { x ~ @sint(32); }; @typeinfo(T).struct.namespace.fn;"));
+  let e = lower_source_err(arena, fp("T ~~ @struct { x ~ @sint(32); }; @typeinfo(T).struct.namespace.fn;"));
   test_assert(e.err_code);
   test_streq(e.err_code, "NAMESPACE_HAS_NO_FUNCTION");
 }
@@ -978,25 +1006,25 @@ test_fn(namespace_outside_function_reports_error) {
 test_fn(typeinfo_view_probes) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let r = interpret_source(arena, fp(
-      "T ~~ @struct { x ~ @sint(32); };"
-      "A ~~ @arr(3, @sint(32));"
-      "f ~~ @fn((), @sint(32), { return 1; });"
-      "missing ~~ @typeinfo(@void()).struct;"
-      "truthy ~~ @fn((info ~ @typeinfo()), @bool(), { return info as @bool(); });"
-      "@cif(missing, { undefined_name; });"
-      "@cif(@typeinfo(T).struct, {}, { undefined_name; });"
-      "(@typeinfo(T).struct as @bool()) and"
-      "(@typeinfo(A).array as @bool()) and"
-      "(@typeinfo(f).fn as @bool()) and"
-      "(truthy(@typeinfo(T))) and"
-      "(truthy(missing) == (0 as @bool())) and"
-      "(truthy(@typeinfo(T).array) == (0 as @bool())) and"
-      "((missing as @bool()) == (0 as @bool())) and"
-      "((@typeinfo(T).array as @bool()) == (0 as @bool())) and"
-      "((@typeinfo(T).fn as @bool()) == (0 as @bool())) and"
-      "((@typeinfo(f).struct as @bool()) == (0 as @bool())) and"
-      "((@typeinfo(f).array as @bool()) == (0 as @bool()));"), nullptr);
+  let r = interpret_source(arena, fp("T ~~ @struct { x ~ @sint(32); };"
+                                     "A ~~ @arr(3, @sint(32));"
+                                     "f ~~ @fn((), @sint(32), { return 1; });"
+                                     "missing ~~ @typeinfo(@void()).struct;"
+                                     "truthy ~~ @fn((info ~ @typeinfo()), @bool(), { return info as @bool(); });"
+                                     "@cif(missing, { undefined_name; });"
+                                     "@cif(@typeinfo(T).struct, {}, { undefined_name; });"
+                                     "(@typeinfo(T).struct as @bool()) and"
+                                     "(@typeinfo(A).array as @bool()) and"
+                                     "(@typeinfo(f).fn as @bool()) and"
+                                     "(truthy(@typeinfo(T))) and"
+                                     "(truthy(missing) == (0 as @bool())) and"
+                                     "(truthy(@typeinfo(T).array) == (0 as @bool())) and"
+                                     "((missing as @bool()) == (0 as @bool())) and"
+                                     "((@typeinfo(T).array as @bool()) == (0 as @bool())) and"
+                                     "((@typeinfo(T).fn as @bool()) == (0 as @bool())) and"
+                                     "((@typeinfo(f).struct as @bool()) == (0 as @bool())) and"
+                                     "((@typeinfo(f).array as @bool()) == (0 as @bool()));"),
+                           nullptr);
   test_assert(*(bool *)r.v.value);
 }
 
@@ -1025,7 +1053,6 @@ test_fn(returntype_rejects_arguments) {
   test_assert(e.err_code);
   test_streq(e.err_code, "WRONG_ARG_COUNT");
 }
-
 
 // A type-position builtin takes a type, not a value, and must say so instead of
 // running the argument through the interpreter: `interpret` only allocates
@@ -1111,10 +1138,9 @@ test_file_1(cast_overload_directions);
 test_fn(implicit_as_overload_checks_requested_return_type) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
-  let e = lower_source_err(arena, fp(
-      "T ~~ @struct { Self ~~ @this(); x ~@sint(32);"
-      " @id(\"as\") ~~ @fn (self ~Self, target ~@type()), @any(), { return self.x; }; };"
-      "f ~~ @fn (input ~T), @bool(), { return input; }; v ~T; f(v);"));
+  let e = lower_source_err(arena, fp("T ~~ @struct { Self ~~ @this(); x ~@sint(32);"
+                                     " @id(\"as\") ~~ @fn (self ~Self, target ~@type()), @any(), { return self.x; }; };"
+                                     "f ~~ @fn (input ~T), @bool(), { return input; }; v ~T; f(v);"));
   test_assert(e.err_code);
   test_streq(e.err_code, "AS_OVERLOAD_RETURN_TYPE");
 }

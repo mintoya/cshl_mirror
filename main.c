@@ -1,6 +1,4 @@
-#include <string.h>
 #include <wheels/cmdline_parser.h>
-#include <wheels/macros.h>
 #include <wheels/smap.h>
 
 #include "ast.h"
