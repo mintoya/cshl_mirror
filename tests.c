@@ -360,3 +360,7 @@ test_fn(cout_call_overload_ast_receiver) {
 test_fn(cout_block_result_reference) {
   check_generated_c(allocator, _result, "test/block_result_reference.cshl");
 }
+
+test_fn(cout_optional_reference_copy) {
+  check_generated_c(allocator, _result, "test/optional_reference_copy.cshl");
+}

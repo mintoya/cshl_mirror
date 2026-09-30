@@ -607,6 +607,11 @@ static void makeReference(superscope *ss, printerfunction_context _ctx, c_type_n
       PUTS(" *)");
       makeVariable(_ctx, s, op.d);
       PUTS(") = ");
+      if (function_register_is_field_ref(ss, s, op.l)) {
+        PUTS("*(");
+        makeRegisterType(ss, _ctx, names, s, op.l);
+        PUTS(" *)");
+      }
       makeVariable(_ctx, s, op.l);
     } else {
       makeVariable(_ctx, s, op.d);
