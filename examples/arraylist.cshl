@@ -8,6 +8,8 @@ crealloc ~~ fn ((@ptr i8),u64) (@ptr i8)
 cfree   ~~ fn (@ptr i8) void 
   @cout "free(arg0);";
 cnull ~~ fn () (@ptr i8) @cout "return NULL;";
+@cinclude "<string.h>";
+cmemcpy ~~ fn ((@ptr i8),(@ptr i8),u64) void @cout "memcpy(arg0,arg1,arg2);";
 
 slice ~~ fn (t~type) type return @struct{
   Self ~~@this();
@@ -61,7 +63,6 @@ resize ~~ fn (sl ~any,count~u64) void {
  sl.ptr = crealloc(sl.ptr as (@ptr i8),sl:size()) as @typeof(sl.ptr);
 };
 
-// A list owns its backing slice. data.len is capacity; len is the used count.
 require ~~ fn (ok~bool) void @cout "if (!arg0) abort();";
 
 list ~~ fn (t~type) type return @struct {
@@ -81,7 +82,7 @@ list ~~ fn (t~type) type return @struct {
   capacity ~~ fn (self~Self) u64 return self.data.len;
   reserve ~~ fn (self~RSelf, count~u64) void {
     if (count > self.data.len) {
-      cap ~u64 = self.data.len;
+      cap ~= self.data.len;
       if (cap == 0) (cap = 4);
       while (cap < count) (cap = cap * 2);
       resize(self.data,cap);
@@ -97,25 +98,22 @@ list ~~ fn (t~type) type return @struct {
     return @qot {
       this ~~ @uqot(self);
       idx_n ~u64~ @uqot(idx.ablock[0]);
-      @ref this:get(idx_n);
+      @ref this.data[idx_n];
     };
   };
-  push ~~ fn (self~RSelf, value~t) void {
+  push_value ~~ fn (self~RSelf, value~t) void {
     self:reserve(self.len + 1);
     self.data[self.len] = value;
     self.len = self.len + 1;
   };
-  push_array ~~ fn (self~RSelf, values~any) void {
-    cif (not array_of(t,@typeof(values))) @compileError();
-    count ~u64~ @typeinfo(@typeof(values)).array.len;
-    self:reserve(self.len + count);
-    i ~u64 = 0;
-    while (i < count) {
-      self.data[self.len + i] = values[i];
-      i = i + 1;
-    };
-    self.len = self.len + count;
+  push ~~ push_value;
+  push_array ~~ fn (self~RSelf, values~slice(t)) void {
+    self:reserve(self.len + values.len);
+    cmemcpy((@where self.data[self.len]) , (@where values[0]),values.len);
+    self.len = self.len + values.len;
   };
+  // TODO: compiler directive for can_coerce, or some way to acess such a property
+  // lowe-key impossible withoutb some sort of try_lower 
   pop ~~ fn (self~RSelf) t {
     require(self.len > 0);
     self.len = self.len - 1;
@@ -146,7 +144,7 @@ list ~~ fn (t~type) type return @struct {
   clear ~~ fn (self~RSelf) void { self.len = 0; };
   shrink ~~ fn (self~RSelf) void { resize(self.data,self.len); };
   deinit ~~ fn (self~RSelf) void {
-    cfree(self.data.ptr as (@ptr i8));
+    self.data.ptr as (@ptr i8) |> cfree(_);
     self.data.ptr = cnull() as @typeof(self.data.ptr);
     self.data.len = 0;
     self.len = 0;
@@ -157,6 +155,7 @@ p ~~ list(i8).new();
 p:push_array("hello");
 p:push_array(" ");
 p:push_array("world");
+p:push(0);
 
 @cinclude "<stdio.h>";
 cput ~~ fn (str~(@ptr i8)) void @cout "printf(\"%s\",arg0);";
@@ -167,3 +166,4 @@ require(p.len == 0);
 p:push("a"[0]);
 require(p[0] == "a"[0]);
 p:deinit();
+
