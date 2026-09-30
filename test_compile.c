@@ -303,6 +303,10 @@ test_file_1(bitstruct_reference_alias);
 test_file_1(bitstruct_nested_member);
 test_file_1(bitstruct_inline_member_gets_layout);
 test_file_1(as_without_overload_is_a_cast);
+test_file_1(explicit_pointer_casts);
+test_file_1(call_overload_ast_receiver);
+test_file_1(block_result_reference);
+test_file_1(array_of_helper);
 test_file_1(struct_closure_capture);
 test_file_1(overload_call_yields_the_result_after_arg_coercion);
 test_file_1(struct_ref_capture);
@@ -343,6 +347,7 @@ test_file_1(unbind_removes_a_binding);
 test_file_1(unbind_removes_a_using_import);
 test_file_1(typeof_strips_reference_and_isref_reports_it);
 test_file_1(namespace_enclosing_function);
+test_file_1(inlineast_struct_member);
 
 //
 // error tests
@@ -1111,4 +1116,12 @@ test_fn(implicit_as_overload_checks_requested_return_type) {
       "f ~~ @fn (input ~T), @bool(), { return input; }; v ~T; f(v);"));
   test_assert(e.err_code);
   test_streq(e.err_code, "AS_OVERLOAD_RETURN_TYPE");
+}
+
+test_fn(implicit_pointer_cast_rejected) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("p ~@ptr(@sint(8)); q ~@ptr(@sint(32)) = p;"));
+  test_assert(e.err_code);
+  test_streq(e.err_code, "CANNOT_CAST");
 }

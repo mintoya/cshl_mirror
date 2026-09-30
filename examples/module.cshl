@@ -120,7 +120,7 @@ while ~~ fn (a ~ast) inline {
   };
 };
 not ~~ fn (in ~bool) bool return in bxor 1;
-some_state ~~ @sint(32);
+some_state ~ @sint(32);
 getstate ~~ fn () (@typeof(some_state)) 
   return (some_state = some_state + 1);
 arr ~~ fn (i~int) any 
@@ -156,6 +156,18 @@ arr ~~ fn (i~int) any
     };
 };
 
+array_of ~~ fn (T~type, A~type) (@comptime bool) {
+  info ~~ @typeinfo(A).array;
+  cif (not info) { return false; }
+  else { return info.elem == T; };
+};
+came_from ~~ fn (a~type ,b ~any) (@comptime bool ) {
+  tia ~~ @typeinfo(a);
+  tib ~~ @typeinfo(b);
+  cif (not tia.struct) { return false; }
+  else cif (not tib.fn) { return false; }
+  else {return tia.struct.namespace.fn.0 == tib.fn.0;};
+};
 @struct{
   inline  ~~ inline;
   bool  ~~ bool;
@@ -186,4 +198,6 @@ arr ~~ fn (i~int) any
   false ~~ false;
   null ~~ null;
   not ~~ not;
+  came_from ~~ came_from;
+  array_of ~~ array_of;
 };

@@ -142,12 +142,12 @@ static inline void bigint_into_int(superscope *ss, allocfn alloc, typed_value *t
   );
 }
 
-void tcheck_cast errs(superscope *ss, scope *s, ir_cast cv);
+void tcheck_cast errs(superscope *ss, scope *s, ir_cast cv, bool is_explicit);
 // Value-returning adapter. Conversion policy belongs to tcheck_cast.
-static u32 scope_cast_value errs(superscope *ss, scope *s, u32 left, Type to) {
+static u32 scope_cast_value errs(superscope *ss, scope *s, u32 left, Type to, bool is_explicit) {
   if (tu_is(c_any, to.t) || !Type_cmp(ss_typeenv(ss), ss_type(ss, scope_find(ss, s, left)->t), to)) return left;
   let dest = scope_add_value(ss, s, TV_of(ss, to));
-  try_err(tcheck_cast, (ss, s, (ir_cast){.l = left, .d = dest}), 0);
+  try_err(tcheck_cast, (ss, s, (ir_cast){.l = left, .d = dest}, is_explicit), 0);
   return dest;
 }
 static u32 scope_convert_anonymous errs(superscope *ss, scope *s, u32 source, Type target, type_metadata info) {
@@ -212,7 +212,7 @@ static u32 scope_convert_anonymous errs(superscope *ss, scope *s, u32 source, Ty
 }
 u32 lower_condition errs(superscope *ss, scope *s, astidx a) {
   let l = try_err(lower, (ss, s, a), 0);
-  return try_err(scope_cast_value, (ss, s, l, T(tu_of(r_bool, {}))), 0);
+  return try_err(scope_cast_value, (ss, s, l, T(tu_of(r_bool, {})), false), 0);
 }
 static inline Type scope_reg_type(superscope *env, scope *s, u32 idx) { return ss_type(env, scope_find(env, s, idx)->t); }
 static inline Type scope_reg_to_type_stripTag(superscope *env, scope *s, u32 idx) {

@@ -324,6 +324,11 @@ void interpret_field errs(intstate is, ir_field c) {
 void interpret_cast errs(intstate is, ir_cast c) {
   let d = intstate_findslots_value(is, c.d);
   let dt = ss_type(is->ss, scope_find(is->ss, msList_last(is->cs).sp, c.d)->t);
+  let l = intstate_findreg(is, c.l);
+  if (dt.ptr_level && ss_type(is->ss, l.t).ptr_level) {
+    memcpy(d->value, l.v.value, sizeof(void *));
+    return;
+  }
 
   assertMessage(
       Type_is_integer_like(dt, ss_typeenv(is->ss)),
@@ -331,8 +336,6 @@ void interpret_cast errs(intstate is, ir_cast c) {
   );
 
   let al = intstate_scratch(is);
-
-  let l = intstate_findreg(is, c.l);
 
   let bits = int_as_bigint(al, l, ss_typeenv(is->ss));
   let dv = d;

@@ -1,21 +1,22 @@
 #pragma once
 #include "coerce_helpers.h"
+#include "common.h"
 
 void tcheck_set errs(superscope *ss, scope *s, ir_set st);
-void tcheck_cast errs(superscope *ss, scope *s, ir_cast cv);
+void tcheck_cast errs(superscope *ss, scope *s, ir_cast cv, bool is_explicit);
 void tcheck_array errs(superscope *ss, scope *s, ir_array arr);
 static inline Type scope_regType(superscope *ss, scope *s, u32 reg) { return scope_reg_type(ss, s, reg); }
 tu_def((Toi, u8), (TT, Type), (TI, typeidx));
 #define Toi(x) match_type(x, (Type, v, (Toi)tu_of(TT, v)), (typeidx, v, (Toi)tu_of(TI, v)))
-u32 tcheck_castV errs(superscope *ss, scope *s, u32 left, Toi to) {
-  return try_err(scope_cast_value, (ss, s, left, tu_match_exp(to, (TT, v, v), (TI, v, ss_type(ss, v)))), 0);
+u32 tcheck_castV errs(superscope *ss, scope *s, u32 left, Toi to, bool is_explicit) {
+  return try_err(scope_cast_value, (ss, s, left, tu_match_exp(to, (TT, v, v), (TI, v, ss_type(ss, v))), is_explicit), 0);
 }
 void tcheck_result errs(superscope *ss, scope *s, u32 value, u32 dest) {
   scope_adopt_any(ss, scope_find(ss, s, dest), scope_regType(ss, s, value));
   try_err(tcheck_set, (ss, s, (ir_set){.l = value, .d = dest}));
 }
 void tcheck_ifs errs(superscope *ss, scope *s, ir_ifs d) {
-  let rd = try_err(tcheck_castV, (ss, s, d, Toi(ss->t_bool)));
+  let rd = try_err(tcheck_castV, (ss, s, d, Toi(ss->t_bool), false));
   try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_ifs, rd)));
 }
 void tcheck_putptr errs(superscope *ss, scope *s, ir_putptr pp) {
@@ -126,7 +127,7 @@ void tcheck_as errs(superscope *ss, scope *s, ir_rawop op) {
     try_err(tcheck_result, (ss, s, op.d, dest));
     return;
   }
-  let res = try_err(tcheck_castV, (ss, s, op.l, Toi(to)));
+  let res = try_err(tcheck_castV, (ss, s, op.l, Toi(to), true));
   try_err(tcheck_result, (ss, s, res, op.d));
 }
 void tcheck_integer_op errs(superscope *ss, scope *s, ir_rawop op) {
@@ -249,7 +250,7 @@ void tcheck_set errs(superscope *ss, scope *s, ir_set st) {
     scope_adopt_any(ss, scope_find(ss, s, st.d), P$(lt, ($.ref_kind = ref_none, $)));
   dt = scope_regType(ss, s, st.d);
   dt.ref_kind = ref_none;
-  st.l = try_err(tcheck_castV, (ss, s, st.l, Toi(dt)));
+  st.l = try_err(tcheck_castV, (ss, s, st.l, Toi(dt), false));
   try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_set, st)));
 }
 void tcheck_cast_ast errs(superscope *ss, scope *s, ir_cast cv) {
@@ -277,7 +278,7 @@ static bool tcheck_cast_anonymous errs(superscope *ss, scope *s, ir_cast cv) {
   try_err(tcheck_cast_copy_result, (ss, s, cv, result), false);
   return true;
 }
-void tcheck_cast errs(superscope *ss, scope *s, ir_cast cv) {
+void tcheck_cast errs(superscope *ss, scope *s, ir_cast cv, bool is_explicit) {
   u32 overloaded = 0;
   if (try_err(tcheck_cast_overload, (ss, s, cv.l, scope_regType(ss, s, cv.d), &overloaded)))
     return (void)try_err(tcheck_cast_copy_result, (ss, s, cv, overloaded));
@@ -290,16 +291,20 @@ void tcheck_cast errs(superscope *ss, scope *s, ir_cast cv) {
   if (dt.ref_kind) return (void)try_err(tcheck_bind_reference, (ss, s, (ir_set){cv.l, cv.d}));
   if (Type_ncmp_nptr(lt, dt, e))
     return (void)try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_set, {.l = cv.l, .d = cv.d})));
+  if (is_explicit && lt.ptr_level && dt.ptr_level)
+    return (void)try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_cast, cv)));
   if (tu_is(r_bool, dt.t) && (TypeTree_is_ast(lt.t) || tu_is(c_typeinfo, lt.t)))
     return (void)try_err(tcheck_cast_truth, (ss, s, cv));
-  if (!Type_is_integer_like(lt, e) || !Type_is_integer_like(dt, e)) return_err("CANNOT_CAST");
+  if (!Type_is_integer_like(lt, e) || !Type_is_integer_like(dt, e))
+    println("{Type_full} , {Type_full}", ss_typeF(ss, lt), ss_typeF(ss, dt)),
+        return_err("CANNOT_CAST");
   try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_cast, cv)));
 }
 void tcheck_ret errs(superscope *ss, scope *s, ir_ret r) {
   if (s->instance.fn) {
     let inst = &ss->functions[s->instance.fn - 1].instances[s->instance.index];
     if (!Type_adopt_any(&inst->ret, scope_regType(ss, s, r)))
-      r = try_err(tcheck_castV, (ss, s, r, Toi(inst->ret)));
+      r = try_err(tcheck_castV, (ss, s, r, Toi(inst->ret), false));
   }
   try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_ret, r)));
 }
@@ -356,7 +361,17 @@ void tcheck_call_overload errs(superscope *env, scope *s, ir_call call) {
   if (nargs + 1 != nparams) return_err("WRONG_ARG_COUNT");
   slice(u32) vals = slice_alloc(env->alloc, u32, nargs + 1);
   defer { slice_free(env->alloc, vals); };
-  vals.ptr[0] = call.l;
+  bool receiver_named = false;
+  defer {
+    if (receiver_named) scope_pop_named(s);
+  };
+  let self_want = Type_at(tenv, type_run_at(tenv, mf.start, 0));
+  if (TypeTree_is_ast(self_want.t) && !TypeTree_is_ast(lts.t)) {
+    scope_push_named(env, s);
+    receiver_named = true;
+    try_err(scope_bind, (env, s, call.l, fp("#_")));
+    vals.ptr[0] = scope_add_value(env, s, TV_ast(env, ast_make_id(env, fp("#_"))));
+  } else vals.ptr[0] = call.l;
   foreach (let j, range(0, nargs)) {
     u32 arg = s->start + 1 + call.r + (u32)j;
     if (!TypeTree_is_ast(Type_at(tenv, type_run_at(tenv, mf.start, j + 1)).t)) {
@@ -412,11 +427,10 @@ void scope_add_inst_typecheck(err_t *err, superscope *env, scope *s, ir i) {
       (ir_rawdot /**/, rd, return tcheck_rawdot(err, env, s, rd)),
       (ir_rawop /* */, op, return tcheck_rawop(err, env, s, op)),
       (ir_set /*   */, st, return tcheck_set(err, env, s, st)),
-      (ir_cast /*  */, cv, return tcheck_cast(err, env, s, cv)),
+      (ir_cast /*  */, cv, return tcheck_cast(err, env, s, cv, false)),
       (ir_ret /*   */, rt, return tcheck_ret(err, env, s, rt)),
       (ir_call /*  */, cl, return tcheck_call(err, env, s, cl)),
       (ir_array /* */, ar, return tcheck_array(err, env, s, ar)),
       (ir_field /* */, fl, return tcheck_field(err, env, s, fl)),
   );
 }
-

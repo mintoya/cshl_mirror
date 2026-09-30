@@ -348,3 +348,15 @@ test_fn(coerce_operations_use_destination_assignment) {
 test_fn(cast_overload_directions_execute) {
   check_generated_c(allocator, _result, "test/cast_overload_directions.cshl");
 }
+
+test_fn(cout_explicit_pointer_casts) {
+  check_generated_c(allocator, _result, "test/explicit_pointer_casts.cshl");
+}
+
+test_fn(cout_call_overload_ast_receiver) {
+  check_generated_c(allocator, _result, "test/call_overload_ast_receiver.cshl");
+}
+
+test_fn(cout_block_result_reference) {
+  check_generated_c(allocator, _result, "test/block_result_reference.cshl");
+}

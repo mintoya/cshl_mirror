@@ -77,13 +77,12 @@ static inline Type function_item_type errs(superscope *ss, scope *s, astidx item
   Type t = {};
   tu_match_void(
       ast_at(ss, item),
-      (astId, id, {
+      (default, {
         let tempT = ss_type(ss, placeholder->t);
         if (!tu_is(c_type, tempT.t)) return_err("NON_TYPE_FUNCTION_ARG", T());
         t = ss_type(ss, placeholder->v.c_type);
       }),
-      (astDecl, dcl, t = ss_type(ss, placeholder->t)),
-      (default, return_err("NON_DECL_FUNCTION_ARG", T()))
+      (astDecl, dcl, t = ss_type(ss, placeholder->t))
   );
   if (tu_is(c_type, t.t)) *placeholder = Type_asValue(ss, T(tu_of(c_any, {})));
   return t;
@@ -190,15 +189,18 @@ static u32 lower_function_call_instance errs(superscope *ss, scope *s, u32 fnreg
   let params = function_item->params;
   let retT = function_item->retT;
   foreach (let i, range(0, key.len)) {
-    let item = tu_catchr(astDecl, ast_at(ss, params.start + i));
-    let name = try_err(id_from_ast, (ss, spec, ast_child(ss, item.name_type_value)), 0);
+    let param = ast_at(ss, params.start + i);
+    astidx name_idx = 0;
+    if (tu_is(astDecl, param))
+      name_idx = ast_child(ss, tu_catch(astDecl, param).name_type_value);
+    let name = name_idx ? try_err(id_from_ast, (ss, spec, name_idx), 0) : (fptr){};
     u32 value = 0;
     if (Type_is_comptime(ss_type(ss, key.ptr[i].t))) value = scope_add_value(ss, spec, key.ptr[i]);
     else {
       value = scope_add_value(ss, spec, (typed_value){.t = key.ptr[i].t});
       try_err(scope_add_inst, (ss, spec, (ir)tu_of(ir_farg, {.l = (u32)i, .d = value})), 0);
     }
-    try_err(scope_bind, (ss, spec, value, name), 0);
+    if (name_idx) try_err(scope_bind, (ss, spec, value, name), 0);
   }
 
   let ret_value = try_err(temporary_interpret, (ss, spec, retT), 0);
@@ -234,7 +236,7 @@ static u32 lower_function_call_args errs(superscope *ss, scope *s, u32 fn, slice
     if (nparams) slice_free(ss->alloc, leads);
   };
   foreach (let i, range(0, nparams))
-    leads.ptr[i] = try_err(scope_cast_value, (ss, s, aargs.ptr[i], Type_at(env, type_run_at(env, generic_signature.start, i))), 0);
+    leads.ptr[i] = try_err(scope_cast_value, (ss, s, aargs.ptr[i], Type_at(env, type_run_at(env, generic_signature.start, i)), false), 0);
 
   let key = msList_init(ss->alloc, typed_value);
   defer { msList_deInit(ss->alloc, key); };

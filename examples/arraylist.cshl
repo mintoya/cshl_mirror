@@ -1,0 +1,169 @@
+@using @import "module.cshl";
+@cinclude "<stdlib.h>";
+
+cmalloc ~~ fn (u64) (@ptr i8) 
+  @cout "return malloc(arg0);";
+crealloc ~~ fn ((@ptr i8),u64) (@ptr i8) 
+  @cout "return realloc(arg0,arg1);";
+cfree   ~~ fn (@ptr i8) void 
+  @cout "free(arg0);";
+cnull ~~ fn () (@ptr i8) @cout "return NULL;";
+
+slice ~~ fn (t~type) type return @struct{
+  Self ~~@this();
+  RSelf ~~@refT @this();
+  ptr ~ @ptr(arr(0) t); 
+  len ~ u64;
+  size ~~ fn (self~Self) u64 return self.len * @sizeof(t);
+  get ~~ fn (self~Self , idx ~u64) (@refT t) {
+    ra ~@refT(arr(0) t)~ @ref @at(self.ptr);
+    return @ref ra[idx];
+  };
+  @id("=") ~~ fn (self ~RSelf, other ~any) void {
+    OT ~~ @typeof(other);
+    cif OT == Self {
+      self.ptr = other.ptr;
+      self.len = other.len;
+    } else cif (
+      @typeinfo(OT).array 
+      and (@typeinfo(OT).array.elem == t)
+    ) {
+      self.ptr = (@where @ref other[0]) as @typeof(self.ptr);
+      self.len = @typeinfo(OT).array.len;
+    // TODO: add actual compile error
+    } else @compileError();
+  };
+  // TODO: add "[]" helper that basically does whatever this is
+  @id("()") ~~ fn (self~ast,idx~ast) inline {
+    cif (
+      not(idx.ablock)
+      or not(idx.ablock[0])
+      or (idx.ablock[1])
+    ) @compileError(); // not bound to anything, so error is unbound id 
+    return @qot {
+      this ~~ @uqot(self);
+      idx_n ~u64~ @uqot(idx.ablock[0]);
+      @ref this:get(idx_n);
+    };
+  };
+};
+alloc ~~ fn (t~type,count~u64) any {
+  r ~ slice t;
+  r.len = count;
+  r.ptr = cmalloc(r:size()) as @typeof(r.ptr);
+  return r;
+};
+
+resize ~~ fn (sl ~any,count~u64) void {
+ cif (not @isref sl) @compileError();
+ cif (not came_from(@typeof(sl), slice)) @compileError();
+ sl.len = count;
+ sl.ptr = crealloc(sl.ptr as (@ptr i8),sl:size()) as @typeof(sl.ptr);
+};
+
+// A list owns its backing slice. data.len is capacity; len is the used count.
+require ~~ fn (ok~bool) void @cout "if (!arg0) abort();";
+
+list ~~ fn (t~type) type return @struct {
+  Self ~~ @this();
+  RSelf ~~ @refT(Self);
+  data ~ slice(t);
+  len ~ u64;
+
+  new ~~ fn () Self {
+    res ~Self;
+    return res;
+  };
+  init ~~ fn (self~RSelf) void {
+    self.data = alloc(t,1);
+    self.len = 1;
+  };
+  capacity ~~ fn (self~Self) u64 return self.data.len;
+  reserve ~~ fn (self~RSelf, count~u64) void {
+    if (count > self.data.len) {
+      cap ~u64 = self.data.len;
+      if (cap == 0) (cap = 4);
+      while (cap < count) (cap = cap * 2);
+      resize(self.data,cap);
+    };
+  };
+  get ~~ fn (self~Self, idx~u64) (@refT t) {
+    require(idx < self.len);
+    return @ref self.data:get(idx);
+  };
+  @id("()") ~~ fn (self~ast,idx~ast) inline {
+    cif (not(idx.ablock) or not(idx.ablock[0]) or idx.ablock[1])
+      @compileError();
+    return @qot {
+      this ~~ @uqot(self);
+      idx_n ~u64~ @uqot(idx.ablock[0]);
+      @ref this:get(idx_n);
+    };
+  };
+  push ~~ fn (self~RSelf, value~t) void {
+    self:reserve(self.len + 1);
+    self.data[self.len] = value;
+    self.len = self.len + 1;
+  };
+  push_array ~~ fn (self~RSelf, values~any) void {
+    cif (not array_of(t,@typeof(values))) @compileError();
+    count ~u64~ @typeinfo(@typeof(values)).array.len;
+    self:reserve(self.len + count);
+    i ~u64 = 0;
+    while (i < count) {
+      self.data[self.len + i] = values[i];
+      i = i + 1;
+    };
+    self.len = self.len + count;
+  };
+  pop ~~ fn (self~RSelf) t {
+    require(self.len > 0);
+    self.len = self.len - 1;
+    return self.data[self.len];
+  };
+  insert ~~ fn (self~RSelf, idx~u64, value~t) void {
+    require(idx <= self.len);
+    self:reserve(self.len + 1);
+    i ~u64 = self.len;
+    while (i > idx) {
+      self.data[i] = self.data[i - 1];
+      i = i - 1;
+    };
+    self.data[idx] = value;
+    self.len = self.len + 1;
+  };
+  remove ~~ fn (self~RSelf, idx~u64) t {
+    require(idx < self.len);
+    result ~t = self.data[idx];
+    i ~u64 = idx;
+    while (i + 1 < self.len) {
+      self.data[i] = self.data[i + 1];
+      i = i + 1;
+    };
+    self.len = self.len - 1;
+    return result;
+  };
+  clear ~~ fn (self~RSelf) void { self.len = 0; };
+  shrink ~~ fn (self~RSelf) void { resize(self.data,self.len); };
+  deinit ~~ fn (self~RSelf) void {
+    cfree(self.data.ptr as (@ptr i8));
+    self.data.ptr = cnull() as @typeof(self.data.ptr);
+    self.data.len = 0;
+    self.len = 0;
+  };
+};
+
+p ~~ list(i8).new();
+p:push_array("hello");
+p:push_array(" ");
+p:push_array("world");
+
+@cinclude "<stdio.h>";
+cput ~~ fn (str~(@ptr i8)) void @cout "printf(\"%s\",arg0);";
+cput(p.data.ptr as (@ptr i8));
+
+p:clear();
+require(p.len == 0);
+p:push("a"[0]);
+require(p[0] == "a"[0]);
+p:deinit();

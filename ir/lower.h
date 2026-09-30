@@ -65,7 +65,7 @@ static u32 lower_anon_struct errs(superscope *ss, scope *s, astidx a) {
     Type member = {};
     if (typeidx) {
       member = try_err(lower_asType, (ss, s, typeidx), 0);
-      val = val ? try_err(scope_cast_value, (ss, s, val, member), 0) : scope_add_value(ss, s, TV_of(ss, member));
+      val = val ? try_err(scope_cast_value, (ss, s, val, member, false), 0) : scope_add_value(ss, s, TV_of(ss, member));
     } else if (val) member = Type_stripRef(ss_type(ss, scope_find(ss, s, val)->t));
     else return_err("ANONYMOUS_MEMBER_NO_VALUE", 0);
 
@@ -112,7 +112,7 @@ u32 lower_low errs(superscope *ss, scope *s, astidx a) {
          u32 last = s->start + 1;
          foreach (let i, span(stmts.start, stmts.len))
            last = try_err(lower, (ss, s, i), 0);
-         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = res, .l = last})), 0);
+         try_err(tcheck_result, (ss, s, last, res), 0);
          try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_blocke, {})), 0);
          res;
        })),

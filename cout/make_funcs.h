@@ -680,7 +680,14 @@ static void makeCast(superscope *ss, printerfunction_context _ctx, c_type_names 
   Type dt = function_register_type(ss, s, op.d);
   Type lt = function_register_type(ss, s, op.l);
   PUTS("  ");
-  if (function_is_wide(ss, dt)) {
+  if (lt.ptr_level && dt.ptr_level) {
+    makeVariable(_ctx, s, op.d);
+    PUTS(" = (");
+    makeType(ss, _ctx, names, dt);
+    PUTS(")");
+    makeRegisterPlace(ss, _ctx, names, s, op.l);
+    PUTS(";");
+  } else if (function_is_wide(ss, dt)) {
     if (dt.ref_kind == ref_ref) PUTS("*");
     makeVariable(_ctx, s, op.d);
     PUTS(" = ");
@@ -807,15 +814,9 @@ static void makeFunctionInstruction(superscope *ss, printerfunction_context _ctx
       (ir_array, op, makeArrayReference(ss, _ctx, names, s, op)),
       (ir_call, op, {
         Type dt = function_register_type(ss, s, op.d);
-        if (dt.ref_kind == ref_dref) {
-          makeVariable(_ctx, s, op.d);
-          PUTS(" = ");
-          makeCall(ss, _ctx, names, s, op.l, op.r, op.e);
-        } else {
-          makeVariable(_ctx, s, op.d);
-          PUTS(" = ");
-          makeCall(ss, _ctx, names, s, op.l, op.r, op.e);
-        }
+        if (!tu_is(r_void, dt.t))
+          makeVariable(_ctx, s, op.d), PUTS(" = ");
+        makeCall(ss, _ctx, names, s, op.l, op.r, op.e);
         PUTS(";");
       }),
       (ir_set, op, {
@@ -1011,7 +1012,7 @@ void makeMain(superscope *ss, printerfunction_context _ctx, c_type_names names) 
     makeFunctionInstruction(ss, _ctx, names, s, *inst);
   u32 result = scope_last_item(ss, s);
   Type result_type = function_register_type(ss, s, result);
-  //TODO: fix do something about tests using this
+  // TODO: fix do something about tests using this
   if (tu_is(r_bool, result_type.t) && !result_type.decorations) {
     PUTS("  return !(");
     makeRegisterPlace(ss, _ctx, names, s, result);
