@@ -13,16 +13,25 @@ meant to be a c-like language with
 - [x] first class ast
 - [x] operator overloading
 - [ ] raii-ish stuff? prolly just defer
+- [ ] @compiles, like zig
 
 
 ## grammer
-- empty  : `;`
+### ids
 - id     : identifier, c rules but can contain `!?$#`
 - number : 
-    - decimal : no prefix or `-`,0-9
+    - decimal : no prefix or `-`,0-9 , that means a -1 is not a - 1
     - hex     : `0x`,0-f
     - binary  : `0b`,0-1
 - string : same c rules
+### expressions
+- empty  : `;`, yields void
+- op     : any operation, including calls, and array indexing 
+                `a b` is a function call to a using b, so `a(b)`
+                can extend so `a b c d`  is `a(b(c(d)))`
+                this is how types are constructed, 
+                comptime arraay of 5 8-bit signed constant integers
+                `@comptime @arr(5,(@const @sint 8)) `
 - decl   :
     - full
         - mutable   : `name ~ type = value`
@@ -30,6 +39,8 @@ meant to be a c-like language with
     - name  : can be an id, or some operation that yields an id
     - type  : full expression that should yield a type, optional
     - value : expression, optional if there is a type
+### blocks
+index-able in ast macros using []
 - pblock :  `( ... )`, optional terminator, comma-separated
 - bblock :  `{ ... }`, semicolon separated, non-optional terminator
 - ablock :  `[ ... ]`, same as pblock
