@@ -5,19 +5,17 @@ cc nob.c -o nob
 // prints run instructions
 ```
 
-# CSHL
+# TODO
 ---
-meant to be a c-like language with
 - [x] first class types
 - [x] first class functions
 - [x] first class ast
 - [x] operator overloading
 - [ ] raii-ish stuff? prolly just defer
 - [ ] @compiles, like zig
-- [ ] make == return cmpres
-- [ ] error class to make reporting easier
-- [ ] perfect type tree
-- [ ] reudementary lsp using the error class
+- [ ] add `@id("@cmp")` returning less/equal/greater, promising a total ordering; derive `==`, `<`, `<=`, `>`, and `>=` when their explicit overloads are absent. Equality-only types may define `==` without `@cmp`. Always derive `!=` as `not (a == b)`; disallow independent `!=` overloads.
+- [ ] structured error class for reporting and a rudimentary LSP built on it
+- [x] better type tree
 
 
 ## grammer
