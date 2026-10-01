@@ -158,6 +158,41 @@ arr ~~ fn (i~int) any
 };
 
 
+longarray ~~ fn (T~type, count~int) type {
+  cif (count < 0) @compileError();
+  cif (count <= ((1 shl 32) - 1)) {
+    return @struct {
+      Self ~~ @this();
+      len ~~ count;
+      data ~@arr(count, T);
+      get ~~ fn (self~@refT(Self), index~u64) (@refT T) {
+        return @ref self.data[index];
+      };
+      @id("()") ~~ fn (self~ast, index~ast) inline {
+        cif (not(index.ablock) or not(index.ablock[0]) or index.ablock[1])
+          @compileError();
+        return @qot @ref (@uqot(self)):get(@uqot(index.ablock[0]));
+      };
+    };
+  } else {
+    half ~~ (count + 1) / 2;
+    Block ~~ longarray(T, half);
+    return @struct {
+      Self ~~ @this();
+      len ~~ count;
+      data ~@arr(2, Block);
+      get ~~ fn (self~@refT(Self), index~u64) (@refT T) {
+        return @ref self.data[index / half]:get(index % half);
+      };
+      @id("()") ~~ fn (self~ast, index~ast) inline {
+        cif (not(index.ablock) or not(index.ablock[0]) or index.ablock[1])
+          @compileError();
+        return @qot @ref (@uqot(self)):get(@uqot(index.ablock[0]));
+      };
+    };
+  };
+};
+
 array_of ~~ fn (T~type, A~type) (@comptime bool) {
   info ~~ @typeinfo(A).array;
   cif (not info) { return false; }
@@ -202,4 +237,5 @@ came_from ~~ fn (a~type ,b ~any) (@comptime bool ) {
   not ~~ not;
   came_from ~~ came_from;
   array_of ~~ array_of;
+  longarray ~~ longarray;
 };

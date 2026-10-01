@@ -1,0 +1,27 @@
+@using @import "module.cshl";
+@cinclude "<sys/mman.h>";
+@cinclude "<stdio.h>";
+
+assert ~~ fn (ok~bool) void @cout "assert(arg0);";
+unmap ~~ fn (p~@ptr(u8), size~u64) void @cout "assert(munmap(arg0, arg1) == 0);";
+report ~~ fn (length~u64, first~u8, last~u8) void @cout "printf(\"length=%llu first=%u last=%u\\n\", (unsigned long long)arg0, (unsigned)arg1, (unsigned)arg2);";
+
+u32max ~~ ((1 shl 32) - 1);
+Big ~~ longarray(u8, u32max + 1);
+assert(Big.len == u32max + 1);
+assert(@sizeof(Big) == u32max + 1);
+
+// Reserve virtual memory and touch only a few pages, rather than putting a
+// four-gigabyte value on the stack or physically filling the whole array.
+map ~~ fn (size~u64) (@refT Big) @cout "void *p = mmap(NULL, arg0, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0); assert(p != MAP_FAILED); return p;";
+a ~@refT(Big) = map(@sizeof(Big));
+a[0] = 11;
+a[2147483647] = 22;
+a[2147483648] = 33;
+a[u32max] = 44;
+assert(a[0] == 11);
+assert(a[2147483647] == 22);
+assert(a[2147483648] == 33);
+assert(a[u32max] == 44);
+report(a.len, a[0], a[u32max]);
+unmap((@where a) as @ptr(u8), @sizeof(Big));
