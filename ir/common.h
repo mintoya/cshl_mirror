@@ -1,5 +1,6 @@
 #pragma once
 #include "../typeTree.h"
+#include "../errors.h"
 #include "ir.h"
 sliceDef(fptr);
 sliceDef(typed_value);

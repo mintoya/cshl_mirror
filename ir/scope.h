@@ -7,23 +7,6 @@
 #include <wheels/smap.h>
 
 sliceDef(u32);
-static struct {
-  char buf[1024];
-  usize len;
-} errors_buffer = {};
-void errors_buffer_printer(const char *c, void *v, usize len, bool flush) {
-  for (int i = 0; i < len && errors_buffer.len < countof(errors_buffer.buf) - 1; i++)
-    errors_buffer.buf[errors_buffer.len++] = c[i];
-  if (flush)
-    errors_buffer.buf[errors_buffer.len] = 0,
-    errors_buffer.len = 0;
-}
-char *print_errsbuffer(void *) { return (char *)errors_buffer.buf; }
-#define print_ebuff(fmt, ...) ({                               \
-  print_wfO(errors_buffer_printer, nullptr, fmt, __VA_ARGS__); \
-  print_errsbuffer;                                            \
-})
-
 const scope *scope_owner(const scope *s, u32 idx) {
   while (!(idx > s->start && idx <= s->start + msList_len(s->values)))
     s = s->parent;

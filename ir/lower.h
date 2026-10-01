@@ -158,10 +158,7 @@ u32 lower_low errs(superscope *ss, scope *s, astidx a) {
 u32 lower errs(superscope *ss, scope *s, astidx a) {
   return catch_errcall(
       (lower_low, (ss, s, a)), e, ({
-        static thread_local char ns[sizeof(errors_buffer.buf)] = {};
-
-        let full = ((srcpos_full){srcpos_ast(ast_at(ss, a), ss->asts), &ss->plist, &ss->flist});
-        pass_err(P$(e, ($.fn = print_ebuff("{cstr}:{srcpos_full}", strcpy(ns, errors_buffer.buf), full), $)), 0);
+        pass_err(Errors_with_location(e, ss_typeenv(ss), srcpos_ast(ast_at(ss, a), ss->asts)), 0);
         0;
       })
   );

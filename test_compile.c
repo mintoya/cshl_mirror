@@ -411,6 +411,7 @@ test_fn(as_overload_checks_requested_return_type) {
     let arena = arena_new_ext(allocator, 1 << 16);
     defer { arena_cleanup(arena); };
     let e = lower_source_err(arena, ((fptr){strlen(c->source), (u8 *)c->source}));
+    defer { Errors_release(&e); };
     if (c->valid) test_assert(!e.err_code);
     else {
       test_assert(e.err_code);
@@ -443,6 +444,7 @@ test_fn(anonymous_conversion_rejects_invalid_members) {
     let arena = arena_new_ext(allocator, 1 << 16);
     defer { arena_cleanup(arena); };
     let e = lower_source_err(arena, ((fptr){strlen(c->source), (u8 *)c->source}));
+    defer { Errors_release(&e); };
     test_assert(e.err_code);
     test_streq(e.err_code, c->error);
   }
@@ -452,6 +454,7 @@ test_fn(using_rejects_duplicate_names) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("x ~~ 1; @using(@struct { x ~~ 2; });"));
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "SHADOWING_SAME_SCOPE");
 }
@@ -460,6 +463,7 @@ test_fn(using_names_stay_in_block) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("{ @using(@struct { x ~~ 2; }); }; x;"));
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "UNBOUND_ID");
 }
@@ -468,6 +472,7 @@ test_fn(unbind_rejects_unbound_name) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("@unbind(nothing);"));
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "UNBOUND_ID");
 }
@@ -477,6 +482,7 @@ test_fn(unbind_leaves_enclosing_scopes_alone) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("x ~~ 1; { @unbind(\"x\"); }; x;"));
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "UNBOUND_ID");
 }
@@ -485,6 +491,7 @@ test_fn(using_rejects_non_struct) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("@using(3);"));
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "USING_EXPECTS_STRUCT");
 }
@@ -494,6 +501,7 @@ test_fn(import_rejects_sourceless_text) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("@import \"nothing.cshl\";"));
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "IMPORT_FROM_UNNAMED_SOURCE");
 }
@@ -501,6 +509,7 @@ test_fn(import_rejects_sourceless_text) {
 // an include belongs to the file prologue, never to a function body
 static void cinclude_in_function_reports_error(allocfn arena, test_result *_result, const char *source) {
   let e = lower_source_err(arena, ((fptr){strlen(source), (u8 *)source}));
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "CINCLUDE_INSIDE_FUNCTION");
 }
@@ -537,6 +546,7 @@ test_fn(escaped_function_does_not_expose_block_names) {
   let e = lower_source_err(arena, fp("f ~~ { result_type ~~ @sint(32);"
                                      "  @fn((), result_type, { return 5; }); };"
                                      "f(); result_type;"));
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "UNBOUND_ID");
 }
@@ -554,6 +564,7 @@ test_fn(lower_error_too_many_args) {
           "two(@sint(8), @sint(16));"
       )
   );
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "WRONG_ARG_COUNT");
   test_assert(e.line > 0);
@@ -564,6 +575,7 @@ test_fn(lower_error_builtin_arg_count) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("@cif(1);"));
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "WRONG_ARG_COUNT");
 }
@@ -572,6 +584,7 @@ test_fn(lower_error_type_not_value) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("@arr(2, 5);"));
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "TYPE_IS_NOT_VALUE");
 }
@@ -590,6 +603,7 @@ test_fn(lower_error_at_on_int_reference) {
           "@at x;\n"
       )
   );
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "AT_NOT_REF");
 }
@@ -628,6 +642,7 @@ test_fn(lower_error_function_cannot_capture_frame) {
           "outer(1);\n"
       )
   );
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "UNBOUND_ID");
 }
@@ -636,6 +651,7 @@ test_fn(lower_error_tuple) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("(1, 2);"));
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "TUPLE");
 }
@@ -651,6 +667,7 @@ test_fn(lower_error_id_requires_astid) {
           "@offsetof(point, 5);"
       )
   );
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "ID_REQUIRES_ASTID");
 }
@@ -659,6 +676,7 @@ test_fn(lower_error_compare_type_with_number) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("(@sint(8) == 3);"));
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "OP_UNSUPPORTED_OPERANDS");
 }
@@ -667,6 +685,7 @@ test_fn(lower_error_order_types) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("(@sint(8) < @sint(16));"));
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "OP_UNSUPPORTED_OPERANDS");
 }
@@ -682,6 +701,7 @@ test_fn(lower_error_union_member_initializer) {
           "U ~type~ @union{ a ~s32 = 1; };\n"
       )
   );
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "UNION_MEMBER_INITIALIZER");
 }
@@ -699,6 +719,7 @@ test_fn(lower_error_bitstruct_member_without_width) {
           "B ~type~ @bitstruct{ a ~s32; };\n"
       )
   );
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "BITSTRUCT_MEMBER_NO_WIDTH");
 }
@@ -714,6 +735,7 @@ test_fn(lower_error_bitstruct_member_zero_width) {
           "B ~type~ @bitstruct{ a ~s32:0; };\n"
       )
   );
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "BAD_BIT_WIDTH");
 }
@@ -730,6 +752,7 @@ test_fn(lower_error_bitfield_member_not_addressable) {
           "@where x.a;\n"
       )
   );
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "BITFIELD_NOT_ADDRESSABLE");
 }
@@ -742,6 +765,7 @@ test_fn(lower_error_bitfield_to_normal_reference) {
                                      "B ~type~ @bitstruct { a ~u8:3; };\n"
                                      "x ~B;\n"
                                      "r ~@refT(u8) = x.a;\n"));
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "BITFIELD_NOT_ADDRESSABLE");
 }
@@ -758,6 +782,7 @@ test_fn(lower_error_op_on_struct_without_overload) {
           "(p + p);\n"
       )
   );
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "OP_UNSUPPORTED_OPERANDS");
 }
@@ -780,6 +805,7 @@ test_fn(lower_error_set_through_const_destination) {
           "s = 5;\n"
       )
   );
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "CANNOT_CAST");
 }
@@ -850,6 +876,7 @@ test_fn(quote_operator_is_removed) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("macro' (1);"));
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "PARSE_ERROR");
 }
@@ -867,6 +894,7 @@ test_fn(lower_error_comptime_return_runtime_argument) {
   };
   foreach (let src, span(sources, countof(sources))) {
     let e = lower_source_err(arena, *src);
+    defer { Errors_release(&e); };
     test_assert(e.err_code);
     test_streq(e.err_code, "COMPTIME_RETURN_RUNTIME_ARGUMENT");
   }
@@ -1000,6 +1028,7 @@ test_fn(namespace_outside_function_reports_error) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("T ~~ @struct { x ~ @sint(32); }; @typeinfo(T).struct.namespace.fn;"));
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "NAMESPACE_HAS_NO_FUNCTION");
 }
@@ -1033,6 +1062,7 @@ test_fn(typeinfo_rejects_wrong_member) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("@typeinfo(@sint(32)).unknown;"));
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "NO_MEMBER");
 }
@@ -1043,6 +1073,7 @@ test_fn(returntype_outside_function) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("{ @returntype(); };"));
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "RETURNTYPE_OUTSIDE_FUNCTION");
 }
@@ -1051,6 +1082,7 @@ test_fn(returntype_rejects_arguments) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("@returntype(@sint(32));"));
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "WRONG_ARG_COUNT");
 }
@@ -1092,6 +1124,7 @@ test_fn(lower_error_sizeof_of_value_read_through_this) {
       ),
       "test/sizeof_of_value.cshl"
   );
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "TYPE_IS_NOT_VALUE");
 }
@@ -1131,6 +1164,7 @@ test_fn(sizeof_of_typeof_through_this_lowers) {
       ),
       "test/sizeof_of_typeof.cshl"
   );
+  defer { Errors_release(&e); };
   test_assert(!e.err_code);
 }
 
@@ -1142,6 +1176,7 @@ test_fn(implicit_as_overload_checks_requested_return_type) {
   let e = lower_source_err(arena, fp("T ~~ @struct { Self ~~ @this(); x ~@sint(32);"
                                      " @id(\"as\") ~~ @fn (self ~Self, target ~@type()), @any(), { return self.x; }; };"
                                      "f ~~ @fn (input ~T), @bool(), { return input; }; v ~T; f(v);"));
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "AS_OVERLOAD_RETURN_TYPE");
 }
@@ -1150,6 +1185,75 @@ test_fn(implicit_pointer_cast_rejected) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   let e = lower_source_err(arena, fp("p ~@ptr(@sint(8)); q ~@ptr(@sint(32)) = p;"));
+  defer { Errors_release(&e); };
   test_assert(e.err_code);
   test_streq(e.err_code, "CANNOT_CAST");
+}
+
+
+test_fn(coerce_error_keeps_types_and_locations) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let first = lower_source_err(arena, fp("p ~@ptr(@sint(8)); q ~@ptr(@sint(32)) = p;"));
+  defer { Errors_release(&first); };
+  test_streq(first.err_code, "CANNOT_CAST");
+  let details = Errors_get(first);
+  test_assert(details);
+  test_inteq(1, details->a.ptr_level);
+  test_inteq(1, details->b.ptr_level);
+  test_inteq(8, tu_catch(r_sint, details->a.t).bits);
+  test_inteq(32, tu_catch(r_sint, details->b.t).bits);
+  test_assert(details->locs.pos);
+  test_assert(details->locs.last);
+  let first_pos = details->locs.pos;
+  let second = lower_source_err(arena, fp("x ~@sint(16); @at x;"));
+  defer { Errors_release(&second); };
+  test_streq(second.err_code, "AT_NOT_REF");
+  let other = Errors_get(second);
+  test_assert(other && other != details);
+  test_inteq(16, tu_catch(r_sint, other->a.t).bits);
+  test_assert(tu_is(r_null, other->b.t));
+  test_inteq(first_pos, details->locs.pos);
+  let text = snprint(arena, "{Errors}", *details);
+  test_assert(strstr((char *)text.ptr, "type a: "));
+  test_assert(strstr((char *)text.ptr, "type b: "));
+  test_assert(strstr((char *)text.ptr, "line "));
+  Errors_release(&first);
+  test_assert(!first.err_code && !first.fnd);
+}
+
+test_fn(coerce_operand_error_keeps_both_types) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp("x ~@sint(32); p ~@ptr(@sint(8)); x + p;"));
+  defer { Errors_release(&e); };
+  test_streq(e.err_code, "OP_UNSUPPORTED_OPERANDS");
+  let details = Errors_get(e);
+  test_assert(details);
+  test_inteq(0, details->a.ptr_level);
+  test_inteq(1, details->b.ptr_level);
+  test_inteq(32, tu_catch(r_sint, details->a.t).bits);
+  test_inteq(8, tu_catch(r_sint, details->b.t).bits);
+}
+
+test_fn(error_locations_render_in_propagation_order) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  filelist files = {.allocator = arena};
+  poslist positions = {.allocator = arena};
+  sglist_push(files, ((fileItem){.filename = "error.cshl", .filecontent = fp("a\nb\nc")}));
+  for (u32 i = 0; i < 3; ++i)
+    sglist_push(positions, ((posItem){.fidx = 1, .offset = i * 2, .length = 1}));
+  err_t e = {.err_code = "EXAMPLE"};
+  typeenv tenv = {.plist = &positions, .flist = &files};
+  for (srcpos i = 1; i <= 3; ++i) e = Errors_with_location(e, tenv, i);
+  defer { Errors_release(&e); };
+  let details = Errors_get(e);
+  test_inteq(3, details->locs.pos);
+  test_inteq(2, details->locs.last->pos);
+  test_inteq(1, details->locs.last->last->pos);
+  test_assert(tu_is(r_null, details->a.t) && tu_is(r_null, details->b.t));
+  let text = snprint(arena, "{Errors}", *details);
+  test_streq((char *)text.ptr,
+      ":(file error.cshl,line 1,col 1):(file error.cshl,line 2,col 1):(file error.cshl,line 3,col 1)");
 }

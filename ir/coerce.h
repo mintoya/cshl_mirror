@@ -21,7 +21,7 @@ void tcheck_ifs errs(superscope *ss, scope *s, ir_ifs d) {
 }
 void tcheck_putptr errs(superscope *ss, scope *s, ir_putptr pp) {
   let lt = Type_stripTag(scope_regType(ss, s, pp.l), ss_typeenv(ss));
-  if (!lt.ptr_level) return_err("AT_NOT_REF");
+  if (!lt.ptr_level) return_type_err("AT_NOT_REF", ss_typeenv(ss), scope_regType(ss, s, pp.l), T());
   let dt = P$(lt, ($.ptr_level--, $.ref_kind = ref_ref, $));
   let temp = scope_add_value(ss, s, TV_of(ss, dt));
   try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_putptr, {.l = pp.l, .d = temp})));
@@ -29,7 +29,7 @@ void tcheck_putptr errs(superscope *ss, scope *s, ir_putptr pp) {
 }
 void tcheck_getptr errs(superscope *ss, scope *s, ir_getptr gp) {
   let lt = scope_regType(ss, s, gp.l);
-  if (lt.ref_kind == ref_dref) return_err("BITFIELD_NOT_ADDRESSABLE");
+  if (lt.ref_kind == ref_dref) return_type_err("BITFIELD_NOT_ADDRESSABLE", ss_typeenv(ss), lt, T());
   let dt = P$(lt, ($.ptr_level++, $.ref_kind = ref_none, $));
   let temp = scope_add_value(ss, s, TV_of(ss, dt));
   try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_getptr, {.l = gp.l, .d = temp})));
@@ -50,8 +50,8 @@ Type tcheck_member_type errs(superscope *ss, scope *s, ir_field fld) {
   Type member = {};
   if (st.start && fld.i < type_struct_len(e, st)) member = type_struct_item(e, st, fld.i)->t;
   else if (bf.start && fld.i < type_bitf_len(e, bf)) member = type_bitf_item(e, bf, fld.i)->t;
-  else return_err("NO_SUCH_FIELD", (Type){});
-  if (Type_is_comptime(member)) return_err("NO_STORAGE", (Type){});
+  else return_type_err("NO_SUCH_FIELD", e, base, T(), T());
+  if (Type_is_comptime(member)) return_type_err("NO_STORAGE", e, member, T(), T());
   member.ref_kind = bf.start ? ref_dref : ref_ref;
   return member;
 }
@@ -67,8 +67,9 @@ void tcheck_array errs(superscope *ss, scope *s, ir_array arr) {
   let e = ss_typeenv(ss);
   let lt = scope_regType(ss, s, arr.l);
   let inner = TypeTree_inner_array(lt.t, e);
-  if (!inner.t) return_err("ARRAY_OF_NON_ARRAY");
-  if (!Type_is_integer_like(scope_regType(ss, s, arr.r), e)) return_err("ARRAY_INDEX_NON_INT");
+  if (!inner.t) return_type_err("ARRAY_OF_NON_ARRAY", e, lt, T());
+  if (!Type_is_integer_like(scope_regType(ss, s, arr.r), e))
+    return_type_err("ARRAY_INDEX_NON_INT", e, lt, scope_regType(ss, s, arr.r));
   let dt = P$(Type_at(e, inner.t), ($.ref_kind = ref_ref, $));
   let dest = arr.d;
   arr.d = scope_add_value(ss, s, TV_of(ss, dt));
@@ -133,7 +134,8 @@ void tcheck_as errs(superscope *ss, scope *s, ir_rawop op) {
 void tcheck_integer_op errs(superscope *ss, scope *s, ir_rawop op) {
   let e = ss_typeenv(ss);
   let lt = scope_regType(ss, s, op.l), rt = scope_regType(ss, s, op.r);
-  if (!Type_is_integer_like(lt, e) || !Type_is_integer_like(rt, e)) return_err("OP_UNSUPPORTED_OPERANDS");
+  if (!Type_is_integer_like(lt, e) || !Type_is_integer_like(rt, e))
+    return_type_err("OP_UNSUPPORTED_OPERANDS", e, lt, rt);
   bool is_bool = op.o == opNumbers.mor || op.o == opNumbers.les || op.o == opNumbers.moq ||
                  op.o == opNumbers.leq || op.o == opNumbers.eq || op.o == opNumbers.neq ||
                  op.o == opNumbers.oand || op.o == opNumbers.oor;
@@ -193,9 +195,11 @@ bool tcheck_bind_field_place errs(superscope *ss, scope *s, ir_set st) {
 }
 void tcheck_bind_reference errs(superscope *ss, scope *s, ir_set st) {
   let lt = scope_regType(ss, s, st.l), dt = scope_regType(ss, s, st.d);
-  if (lt.ref_kind == ref_dref && dt.ref_kind == ref_ref) return_err("BITFIELD_NOT_ADDRESSABLE");
+  if (lt.ref_kind == ref_dref && dt.ref_kind == ref_ref)
+    return_type_err("BITFIELD_NOT_ADDRESSABLE", ss_typeenv(ss), lt, dt);
   lt.ref_kind = dt.ref_kind;
-  if (Type_cmp_ndecor(lt, dt, ss_typeenv(ss))) return_err("CANNOT_CAST");
+  if (Type_cmp_ndecor(lt, dt, ss_typeenv(ss)))
+    return_type_err("CANNOT_CAST", ss_typeenv(ss), scope_regType(ss, s, st.l), scope_regType(ss, s, st.d));
   if (try_err(tcheck_bind_field_place, (ss, s, st))) return;
   try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_getref, {.l = st.l, .d = st.d})));
 }
@@ -214,7 +218,7 @@ static u32 tcheck_cast_from_source errs(superscope *ss, scope *s, u32 left, Type
   let target = scope_add_value(ss, s, Type_asValue(ss, to));
   let result = try_err(lower_function_call_values, (ss, s, method, ((slice(u32)){2, (u32[]){left, target}})), 0);
   if (Type_cmp_ndecor(scope_regType(ss, s, result), to, ss_typeenv(ss)))
-    return_err("AS_OVERLOAD_RETURN_TYPE", 0);
+    return_type_err("AS_OVERLOAD_RETURN_TYPE", ss_typeenv(ss), scope_regType(ss, s, result), to, 0);
   return result;
 }
 static u32 tcheck_cast_into_target errs(superscope *ss, scope *s, u32 left, Type to, struct type_named m) {
@@ -296,8 +300,7 @@ void tcheck_cast errs(superscope *ss, scope *s, ir_cast cv, bool is_explicit) {
   if (tu_is(r_bool, dt.t) && (TypeTree_is_ast(lt.t) || tu_is(c_typeinfo, lt.t)))
     return (void)try_err(tcheck_cast_truth, (ss, s, cv));
   if (!Type_is_integer_like(lt, e) || !Type_is_integer_like(dt, e))
-    println("{Type_full} , {Type_full}", ss_typeF(ss, lt), ss_typeF(ss, dt)),
-        return_err("CANNOT_CAST");
+    return_type_err("CANNOT_CAST", e, scope_regType(ss, s, cv.l), scope_regType(ss, s, cv.d));
   try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_cast, cv)));
 }
 void tcheck_ret errs(superscope *ss, scope *s, ir_ret r) {
@@ -320,11 +323,12 @@ void tcheck_call_ast errs(superscope *env, scope *s, ir_call call) {
         return_err("AST_INDEX_NOT_LIST");
   let arv = scope_find(env, s, s->start + 1 + call.r);
   if (!TypeTree_is_ast(ss_type(env, arv->t).t) || !arv->v.c_ast || !tu_is(astABlock, ast_at(env, arv->v.c_ast)))
-    return_err("AST_INDEX_NEEDS_ABLOCK");
+    return_type_err("AST_INDEX_NEEDS_ABLOCK", tenv, ss_type(env, arv->t), T());
   let items = ast_block_children(env, arv->v.c_ast);
   if (items.len != 1) return_err("AST_INDEX_ONE_ARG");
   let itv = try_err(temporary_interpret, (env, s, items.start));
-  if (!tu_is(c_int, ss_type(env, itv.t).t) || !itv.v.c_int) return_err("AST_INDEX_NOT_COMPTIME");
+  if (!tu_is(c_int, ss_type(env, itv.t).t) || !itv.v.c_int)
+    return_type_err("AST_INDEX_NOT_COMPTIME", tenv, ss_type(env, itv.t), T());
   bigint idxb = int_as_bigint(env->alloc, itv, tenv);
   defer { msList_deInit(env->alloc, idxb); };
   bigint_expand(env->alloc, &idxb, sizeof(usize) / sizeof(bigint_unit) + 1);
@@ -338,9 +342,9 @@ void tcheck_call_ast errs(superscope *env, scope *s, ir_call call) {
 void tcheck_call_array errs(superscope *env, scope *s, ir_call call) {
   if (call.e < call.r + 1) return_err("ARRAY_INDEX_ONE_ARG");
   let arv = scope_find(env, s, s->start + 1 + call.r);
-  if (!TypeTree_is_ast(ss_type(env, arv->t).t) || !arv->v.c_ast) return_err("ARRAY_NEEDS_ABLOCK");
+  if (!TypeTree_is_ast(ss_type(env, arv->t).t) || !arv->v.c_ast) return_type_err("ARRAY_NEEDS_ABLOCK", ss_typeenv(env), ss_type(env, arv->t), T());
   let an = ast_at(env, arv->v.c_ast);
-  (void)tu_catch(astABlock, an, return_err("ARRAY_NEEDS_ABLOCK"));
+  (void)tu_catch(astABlock, an, return_type_err("ARRAY_NEEDS_ABLOCK", ss_typeenv(env), ss_type(env, arv->t), T()));
   let items = ast_block_children(env, arv->v.c_ast);
   if (items.len != 1) return_err("ARRAY_INDEX_ONE_ARG");
   u32 idx = try_err(lower, (env, s, items.start));
@@ -352,13 +356,14 @@ void tcheck_call_overload errs(superscope *env, scope *s, ir_call call) {
   let lts = Type_stripTag(lt, tenv);
   struct type_named m = {};
   if (lts.ptr_level <= 1) m = ss_tag_named(env, lt.t, fp("()"));
-  if (!m.owner) return_err("UNSUPPORTED_CALL");
+  if (!m.owner) return_type_err("UNSUPPORTED_CALL", tenv, lt, T());
   let method_value = *scope_find(env, m.owner, m.idx);
   let method0 = &method_value;
   let mf = tu_catchr(c_fun, ss_type(env, method0->t).t);
   usize nparams = type_run_len(tenv, mf.start) - 1;
   usize nargs = call.e > call.r ? (usize)(call.e - call.r) : 0;
-  if (nargs + 1 != nparams) return_err("WRONG_ARG_COUNT");
+  if (nargs + 1 != nparams)
+    return_type_err("WRONG_ARG_COUNT", tenv, lt, ss_type(env, method0->t));
   slice(u32) vals = slice_alloc(env->alloc, u32, nargs + 1);
   defer { slice_free(env->alloc, vals); };
   bool receiver_named = false;
@@ -387,7 +392,8 @@ void tcheck_call_overload errs(superscope *env, scope *s, ir_call call) {
 }
 void tcheck_call_function errs(superscope *ss, scope *s, ir_call call) {
   let fun = scope_find(ss, s, call.l)->v.c_fun;
-  if (!fun.fn || fun.fn > msList_len(ss->functions)) return_err("UNSUPPORTED_CALL");
+  if (!fun.fn || fun.fn > msList_len(ss->functions))
+    return_type_err("UNSUPPORTED_CALL", ss_typeenv(ss), scope_regType(ss, s, call.l), T());
   let ret = ss->functions[fun.fn - 1].instances[fun.spec].ret;
   let dest = call.d;
   call.d = scope_add_value(ss, s, TV_of(ss, ret));
