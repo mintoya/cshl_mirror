@@ -1,5 +1,5 @@
 #pragma once
-#include "../type.h"
+#include "../typeTree.h"
 #include "ir.h"
 sliceDef(fptr);
 sliceDef(typed_value);
@@ -66,7 +66,7 @@ struct superscope {
     typebitflist bitems;
   };
 
-  moxmap(Type, typeidx) typeindex;
+  TypesTree *types;
   msList(typeidx) thisstack;
   moxmap(fptr, type_metadata) type_info;
   msList(function) functions;
@@ -74,7 +74,6 @@ struct superscope {
   msList(fptr) cprologue;
   scope *outermost;
 
-  typeidx t_void, t_any, t_int, t_bool, t_ast, t_type;
   u32 foldempty;
 };
 typedef struct {
@@ -92,9 +91,6 @@ static inline typeenv ss_typeenv(superscope *ss) {
 }
 static inline Type_full ss_tf(superscope *ss, Type t) { return (Type_full){t, ss_typeenv(ss)}; }
 
-static cmpres Type_cmp_hash_ss(void *env, const void *a, const void *b) {
-  return Type_cmp(ss_typeenv((superscope *)env), *(Type *)a, *(Type *)b);
-}
 static inline typeidx ss_type_reserve(superscope *ss, usize count) {
   foreach (let i, range(0, count + 1))
     sglist_push(ss->tlist, {});
@@ -124,9 +120,10 @@ static inline usize ast_loc(superscope *ss, astidx idx) {
   let p = srcpos_ast(ast_at(ss, idx), ss->asts);
   return (!p || p > ss->plist.len) ? (usize)-1 : sglist_get(ss->plist, p - 1).offset;
 }
+// TODO: put all these in one place
 static inline srcpos ss_srcpos_of_text(superscope *ss, fptr text) {
   sglist_push(ss->flist, (fileItem){.filename = nullptr, .filecontent = text, .fileptr = nullptr});
-  u32 fidx = (u32)ss->flist.len; // 1-based
+  u32 fidx = (u32)ss->flist.len; 
   sglist_push(ss->plist, (posItem){.fidx = fidx, .offset = 0, .length = (u32)text.len});
   return (srcpos)ss->plist.len;
 }
@@ -154,13 +151,13 @@ static inline typed_value TV_of(superscope *ss, Type t) { return (typed_value){.
 static inline typed_value TV_with(superscope *ss, Type t, value_store vs) {
   return TV(ss_type_intern(ss, t), vs);
 }
-static inline typed_value TV_void /*  */ (superscope *ss) { return (typed_value){.t = ss->t_void}; }
-static inline typed_value TV_any /*   */ (superscope *ss) { return (typed_value){.t = ss->t_any}; }
-static inline typed_value TV_bigint /**/ (superscope *ss, bigint b) { return (typed_value){.t = ss->t_int, .v = {.c_int = b}}; }
-static inline typed_value TV_ast /*   */ (superscope *ss, astidx a) { return (typed_value){.t = ss->t_ast, .v = {.c_ast = a}}; }
-static inline typed_value TV_type /*  */ (superscope *ss, typeidx t) { return (typed_value){.t = ss->t_type, .v = {.c_type = t}}; }
-static inline typed_value TV_bool /*  */ (superscope *ss, bool v) { return (typed_value){.t = ss->t_bool, .v = VS(avalue(ss->alloc, v))}; }
-static inline Type ss_ast_type(superscope *ss) { return ss_type(ss, ss->t_ast); }
+static inline typed_value TV_void /*  */ (superscope *ss) { return (typed_value){.t = TypesTree_r_void}; }
+static inline typed_value TV_any /*   */ (superscope *ss) { return (typed_value){.t = TypesTree_c_any}; }
+static inline typed_value TV_bigint /**/ (superscope *ss, bigint b) { return (typed_value){.t = TypesTree_c_int, .v = {.c_int = b}}; }
+static inline typed_value TV_ast /*   */ (superscope *ss, astidx a) { return (typed_value){.t = TypesTree_c_ast, .v = {.c_ast = a}}; }
+static inline typed_value TV_type /*  */ (superscope *ss, typeidx t) { return (typed_value){.t = TypesTree_c_type, .v = {.c_type = t}}; }
+static inline typed_value TV_bool /*  */ (superscope *ss, bool v) { return (typed_value){.t = TypesTree_r_bool, .v = VS(avalue(ss->alloc, v))}; }
+static inline Type ss_ast_type(superscope *ss) { return ss_type(ss, TypesTree_c_ast); }
 typed_value *scope_find(superscope *env, const scope *s, u32 idx);
 static inline void scope_bind errs(superscope *env, scope *s, u32 idx, fptr name);
 
@@ -176,20 +173,12 @@ typed_value_full ss_tvf(superscope *ss, typed_value tv) {
 }
 typed_value temporary_interpret errs(superscope *ss, scope *s, astidx a) {
   let work = scope_inferior(ss, s);
-  // let afull = ((astidx_full){a, ss->asts, ss->plist, ss->flist});
-  // let sfulll = ((scope_full){s, ss});
-  // println("[LOG:TMP] {astidx_full}", );
   try_err(lower, (ss, work, a), (typed_value){});
-  // println("[LOG:TMP] {scope_full}", );
   let res = try_err(interpret, (ss, work), (typed_value){});
-  // println("[LOG:TMP] {typed_value_full}", ss_tvf(ss, res));
   return res;
 }
 
 typedef enum enum_op {
-  // The arithmetic members take their values from the runtime's cshl_int_op
-  // (cshl.lib.c), which is the source of truth: a wide operation passes
-  // through to the runtime with one explicit cast and no name lookup.
   enop_mul = CSHL_INT_MUL,
   enop_div = CSHL_INT_DIV,
   enop_mod = CSHL_INT_MOD,
@@ -215,16 +204,6 @@ typedef enum enum_op {
   enop_set,
   enop_as,
 } enum_op;
-typedef enum enum_boolean_op {
-  bop_oand = enop_oand,
-  bop_oor = enop_oor,
-  bop_mor = enop_mor,
-  bop_les = enop_les,
-  bop_moq = enop_moq,
-  bop_leq = enop_leq,
-  bop_eq = enop_eq,
-  bop_neq = enop_neq,
-} enum_boolean_op;
 
 typePrinter(enum_op) {
   switch_tuple(
@@ -375,7 +354,6 @@ static inline u32 ss_compileString(superscope *b, scope *s, fptr in) {
   t.iscomptime = true;
   return scope_add_value(b, s, TV_with(b, t, VS(in.ptr)));
 }
-// the children of a block sit consecutively in the ast list, terminated by the null node
 static inline astidx_span ast_run(superscope *ss, astidx start) {
   astidx end = start;
   while (!tu_is(astNull, ast_at(ss, end)))

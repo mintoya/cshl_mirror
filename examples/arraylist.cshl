@@ -202,10 +202,11 @@ p:deinit();
 cputc("\n"[0]);
 
 @using @import "iterator.cshl";
-
-"hello world" as slice(i8) 
-  |> _:sub(3,7) // "lo w"
+"hello world" 
+  |> _ as slice(@typeof(_[0])) 
+  |> _:sub(3,7)
   |> _:iter() 
   |> filter {_ != (" "[0]);}
-  |> map { cputc(_); _; }
-  |> iterate();
+  |> map    {cputc(_); _; }
+  |> iterate()
+  ;

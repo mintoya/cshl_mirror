@@ -1,4 +1,5 @@
 #pragma once
+#include "coerce.h"
 #include "common.h"
 #include "lower_op.h"
 
@@ -18,6 +19,8 @@ u32 lower_op_wrap errs(superscope *ss, scope *s, astidx left, astidx right, u32 
   }
   return try_err(lower_op, (ss, s, try_err(lower, (ss, s, left), 0), right, number), 0);
 }
+// TODO: these low key suck 
+// maybe make them do something else 
 static u32 lower_anon_struct errs(superscope *ss, scope *s, astidx a) {
   let elems = ast_block_children(ss, a);
   let n = elems.len;

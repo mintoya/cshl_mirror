@@ -280,7 +280,7 @@ static void lower_ast_member errs(superscope *ss, scope *s, u32 l, u32 r, u32 d)
     }
   } else return_err("DOT_NEEDS_NAME");
   let dv = scope_find(ss, s, d);
-  dv->t = ss->t_ast;
+  dv->t = TypesTree_c_ast;
   dv->v = VS(.c_ast = res ? res : ast_make_empty(ss));
   return;
 }

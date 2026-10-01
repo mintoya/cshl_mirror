@@ -24,3 +24,4 @@ a.pdb
 *.cshl.c*
 /flamegraph.svg
 /perf.data
+/perf.data.old

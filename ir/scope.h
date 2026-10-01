@@ -70,7 +70,7 @@ static inline void scope_resize_value(superscope *env, typed_value *v) {
     v->v.value = acreate(env->alloc, u8[sz]);
 }
 static inline void scope_set_type(superscope *env, typed_value *v, typeidx t) {
-  assertMessage(v->t == env->t_any);
+  assertMessage(v->t == TypesTree_c_any);
   v->t = t;
   scope_resize_value(env, v);
 }
@@ -197,12 +197,7 @@ static inline u32 ss_get_named_mut errs(superscope *env, scope *s, fptr n) {
 }
 
 typeidx ss_type_intern(superscope *ss, Type t) {
-  if (tu_is(r_null, t.t)) return 0;
-  if_decl (let found, moxmap_get(ss->typeindex, t)) return *found;
-  sglist_push(ss->tlist, t);
-  let idx = (typeidx)ss->tlist.len;
-  moxmap_set(ss->typeindex, t, idx);
-  return idx;
+  return TypesTree_get(ss->types, t);
 }
 
 static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
@@ -224,14 +219,8 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
     .cprologue = msList_init(owned, fptr),
   }));
   // clang-format on
-  res->typeindex = moxmap_init(owned, Type, typeidx, (oxmap_cmp){Type_cmp_hash_ss, res});
+  res->types = TypesTree_init(owned, ss_typeenv(res));
   res->type_info = moxmap_init(owned, fptr, type_metadata, (oxmap_cmp){fptr_cmp_hash, res});
-  res->t_void = ss_type_intern(res, T(tu_of(r_void, {})));
-  res->t_any = ss_type_intern(res, T(tu_of(c_any, {})));
-  res->t_int = ss_type_intern(res, T(tu_of(c_int, {})));
-  res->t_bool = ss_type_intern(res, T(tu_of(r_bool, {})));
-  res->t_ast = ss_type_intern(res, T(tu_of(c_ast, {})));
-  res->t_type = ss_type_intern(res, T(tu_of(c_type, {})));
   res->outermost = scope_inferior(res, nullptr);
   struct {
     char *name;

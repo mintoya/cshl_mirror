@@ -617,7 +617,7 @@ static u32 lower_builtin_bitstruct errs(superscope *ss, scope *s, astidx args) {
     if (Type_is_comptime(base)) return_err("BITSTRUCT_COMPTIME_MEMBER", 0);
 
     let width_value = try_err(temporary_interpret, (ss, s, widthidx), 0);
-    if (!Type_is_comptime(ss_type(ss, width_value.t)) || width_value.t != ss->t_int) return_err("BITSTRUCT_WIDTH_NOT_INT", 0);
+    if (!Type_is_comptime(ss_type(ss, width_value.t)) || width_value.t != TypesTree_c_int) return_err("BITSTRUCT_WIDTH_NOT_INT", 0);
     let const width_big = width_value.v.c_int;
     if (bigint_cmp(width_big, nullptr) <= 0) return_err("BAD_BIT_WIDTH", 0);
     usize width = 0;

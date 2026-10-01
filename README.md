@@ -14,6 +14,10 @@ meant to be a c-like language with
 - [x] operator overloading
 - [ ] raii-ish stuff? prolly just defer
 - [ ] @compiles, like zig
+- [ ] make == return cmpres
+- [ ] error class to make reporting easier
+- [ ] perfect type tree
+- [ ] reudementary lsp using the error class
 
 
 ## grammer

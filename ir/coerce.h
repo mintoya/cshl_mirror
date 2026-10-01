@@ -16,7 +16,7 @@ void tcheck_result errs(superscope *ss, scope *s, u32 value, u32 dest) {
   try_err(tcheck_set, (ss, s, (ir_set){.l = value, .d = dest}));
 }
 void tcheck_ifs errs(superscope *ss, scope *s, ir_ifs d) {
-  let rd = try_err(tcheck_castV, (ss, s, d, Toi(ss->t_bool), false));
+  let rd = try_err(tcheck_castV, (ss, s, d, Toi(TypesTree_r_bool), false));
   try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_ifs, rd)));
 }
 void tcheck_putptr errs(superscope *ss, scope *s, ir_putptr pp) {
@@ -331,7 +331,7 @@ void tcheck_call_ast errs(superscope *env, scope *s, ir_call call) {
   usize idx = *(usize *)idxb;
   let children = ast_block_children(env, av->v.c_ast);
   let dv = scope_find(env, s, call.d);
-  dv->t = env->t_ast;
+  dv->t = TypesTree_c_ast;
   dv->v = VS(.c_ast = idx < children.len ? children.start + idx : ast_make_empty(env));
   return;
 }

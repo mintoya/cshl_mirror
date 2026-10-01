@@ -14,7 +14,7 @@ u64 ~~ @uint 64;
 bool ~~ @bool();
 true ~@comptime(bool)~1;
 false~@comptime(bool)~0;
-null ~ @comptime(@struct{});
+null ~@comptime(@struct{});
 void ~~ @void();
 fn  ~~ @fn (a ~ast),inline,(return @qot @fn(
   @uqot(a."()".opleft),
@@ -156,6 +156,7 @@ arr ~~ fn (i~int) any
       };
     };
 };
+
 
 array_of ~~ fn (T~type, A~type) (@comptime bool) {
   info ~~ @typeinfo(A).array;
