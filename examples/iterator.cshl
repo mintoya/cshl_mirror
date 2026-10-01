@@ -18,31 +18,6 @@ range ~~ fn (start~i32, end~i32) any {
   result.end   = end;
   return result;
 };
-arrayiter ~~ fn (array ~any) any {
-  result ~@struct {
-    arrayT  ~~ @typeof array;
-    arrayIT ~~ @refT @typeof array[0];
-    data  ~ @refT @typeof array;
-    place ~ u32;
-    length ~ u32;
-    next  ~~ fn (this~@refT(@this())) (? this.arrayIT) {
-      result ~@returntype() = null;
-      if ( this.place < this.length) {
-        result = @ref this.data[this.place];
-        this.place = this.place+1;
-      };
-      return result;
-    };
-  };
-  result.data = array;
-  result.length = 
-  (@sizeof(@typeof array) 
-    / @sizeof(@typeof array[0]));
-  return result;
-};
-
-
-
 filter ~~ fn (cnd ~ast) inline return @qot{
   rt ~ @struct{
     Self ~~ @this();
@@ -50,8 +25,8 @@ filter ~~ fn (cnd ~ast) inline return @qot{
     next ~~ fn (this~@refT(Self)) any {
       result ~= this.state:next();
       while (
-        result as bool
-        and (result.value |> @uqot(cnd))
+        ( result as bool )
+        and not(result.value |> @uqot(cnd))
       ) (result = this.state:next());
       return result;
     };
@@ -75,32 +50,9 @@ map ~~ fn (body ~ast) inline return @qot {
 
 iterate ~~ fn () inline return @qot while ((_:next()));
 
-@cinclude "stdio.h";
-puti ~~ fn (in ~i32) void @cout "printf(\"%i\",arg0);";
-puts ~~ fn (in ~@ptr i8) void @cout "printf(\"%s\",arg0);";
-
-sum ~i32~0;
-range(0 , 6) 
-  |> filter { not (_ band 1);} 
-  |> map    { _ * 3;}
-  |> map    { sum = sum + _ ;}
-|> iterate();
-sum;
-
-i85 ~arr(5) i8;
-counter~i32 =0;
-puts(@where "counter = \0"[0]);
-puti(counter);
-puts(@where "\n\0"[0]);
-arrayiter(i85) |> map {
-  counter = counter + 1;
-  puts(@where "counter = \0"[0]);
-  puti(counter);
-  puts(@where "\n\0"[0]);
-   counter;
-} |> iterate();
-
-arrayiter(i85) |> map {
-  puti(_); puts(@where "\n\0"[0]);
-  _;
-} |> iterate();
+@struct{
+  filter ~~ filter;
+  map ~~ map;
+  range ~~ range;
+  iterate ~~ iterate;
+};

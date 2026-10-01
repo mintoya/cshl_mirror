@@ -1,21 +1,26 @@
 @using @import "module.cshl";
 @cinclude "<stdlib.h>";
 
-cmalloc ~~ fn (u64) (@ptr i8) 
-  @cout "return malloc(arg0);";
-crealloc ~~ fn ((@ptr i8),u64) (@ptr i8) 
-  @cout "return realloc(arg0,arg1);";
-cfree   ~~ fn (@ptr i8) void 
-  @cout "free(arg0);";
-cnull ~~ fn () (@ptr i8) @cout "return NULL;";
+cptr ~~ @ptr i8;
+cmalloc ~~ fn (u64) cptr @cout "return malloc(arg0);";
+crealloc ~~ fn (cptr,u64) cptr @cout "return realloc(arg0,arg1);";
+cfree ~~ fn (cptr) void @cout "free(arg0);";
+cnull ~~ fn () cptr @cout "return NULL;";
 @cinclude "<string.h>";
-cmemcpy ~~ fn ((@ptr i8),(@ptr i8),u64) void @cout "memcpy(arg0,arg1,arg2);";
+cmemcpy ~~ fn (cptr,cptr,u64) void @cout "memcpy(arg0,arg1,arg2);";
 
+cnd ~~ fn (cond ~ast , thenv~ast, elsev~ast) inline return @qot{
+  result~@typeof @uqot thenv;
+  if (@uqot cond) (result =(@uqot thenv)) 
+  else (result = (@uqot elsev));
+  result;
+};
 slice ~~ fn (t~type) type return @struct{
   Self ~~@this();
   RSelf ~~@refT @this();
   ptr ~ @ptr(arr(0) t); 
   len ~ u64;
+
   size ~~ fn (self~Self) u64 return self.len * @sizeof(t);
   get ~~ fn (self~Self , idx ~u64) (@refT t) {
     ra ~@refT(arr(0) t)~ @ref @at(self.ptr);
@@ -35,7 +40,6 @@ slice ~~ fn (t~type) type return @struct{
     // TODO: add actual compile error
     } else @compileError();
   };
-  // TODO: add "[]" helper that basically does whatever this is
   @id("()") ~~ fn (self~ast,idx~ast) inline {
     cif (
       not(idx.ablock)
@@ -48,22 +52,47 @@ slice ~~ fn (t~type) type return @struct{
       @ref this:get(idx_n);
     };
   };
+  sub ~~ fn (self~Self,start~u64, end~(? u64)) Self {
+    result ~ Self;
+    sp ~@ptr(i8)~ @where(self:get(start));
+    result.ptr = sp as @typeof(result.ptr);
+    result.len =  end:orelse(self.len) - start;
+    // bounds check or something
+    return result;
+  };
+  iter ~~ fn (self~Self) any {
+    resT ~~ @struct{
+      mem   ~@typeof(self);
+      place ~@typeof(self.len);
+      next  ~~ fn (self~@refT @this()) (? @refT t) {
+        if (self.place >= self.mem.len)
+          return null;
+        self.place = self.place + 1;
+        return self.mem:get(self.place - 1);
+      };
+    };
+    res ~resT;
+    res.mem = self;
+    return res;
+  };
 };
+// mcpy ~~ fn (to ~ any ,from ~any) void {};
+
 alloc ~~ fn (t~type,count~u64) any {
   r ~ slice t;
   r.len = count;
   r.ptr = cmalloc(r:size()) as @typeof(r.ptr);
   return r;
 };
-
+  
 resize ~~ fn (sl ~any,count~u64) void {
  cif (not @isref sl) @compileError();
  cif (not came_from(@typeof(sl), slice)) @compileError();
  sl.len = count;
- sl.ptr = crealloc(sl.ptr as (@ptr i8),sl:size()) as @typeof(sl.ptr);
+ sl.ptr = crealloc(sl.ptr as cptr,sl:size()) as @typeof(sl.ptr);
 };
 
-require ~~ fn (ok~bool) void @cout "if (!arg0) abort();";
+assert ~~ fn (ok~bool) void @cout "assert(arg0);";
 
 list ~~ fn (t~type) type return @struct {
   Self ~~ @this();
@@ -89,7 +118,7 @@ list ~~ fn (t~type) type return @struct {
     };
   };
   get ~~ fn (self~Self, idx~u64) (@refT t) {
-    require(idx < self.len);
+    assert(idx < self.len);
     return @ref self.data:get(idx);
   };
   @id("()") ~~ fn (self~ast,idx~ast) inline {
@@ -115,12 +144,12 @@ list ~~ fn (t~type) type return @struct {
   // TODO: compiler directive for can_coerce, or some way to acess such a property
   // lowe-key impossible withoutb some sort of try_lower 
   pop ~~ fn (self~RSelf) t {
-    require(self.len > 0);
+    assert(self.len > 0);
     self.len = self.len - 1;
     return self.data[self.len];
   };
   insert ~~ fn (self~RSelf, idx~u64, value~t) void {
-    require(idx <= self.len);
+    assert(idx <= self.len);
     self:reserve(self.len + 1);
     i ~u64 = self.len;
     while (i > idx) {
@@ -131,7 +160,7 @@ list ~~ fn (t~type) type return @struct {
     self.len = self.len + 1;
   };
   remove ~~ fn (self~RSelf, idx~u64) t {
-    require(idx < self.len);
+    assert(idx < self.len);
     result ~t = self.data[idx];
     i ~u64 = idx;
     while (i + 1 < self.len) {
@@ -144,11 +173,12 @@ list ~~ fn (t~type) type return @struct {
   clear ~~ fn (self~RSelf) void { self.len = 0; };
   shrink ~~ fn (self~RSelf) void { resize(self.data,self.len); };
   deinit ~~ fn (self~RSelf) void {
-    self.data.ptr as (@ptr i8) |> cfree(_);
+    self.data.ptr as cptr |> cfree(_);
     self.data.ptr = cnull() as @typeof(self.data.ptr);
     self.data.len = 0;
     self.len = 0;
   };
+  iter ~~ fn (self~Self) any return self.data:iter();
 };
 
 p ~~ list(i8).new();
@@ -158,12 +188,24 @@ p:push_array("world");
 p:push(0);
 
 @cinclude "<stdio.h>";
-cput ~~ fn (str~(@ptr i8)) void @cout "printf(\"%s\",arg0);";
-cput(p.data.ptr as (@ptr i8));
+cput  ~~ fn (str~cptr) void @cout "printf(\"%s\",arg0);";
+cputc ~~ fn (char~i8 ) void @cout "printf(\"%c\",arg0);";
+cputi ~~ fn (char~i32) void @cout "printf(\"%i\",arg0);";
+cput((@where p[0] ) as cptr);
 
 p:clear();
-require(p.len == 0);
+assert(p.len == 0);
 p:push("a"[0]);
-require(p[0] == "a"[0]);
+assert(p[0] == "a"[0]);
 p:deinit();
 
+cputc("\n"[0]);
+
+@using @import "iterator.cshl";
+
+"hello world" as slice(i8) 
+  |> _:sub(3,7) // "lo w"
+  |> _:iter() 
+  |> filter {_ != (" "[0]);}
+  |> map { cputc(_); _; }
+  |> iterate();

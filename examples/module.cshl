@@ -148,10 +148,11 @@ arr ~~ fn (i~int) any
     };
     orelse ~~ fn (this~ast , a~ast) inline {
       return @qot {
-        result ~= @uqot(this);
-        if result
-          (result.value = @uqot a);
-        result.value;
+        _self ~= @uqot(this);
+        _result ~ @typeof(_self.value);
+        if _self (_result = _self.value)
+          else (_result = @uqot a);
+        _result;
       };
     };
 };

@@ -234,6 +234,18 @@ test_fn(cout_and_or_short_circuit) {
   check_cout_output(allocator, _result, "test/cout_short_circuit.cshl", fp("or ran\ndone\n"));
 }
 
+test_fn(cout_short_circuit_loop) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let src = read_file(arena, "test/short_circuit_loop.cshl");
+  let with_check = snprint(arena, "{slice(c8)}\n@cinclude \"<stdlib.h>\";\nif (not(ok)) (@cout \"abort();\");\n", ((slice(c8)){src.len && src.ptr[src.len - 1] == 0 ? src.len - 1 : src.len, (c8 *)src.ptr}));
+  while (with_check.len && with_check.ptr[with_check.len - 1] == 0) with_check.len--;
+  let ctx = parse_source(nullptr, arena, ((fptr){with_check.len, (u8 *)with_check.ptr}), "test/short_circuit_loop.cshl");
+  let ss = ss_init(arena, ctx);
+  lower(nullptr, ss, ss->outermost, ctx.idx);
+  check_generated_scope(arena, _result, ss);
+}
+
 test_fn(anonymous_conversion_execute) {
   check_generated_c(allocator, _result, "test/anonymous_conversion.cshl");
 }

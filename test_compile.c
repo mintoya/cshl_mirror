@@ -361,6 +361,7 @@ test_file_1(any_parameter_preserves_reference);
 test_file_1(optional_reference_copy);
 test_file_1(pipe_writes_through_reference_place);
 test_file_1(cout_loop_control);
+test_file_1(short_circuit_loop);
 test_file_1(cout_signed_shifts);
 test_file_1(cout_packed_return);
 test_file_1(cout_non_power_alignment);

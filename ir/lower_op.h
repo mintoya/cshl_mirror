@@ -71,11 +71,15 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
       }),
       (enop_oand, {
         let result = scope_add_value(ss, s, TV_bool(ss, false));
+        let initial = scope_add_value(ss, s, TV_bool(ss, false));
+        try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = result, .l = initial})), 0);
         try_err(lower_builtin_if, (ss, s, left, result, right, 0), 0);
         return result;
       }),
       (enop_oor, {
         let result = scope_add_value(ss, s, TV_bool(ss, true));
+        let initial = scope_add_value(ss, s, TV_bool(ss, true));
+        try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = result, .l = initial})), 0);
         try_err(lower_builtin_if, (ss, s, left, result, 0, right), 0);
         return result;
       }),
