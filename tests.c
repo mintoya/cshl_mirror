@@ -376,3 +376,20 @@ test_fn(cout_block_result_reference) {
 test_fn(cout_optional_reference_copy) {
   check_generated_c(allocator, _result, "test/optional_reference_copy.cshl");
 }
+
+
+test_fn(cout_loop_control_matches_interpreter) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let ctx = parse_source(nullptr, arena, fp(
+      "assert ~~ @fn((ok ~@bool()), @void(), { @cout \"assert(arg0);\"; });"
+      "stop ~~ @fn((), @inlineast(), { return @qot break(); });"
+      "i ~@sint(32) = 0; total ~@sint(32) = 0;"
+      "@loop({ i = i + 1; @if(i == 2, continue());"
+      "  @loop({ total = total + 1; stop(); });"
+      "  @if(i == 4, break()); });"
+      "assert((i == 4) and (total == 3));"), nullptr);
+  let ss = ss_init(arena, ctx);
+  lower(nullptr, ss, ss->outermost, ctx.idx);
+  check_generated_scope(arena, _result, ss);
+}

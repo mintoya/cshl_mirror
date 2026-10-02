@@ -349,23 +349,44 @@ static u32 lower_builtin_ast_op errs(superscope *ss, scope *s, astidx args) {
   sglist_push(ss->asts, (ast)tu_of(astOp, {.left_right = off, .number_rep = spelling.n}));
   return scope_add_value(ss, s, TV_ast(ss, (astidx)ss->asts.len));
 }
-// TODO
 static u32 lower_builtin_apply errs(superscope *ss, scope *s, astidx args) {
-  let list = builtin_arg_list(ss, args);
-  if (list.len < 1) return_err("WRONG_ARG_COUNT", 0);
-  let fn = try_err(lower, (ss, s, list.start + 0), 0);
+  let list = builtin_args(ss, args, 2);
+  let fn = try_err(lower, (ss, s, list.start), 0);
   let fvt = ss_type(ss, scope_find(ss, s, fn)->t);
   if (!tu_is(c_fun, fvt.t)) return_err("APPLY_NOT_FUNCTION", 0);
   let sig = tu_catch(c_fun, fvt.t);
   let env = ss_typeenv(ss);
-  usize n = list.len - 1;
-  let vals = n ? slice_alloc(ss->alloc, u32, n) : (slice(u32)){};
-  foreach (let i, range(0, n)) {
-    let want = Type_at(env, type_run_at(env, sig.start, i));
-    vals.ptr[i] = Type_is_comptime(want) ? scope_add_value(ss, s, try_err(temporary_interpret, (ss, s, list.start + 1 + i), 0))
-                                         : try_err(lower, (ss, s, list.start + 1 + i), 0);
+  if (type_run_len(env, sig.start) != 2) return_err("WRONG_ARG_COUNT", 0);
+  if (!tu_is(c_ast, Type_at(env, type_run_at(env, sig.start, 0)).t) ||
+      !tu_is(c_ast, Type_at(env, type_run_at(env, sig.start, 1)).t))
+    return_err("APPLY_FUNCTION_TYPE_ERROR", 0);
+  let input = try_err(temporary_interpret, (ss, s, list.start + 1), 0);
+  if (!TypeTree_is_ast(ss_type(ss, input.t).t)) return_err("APPLY_LIST_TYPE_ERROR", 0);
+  if (!input.v.c_ast) return_err("APPLY_LIST_UNKNOWN", 0);
+  let block = ast_at(ss, input.v.c_ast);
+  if (!tu_is(astABlock, block) && !tu_is(astBBlock, block) && !tu_is(astPBlock, block))
+    return_err("APPLY_EXPECTED_LIST", 0);
+  let children = ast_block_children(ss, input.v.c_ast);
+  let out = msList_init(ss->alloc, astidx);
+  defer { msList_deInit(ss->alloc, out); };
+  foreach (let i, range(0, children.len)) {
+    let work = scope_inferior(ss, s);
+    u32 value = scope_add_value(ss, work, TV_ast(ss, children.start + i));
+    try_err(lower_function_call_values, (ss, work, fn, ((slice(u32)){1, &value})), 0);
+    let result = try_err(interpret, (ss, work), 0);
+    if (!TypeTree_is_ast(ss_type(ss, result.t).t)) return_err("APPLY_RESULT_TYPE_ERROR", 0);
+    if (!result.v.c_ast) return_err("APPLY_RESULT_UNKNOWN", 0);
+    msList_push(ss->alloc, out, result.v.c_ast);
   }
-  return try_err(lower_function_call_values, (ss, s, fn, vals), 0);
+  astidx start = (astidx)ss->asts.len + 1;
+  foreach (let i, span(out, msList_len(out)))
+    sglist_push(ss->asts, ast_at(ss, *i));
+  sglist_push(ss->asts, (ast)tu_of(astNull, {}));
+  if (tu_is(astABlock, block)) block.astABlock.start = start;
+  else if (tu_is(astBBlock, block)) block.astBBlock.start = start;
+  else block.astPBlock.start = start;
+  sglist_push(ss->asts, block);
+  return scope_add_value(ss, s, TV_ast(ss, (astidx)ss->asts.len));
 }
 
 static u32 lower_builtin_reft errs(superscope *ss, scope *s, astidx args) {

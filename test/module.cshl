@@ -48,21 +48,21 @@ np ~~ fn (block~ast) inline {
     cif (caps[i] == @qot()) {
       return @qot [];
     } else return @qot {
-      @uqot(@apply(capture, mode, inst, caps[i]));
-      @splice(@apply(captures, caps, inst, mode, i + 1));
+      @uqot(@uqot @qot capture(mode, @uqot(inst), @uqot(caps[i])));
+      @splice(@uqot @qot captures(@uqot(caps), @uqot(inst), mode, i + 1));
     };
   };
   return @uqot@qot {
     ClosureType ~type~ @struct {
       Self ~type~ @this();
-      @splice @apply(captures, caps, @qot(inst), 0, 0);
+      @splice @uqot @qot captures(@uqot(caps), inst, 0, 0);
       @id("()") ~~ fn (self ~Self, @splice(args)) (@uqot(ret)) {
-        @splice @apply(captures, caps, @qot(inst), 2, 0);
+        @splice @uqot @qot captures(@uqot(caps), inst, 2, 0);
         @splice body ;
       };
     };
     inst ~ClosureType;
-    @splice @apply(captures, caps, @qot(inst), 1, 0);
+    @splice @uqot @qot captures(@uqot(caps), inst, 1, 0);
     inst;
   };
 };

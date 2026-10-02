@@ -1,6 +1,8 @@
 #pragma once
 #include "coerce_helpers.h"
 #include "common.h"
+#include "wheels/macros.h"
+#include "wheels/sList.h"
 
 void tcheck_set errs(superscope *ss, scope *s, ir_set st);
 void tcheck_cast errs(superscope *ss, scope *s, ir_cast cv, bool is_explicit);
@@ -413,6 +415,22 @@ void tcheck_call errs(superscope *ss, scope *s, ir_call call) {
   if (TypeTree_inner_array(lt.t, ss_typeenv(ss)).t) return (void)try_err(tcheck_call_array, (ss, s, call));
   try_err(tcheck_call_overload, (ss, s, call));
 }
+static bool tcheck_inside_loop(const scope *s) {
+  isize depth = 1;
+  for (int i = msList_len(s->instructions); i > 0 && depth; i--)
+    depth +=
+        tu_is(ir_loope, s->instructions[i - 1]) -
+        tu_is(ir_loops, s->instructions[i - 1]);
+  return !depth;
+}
+void tcheck_break errs(superscope *ss, scope *s) {
+  if (!tcheck_inside_loop(s)) return_err("BREAK_OUTSIDE_LOOP");
+  try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_break, {})));
+}
+void tcheck_continue errs(superscope *ss, scope *s) {
+  if (!tcheck_inside_loop(s)) return_err("CONTINUE_OUTSIDE_LOOP");
+  try_err(scope_emit_inst, (ss, s, (ir)tu_of(ir_cont, {})));
+}
 void scope_add_inst_typecheck(err_t *err, superscope *env, scope *s, ir i) {
   tu_match_void(
       i,
@@ -421,8 +439,8 @@ void scope_add_inst_typecheck(err_t *err, superscope *env, scope *s, ir i) {
       (ir_farg /*  */, _, return scope_emit_inst(err, env, s, i)), // checked elsewhere
       (ir_loops /* */, _, return scope_emit_inst(err, env, s, i)),
       (ir_loope /* */, _, return scope_emit_inst(err, env, s, i)),
-      (ir_break /* */, _, return scope_emit_inst(err, env, s, i)),
-      (ir_cont /*  */, _, return scope_emit_inst(err, env, s, i)),
+      (ir_break /* */, _, return tcheck_break(err, env, s)),
+      (ir_cont /*  */, _, return tcheck_continue(err, env, s)),
       (ir_cout /*  */, _, return scope_emit_inst(err, env, s, i)),
       (ir_ifd /*   */, _, return scope_emit_inst(err, env, s, i)),
       (ir_ife /*   */, _, return scope_emit_inst(err, env, s, i)),

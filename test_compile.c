@@ -900,6 +900,53 @@ test_fn(lower_error_comptime_return_runtime_argument) {
   }
 }
 
+test_fn(comptime_unavailable_reference_reports_error) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let e = lower_source_err(arena, fp(
+      "T ~~ @struct { x ~@refT(@sint(32)); }; r ~T;"
+      "@ast_op(\"+\", r.x, @qot(1));"));
+  defer { Errors_release(&e); };
+  test_streq(e.err_code, "COMPTIME_VALUE_UNAVAILABLE");
+}
+
+test_fn(apply_maps_ast_lists) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let r = interpret_source(arena, fp(
+      "f ~~ @fn((a ~@ast()), @ast(), { return @qot(@uqot(a) + 10); });"
+      "xs ~~ @apply(f, @qot[1, 2, 3]);"
+      "empty ~~ @apply(f, @qot[]);"
+      "ps ~~ @apply(f, @qot(4, 5));"
+      "bs ~~ @apply(f, @qot{6; 7;});"
+      "(@uqot(xs[0]) == 11) and (@uqot(xs[1]) == 12) and (@uqot(xs[2]) == 13)"
+      " and ((empty[0] as @bool()) == 0) and (@uqot(ps[1]) == 15) and (@uqot(bs[1]) == 17)"
+      " and ((@uqot @qot { @splice(bs); }) == 17);"), nullptr);
+  test_assert(tu_is(r_bool, tv_type(r).t));
+  test_assert(*(bool *)r.v.value);
+}
+
+test_fn(apply_rejects_invalid_arguments) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  const char *sources[] = {
+      "f ~~ @fn((a ~@ast()), @ast(), { return a; }); @apply(f);",
+      "f ~~ @fn((a ~@ast()), @ast(), { return a; }); @apply(f, @qot[], @qot[]);",
+      "@apply(1, @qot[]);",
+      "f ~~ @fn((a ~@ast()), @ast(), { return a; }); @apply(f, 1);",
+      "f ~~ @fn((a ~@ast()), @ast(), { return a; }); @apply(f, @qot(1));",
+      "f ~~ @fn((a ~@ast()), @sint(32), { return 1; }); @apply(f, @qot[]);",
+      "f ~~ @fn((a ~@ast()), @ast(), {}); @apply(f, @qot[1]);",
+  };
+  const char *codes[] = {"WRONG_ARG_COUNT", "WRONG_ARG_COUNT", "APPLY_NOT_FUNCTION",
+      "APPLY_LIST_TYPE_ERROR", "APPLY_EXPECTED_LIST", "APPLY_FUNCTION_TYPE_ERROR", "APPLY_RESULT_UNKNOWN"};
+  for (usize i = 0; i < countof(sources); ++i) {
+    let e = lower_source_err(arena, fp((char *)sources[i]));
+    defer { Errors_release(&e); };
+    test_streq(e.err_code, codes[i]);
+  }
+}
+
 test_fn(inlineast_expands_at_call_site) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
@@ -918,7 +965,7 @@ test_fn(ast_calls_interpret_without_caching) {
   defer { arena_cleanup(arena); };
   let ctx = parse_source(nullptr, arena, fp("f ~~ @fn((a ~@ast()), @sint(32), { return 7; });"
                                             "node ~~ @qot(1);"
-                                            "@apply(f, node) + @apply(f, node) == 14;"),
+                                            "(@uqot @qot f(@uqot(node))) + (@uqot @qot f(@uqot(node))) == 14;"),
                          nullptr);
   let ss = ss_init(arena, ctx);
   catch_errcall((lower, (ss, ss->outermost, ctx.idx)), e, (err_panic(e), (u32)0));
@@ -953,12 +1000,12 @@ test_fn(inlineast_can_return_from_caller) {
   test_assert(*(bool *)r.v.value);
 }
 
-test_fn(inlineast_apply_and_nested_expansion) {
+test_fn(inlineast_nested_expansion) {
   let arena = arena_new_ext(allocator, 1 << 16);
   defer { arena_cleanup(arena); };
   let r = interpret_source(arena, fp("identity ~~ @fn((a ~@ast()), @inlineast(), { return a; });"
                                      "wrap ~~ @fn((a ~@ast()), @inlineast(), { return @qot(identity(@uqot(a))); });"
-                                     "@apply(wrap, @qot(2 + 3)) == 5;"),
+                                     "wrap(2 + 3) == 5;"),
                            nullptr);
   test_assert(tu_is(r_bool, tv_type(r).t));
   test_assert(*(bool *)r.v.value);
@@ -1204,7 +1251,6 @@ test_fn(coerce_error_keeps_types_and_locations) {
   test_inteq(8, tu_catch(r_sint, details->a.t).bits);
   test_inteq(32, tu_catch(r_sint, details->b.t).bits);
   test_assert(details->locs.pos);
-  test_assert(details->locs.last);
   let first_pos = details->locs.pos;
   let second = lower_source_err(arena, fp("x ~@sint(16); @at x;"));
   defer { Errors_release(&second); };
@@ -1256,4 +1302,38 @@ test_fn(error_locations_render_in_propagation_order) {
   let text = snprint(arena, "{Errors}", *details);
   test_streq((char *)text.ptr,
       ":(file error.cshl,line 1,col 1):(file error.cshl,line 2,col 1):(file error.cshl,line 3,col 1)");
+}
+
+
+test_fn(loop_control_rejects_missing_local_loop) {
+  const struct { const char *source, *code; } cases[] = {
+      {"break();", "BREAK_OUTSIDE_LOOP"},
+      {"continue();", "CONTINUE_OUTSIDE_LOOP"},
+      {"@loop({ break(); }); break();", "BREAK_OUTSIDE_LOOP"},
+      {"@loop({ break(); }); continue();", "CONTINUE_OUTSIDE_LOOP"},
+      {"f ~~ @fn((), @void(), { break(); }); @loop({ f(); break(); });", "BREAK_OUTSIDE_LOOP"},
+      {"@loop({ f ~~ @fn((), @void(), { continue(); }); f(); break(); });", "CONTINUE_OUTSIDE_LOOP"},
+      {"f ~~ @fn((), @int(), { break(); return 1; }); f();", "BREAK_OUTSIDE_LOOP"},
+      {"stop ~~ @fn((), @inlineast(), { return @qot break(); }); stop();", "BREAK_OUTSIDE_LOOP"},
+  };
+  foreach (let item, span(cases, countof(cases))) {
+    let arena = arena_new_ext(allocator, 1 << 16);
+    defer { arena_cleanup(arena); };
+    let e = lower_source_err(arena, ((fptr){strlen(item->source), (u8 *)item->source}));
+    defer { Errors_release(&e); };
+    test_streq(e.err_code, item->code);
+    test_assert(Errors_get(e) && Errors_get(e)->locs.pos);
+  }
+}
+test_fn(loop_control_targets_local_loop_with_inline_expansion) {
+  let arena = arena_new_ext(allocator, 1 << 16);
+  defer { arena_cleanup(arena); };
+  let result = interpret_source(arena, fp(
+      "stop ~~ @fn((), @inlineast(), { return @qot break(); });"
+      "i ~@sint(32) = 0; total ~@sint(32) = 0;"
+      "@loop({ i = i + 1; @if(i == 2, continue());"
+      "  @loop({ total = total + 1; stop(); });"
+      "  @if(i == 4, break()); });"
+      "(i == 4) and (total == 3);"), nullptr);
+  test_assert(*(bool *)result.v.value);
 }

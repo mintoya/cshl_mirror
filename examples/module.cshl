@@ -21,39 +21,65 @@ fn  ~~ @fn (a ~ast),inline,(return @qot @fn(
   @uqot(a."()".opright."()".opleft),
   @uqot(a."()".opright."()".opright),
 ));
-@closure ~~ fn (caps ~ast, args ~ast, ret ~ast, body ~ast) any {
-  capture ~~ @fn (mode ~@int(), inst ~ast, c ~ast), ast, {
-    cif (mode == 0)
-      return @qot (@uqot(c.name) ~ @uqot(c.type));
-    cif (mode == 1)
-      return @qot (@uqot(@ast_op(".", inst, c.name)) = @uqot(c.value));
-    return @qot( @uqot(c.name) ~ @uqot(c.type) = @uqot(@ast_op(".", @qot(self), c.name)));
+
+@closure ~~ @fn (caps ~ast, args ~ast, ret ~ast, body ~ast),@inlineast(),{
+  make_structItem ~~ @fn (in~ast),ast,{
+   @cif(in.decl, {
+      @cif(not(in.decl.value),@compileError());
+      @cif(not(in.decl.name),@compileError());
+      atype ~ast;
+      @cif(in.decl.type,
+        atype = in.decl.type,
+        atype = @qot(@refT @typeof @uqot(in.decl.value)),
+      );
+      return @qot(@uqot(in.decl.name)~@uqot(atype));
+   }, @cif(in.id, {
+        atype ~ast~ @qot(@refT @typeof @uqot(in.id));
+        return @qot(@uqot(in)~@uqot(atype));
+   },@compileError()));
   };
-  captures ~~ fn (caps ~ast, inst ~ast, mode ~@int(), i ~@int()) ast {
-    cif (caps[i] == @qot()) {
-      return @qot [];
-    } else return @qot {
-      @uqot(@apply(capture, mode, inst, caps[i]));
-      @splice(@apply(captures, caps, inst, mode, i + 1));
-    };
+  retrieve_structItem ~~ @fn (in~ast),ast,{
+   aname ~ast;
+   @cif(in.decl, {
+     aname = in.name;
+   }, @cif(in.id, {
+     aname = in.id;
+   },@compileError()));
+   return @qot(@uqot(aname) ~= @uqot(@ast_op(".", @qot(self), aname)));
   };
-  return @uqot@qot {
-    ClosureType ~type~ @struct {
-      Self ~type~ @this();
-      @splice @apply(captures, caps, @qot(inst), 0, 0);
-      @id("()") ~~ fn (self ~Self, @splice(args)) (@uqot(ret)) {
-        @splice @apply(captures, caps, @qot(inst), 2, 0);
-        @splice body ;
-      };
+  set_structItem ~~ @fn (in~ast),ast,{
+   aname ~ast;
+   oname ~ast;
+   @cif(in.decl, {
+     aname = in.name;
+     oname = in.value;
+   }, @cif(in.id, {
+     aname = in.id;
+     oname = aname;
+   },@compileError()));
+   return @ast_op( "=",
+     @ast_op(".", @qot(result), aname),
+     oname
+   );
+  };
+  return @qot {
+    result ~ @uqot @qot @struct {
+      Self~~@this();
+      @splice @apply(make_structItem,caps);
+      @id("()") ~~ @fn(
+        (self ~Self,@splice(args)),
+        @uqot(ret), {
+          @splice @apply(retrieve_structItem,caps);
+          @uqot(body);
+        });
     };
-    inst ~ClosureType;
-    @splice @apply(captures, caps, @qot(inst), 1, 0);
-    inst;
+    @splice @apply(set_structItem,caps);
+    result;
   };
 };
-closure ~~ fn (a ~ast) any {
+closure ~~ fn (a ~ast) inline {
   return 
-    @uqot @qot @closure(
+    @qot @closure(
       @uqot(a."()".opleft),
       @uqot(a."()".opright."()".opleft),
       @uqot(a."()".opright."()".opright.opleft),
@@ -222,10 +248,9 @@ came_from ~~ fn (a~type ,b ~any) (@comptime bool ) {
   u64 ~~ u64;
   void  ~~ void;
   getstate ~~ getstate;
-
-  fn ~~ fn;
   @closure ~~ @closure;
   closure ~~ closure;
+  fn ~~ fn;
   if ~~ if;
   while ~~ while;
   cif ~~ cif;

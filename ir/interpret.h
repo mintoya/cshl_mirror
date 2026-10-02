@@ -586,6 +586,7 @@ static void intstate_run errs(intstate is) {
 
 typed_value interpret errs(superscope *ss, scope *s) {
   let is = intstate_new(ss);
+  defer { intstate_free(is); };
 
   typeidx retT = s->instance.fn
       ? ss_type_intern(ss, ss->functions[s->instance.fn - 1].instances[s->instance.index].ret)
@@ -601,12 +602,12 @@ typed_value interpret errs(superscope *ss, scope *s) {
       r.v.c_int = BInt.copy(ss->alloc, r.v.c_int);
   } else if (!TypeTree_is_ast(t.t) && !tu_is(c_fun, t.t) && !tu_is(c_type, t.t) && !tu_is(builtin, t.t)) {
     if_decl (let sz, Type_sizeof(t, ss_typeenv(ss))) {
+      if (!r.v.value) return_err("COMPTIME_VALUE_UNAVAILABLE", (typed_value){});
       let mem = *acreate(ss->alloc, u8[sz]);
       memcpy(mem, r.v.value, sz);
       r.v.value = mem;
     }
   }
 
-  intstate_free(is);
   return r;
 }

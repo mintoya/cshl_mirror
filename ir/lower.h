@@ -19,8 +19,8 @@ u32 lower_op_wrap errs(superscope *ss, scope *s, astidx left, astidx right, u32 
   }
   return try_err(lower_op, (ss, s, try_err(lower, (ss, s, left), 0), right, number), 0);
 }
-// TODO: these low key suck 
-// maybe make them do something else 
+// TODO: these low key suck
+// maybe make them do something else
 static u32 lower_anon_struct errs(superscope *ss, scope *s, astidx a) {
   let elems = ast_block_children(ss, a);
   let n = elems.len;
@@ -158,7 +158,9 @@ u32 lower_low errs(superscope *ss, scope *s, astidx a) {
 u32 lower errs(superscope *ss, scope *s, astidx a) {
   return catch_errcall(
       (lower_low, (ss, s, a)), e, ({
-        pass_err(Errors_with_location(e, ss_typeenv(ss), srcpos_ast(ast_at(ss, a), ss->asts)), 0);
+        let node = ast_at(ss, a);
+        srcpos pos = srcpos_ast(node, ss->asts);
+        pass_err(tu_is(astBBlock, node) ? e : Errors_with_location(e, ss_typeenv(ss), pos), 0);
         0;
       })
   );

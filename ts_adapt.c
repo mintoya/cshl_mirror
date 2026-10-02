@@ -28,6 +28,26 @@ static char *printerr_point(void *userdata) {
   return ebuff;
 }
 
+// The diagnostic consumer reads these fields before the source owner is freed.
+static thread_local fileItem parse_error_file;
+static thread_local posItem parse_error_pos;
+static fptr (*parse_source_provider)(void *, const char *);
+static void *parse_source_context;
+void parse_set_source_provider(fptr (*provider)(void *, const char *), void *context) {
+  parse_source_provider = provider;
+  parse_source_context = context;
+}
+bool parse_error_source(err_t error, fileItem *file, posItem *pos) {
+  if (error.fn != printerr_point) return false;
+  *file = parse_error_file;
+  *pos = parse_error_pos;
+  return true;
+}
+static void parse_error_span(TSNode node) {
+  parse_error_pos = (posItem){.offset = ts_node_start_byte(node),
+      .length = ts_node_end_byte(node) - ts_node_start_byte(node)};
+}
+
 static srcpos register_pos(poslist *plist, u32 fileIndex, TSNode n) {
   u32 start = ts_node_start_byte(n);
   sglist_push(*plist, {.fidx = fileIndex, .offset = start, .length = ts_node_end_byte(n) - start});
@@ -37,8 +57,10 @@ static srcpos register_pos(poslist *plist, u32 fileIndex, TSNode n) {
 static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u32 fileIndex, const u8 *source, TSNode ts_node) {
   static thread_local TSPoint error_location;
   static_assert(sizeof(TSPoint) == sizeof(itypeof(err_t, fnd)));
-  if (ts_node_is_null(ts_node) || !ts_node_is_named(ts_node) || ts_node_is_error(ts_node) || ts_node_is_missing(ts_node))
+  if (ts_node_is_null(ts_node) || !ts_node_is_named(ts_node) || ts_node_is_error(ts_node) || ts_node_is_missing(ts_node)) {
+    parse_error_span(ts_node);
     return_err_extras("PARSE_ERROR", printerr_point, (error_location = ts_node_start_point(ts_node), *(void **)&error_location), (ast){});
+  }
 
   if (ts_node_has_error(ts_node)) {
     TSNode bad = ts_node;
@@ -54,6 +76,7 @@ static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u3
       if (ts_node_is_null(next)) break;
       bad = next;
     }
+    parse_error_span(bad);
     return_err_extras("PARSE_ERROR", printerr_point, (error_location = ts_node_start_point(bad), *(void **)&error_location), (ast){});
   }
 
@@ -140,6 +163,13 @@ static ast ts_to_ast2 errs(allocfn allocator, astlist *alist, poslist *plist, u3
 
 // TODO: make astidx_full contina pointers, then thiswill return an astidx instead
 astidx_full parse errs(astidx_full res, fptr input, const char *filename) {
+  if (fptr_isNull(input) && parse_source_provider)
+    input = parse_source_provider(parse_source_context, filename);
+  if (fptr_isNull(input)) {
+    FILE *file = fopen(filename, "rb");
+    if (!file) return_err("FILE_NOT_FOUND", res);
+    fclose(file);
+  }
   let const fileit = (fileItem){
       .filename = filename,
       .filecontent = fptr_isNull(input)
@@ -158,7 +188,13 @@ astidx_full parse errs(astidx_full res, fptr input, const char *filename) {
   TSTree *tree = ts_parser_parse_string(parser, NULL, (const char *)content.ptr, content.len);
   defer { ts_tree_delete(tree); };
 
-  let root = try_err(ts_to_ast2, (res.alist.allocator, &res.alist, &res.plist, fileIndex, content.ptr, ts_tree_root_node(tree)), (astidx_full){});
+  let root = catch_errcall(
+      (ts_to_ast2, (res.alist.allocator, &res.alist, &res.plist, fileIndex, content.ptr, ts_tree_root_node(tree))), e, ({
+        parse_error_file = fileit;
+        parse_error_pos.fidx = fileIndex;
+        pass_err(e, res);
+        (ast){};
+      }));
   sglist_push(res.alist, root); // the root is referenced by no parent slot
   res.idx = (astidx)res.alist.len;
   return res;
