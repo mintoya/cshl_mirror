@@ -232,6 +232,7 @@ static inline superscope *ss_init(allocfn allocator, astidx_full ctx) {
       {"@ast", builtin_ast},
       {"@inlineast", builtin_inlineast},
       {"@id", builtin__id},
+      {"@gensym", builtin_gensym},
       {"@any", builtin_any},
       {"@void", builtin_void},
       {"@bool", builtin_bool},

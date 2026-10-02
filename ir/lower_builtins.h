@@ -85,6 +85,18 @@ static u32 lower_builtin_id errs(superscope *ss, scope *s, astidx args) {
   let copy = slice_clone(ss->alloc, ((fptr){arr.count, (u8 *)str.v.value}));
   return scope_add_value(ss, s, TV_ast(ss, ast_make_id(ss, copy)));
 }
+static u32 lower_builtin_gensym errs(superscope *ss, scope *s, astidx args) {
+  let list = builtin_args(ss, args, 1);
+  let prefix_value = try_err(temporary_interpret, (ss, s, list.start + 0), 0);
+  let prefix_type = ss_type(ss, prefix_value.t);
+  let arr = tu_catchr(r_arr, prefix_type.t, return_err("GENSYM_PREFIX_NOT_STRING", 0));
+  if (tu_catchr(r_sint, type_tree(ss_typeenv(ss), arr.t), return_err("GENSYM_PREFIX_NOT_STRING", 0)).bits != 8)
+    return_err("GENSYM_PREFIX_NOT_STRING", 0);
+  slice(c8) prefix = {(usize)arr.count, (c8 *)prefix_value.v.value};
+  let name = snprint(ss->alloc, "{slice(c8)}_{u32}", prefix, ss->gensym_counter++);
+  name.len--; // snprint appends a terminating null
+  return scope_add_value(ss, s, TV_ast(ss, ast_make_id(ss, fp(name))));
+}
 static u32 lower_builtin_cout errs(superscope *ss, scope *s, astidx args) {
   let list = builtin_args(ss, args, 1);
   //  foreach (let inst, span(s->instructions, msList_len(s->instructions)))
@@ -683,6 +695,7 @@ static u32 lower_builtin errs(superscope *ss, scope *s, builtin_id builtin, asti
       (builtin_break, /*   */ try_err(lower_builtin_break, (ss, s, args), 0)),
       (builtin_continue, /**/ try_err(lower_builtin_continue, (ss, s, args), 0)),
       (builtin__id, /*     */ try_err(lower_builtin_id, (ss, s, args), 0)),
+      (builtin_gensym, /*  */ try_err(lower_builtin_gensym, (ss, s, args), 0)),
       (builtin_const, /*   */ try_err(lower_builtin_decor, (ss, s, args, 1, 0, 0), 0)),
       (builtin_volatile, /**/ try_err(lower_builtin_decor, (ss, s, args, 0, 1, 0), 0)),
       (builtin_comptime, /**/ try_err(lower_builtin_decor, (ss, s, args, 0, 0, 1), 0)),

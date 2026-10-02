@@ -1,0 +1,8 @@
+b~@int();
+a ~~ @qot(b = 15);
+@uqot a;
+c ~@sint(32)~ b;
+a = @ast_op("=",a.opleft,@qot(37));
+@uqot a;
+d ~@sint(32)~ b;
+d;

@@ -1,0 +1,30 @@
+mod ~~ @import "module.cshl";
+fn ~~ mod.fn;
+i8 ~~ mod.i8;
+void ~~ mod.void;
+u64 ~~ mod.u64;
+arr ~~ mod.arr;
+i128 ~~ @sint(128);
+its ~ @union {
+  whole ~ i128;
+  bits ~ @bitstruct{
+    pre~i128:(128 - 4);
+    a~i8:1;
+    b~i8:1;
+    c~i8:1;
+    d~i8:1;
+  };
+};
+its.whole = 0;
+its.bits.a = 0;
+its.bits.b = 0;
+a ~ arr(2) u64;
+
+@cinclude "<stdio.h>";
+cputc ~~ fn (char~i8 ) void @cout "printf(\"%c\",arg0);";
+cputu ~~ fn (char~u64) void @cout "printf(\"%zu\",arg0);";
+
+a = @at((@where its) as ( @ptr @typeof a ));
+cputu(a[0]);
+cputc("\n"[0]);
+cputu(a[1]);

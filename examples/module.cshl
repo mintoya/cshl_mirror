@@ -173,12 +173,14 @@ arr ~~ fn (i~int) any
       };
     };
     orelse ~~ fn (this~ast , a~ast) inline {
+      self ~ast~ @gensym("orelse_self");
+      rest ~ast~ @gensym("orelse_result");
       return @qot {
-        _self ~= @uqot(this);
-        _result ~ @typeof(_self.value);
-        if _self (_result = _self.value)
-          else (_result = @uqot a);
-        _result;
+        @uqot(self) ~= @uqot(this);
+        @uqot(rest) ~ @typeof(@uqot(self).value);
+        if (@uqot(self)) (@uqot(rest) = @uqot(self).value)
+          else (@uqot(rest) = @uqot a);
+        @uqot(rest);
       };
     };
 };

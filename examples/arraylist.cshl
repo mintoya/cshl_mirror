@@ -32,20 +32,20 @@ slice ~~ fn (t~type) type return @struct{
       self.ptr = other.ptr;
       self.len = other.len;
     } else cif (
-      @typeinfo(OT).array 
-      and (@typeinfo(OT).array.elem == t)
-    ) {
+        @typeinfo(OT).array 
+        and (@typeinfo(OT).array.elem == t)
+        ) {
       self.ptr = (@where @ref other[0]) as @typeof(self.ptr);
       self.len = @typeinfo(OT).array.len;
-    // TODO: add actual compile error
+      // TODO: add actual compile error
     } else @compileError();
   };
   @id("()") ~~ fn (self~ast,idx~ast) inline {
     cif (
-      not(idx.ablock)
-      or not(idx.ablock[0])
-      or (idx.ablock[1])
-    ) @compileError(); // not bound to anything, so error is unbound id 
+        not(idx.ablock)
+        or not(idx.ablock[0])
+        or (idx.ablock[1])
+        ) @compileError(); // not bound to anything, so error is unbound id 
     return @qot {
       this ~~ @uqot(self);
       idx_n ~u64~ @uqot(idx.ablock[0]);
@@ -84,12 +84,12 @@ alloc ~~ fn (t~type,count~u64) any {
   r.ptr = cmalloc(r:size()) as @typeof(r.ptr);
   return r;
 };
-  
+
 resize ~~ fn (sl ~any,count~u64) void {
- cif (not @isref sl) @compileError();
- cif (not came_from(@typeof(sl), slice)) @compileError();
- sl.len = count;
- sl.ptr = crealloc(sl.ptr as cptr,sl:size()) as @typeof(sl.ptr);
+  cif (not @isref sl) @compileError();
+  cif (not came_from(@typeof(sl), slice)) @compileError();
+  sl.len = count;
+  sl.ptr = crealloc(sl.ptr as cptr,sl:size()) as @typeof(sl.ptr);
 };
 
 assert ~~ fn (ok~bool) void @cout "assert(arg0);";
@@ -131,15 +131,15 @@ list ~~ fn (t~type) type return @struct {
     };
   };
   push_value ~~ fn (self~RSelf, value~t) void {
-    self:reserve(self.len + 1);
-    self.data[self.len] = value;
-    self.len = self.len + 1;
+self:reserve(self.len + 1);
+     self.data[self.len] = value;
+     self.len = self.len + 1;
   };
   push ~~ push_value;
   push_array ~~ fn (self~RSelf, values~slice(t)) void {
-    self:reserve(self.len + values.len);
-    cmemcpy((@where self.data[self.len]) , (@where values[0]),values.len);
-    self.len = self.len + values.len;
+self:reserve(self.len + values.len);
+     cmemcpy((@where self.data[self.len]) , (@where values[0]),values.len);
+     self.len = self.len + values.len;
   };
   // TODO: compiler directive for can_coerce, or some way to acess such a property
   // lowe-key impossible withoutb some sort of try_lower 
@@ -150,14 +150,14 @@ list ~~ fn (t~type) type return @struct {
   };
   insert ~~ fn (self~RSelf, idx~u64, value~t) void {
     assert(idx <= self.len);
-    self:reserve(self.len + 1);
-    i ~u64 = self.len;
-    while (i > idx) {
-      self.data[i] = self.data[i - 1];
-      i = i - 1;
-    };
-    self.data[idx] = value;
-    self.len = self.len + 1;
+self:reserve(self.len + 1);
+     i ~u64 = self.len;
+     while (i > idx) {
+       self.data[i] = self.data[i - 1];
+       i = i - 1;
+     };
+     self.data[idx] = value;
+     self.len = self.len + 1;
   };
   remove ~~ fn (self~RSelf, idx~u64) t {
     assert(idx < self.len);
@@ -181,7 +181,7 @@ list ~~ fn (t~type) type return @struct {
   iter ~~ fn (self~Self) any return self.data:iter();
 };
 
-p ~~ list(i8).new();
+p ~= list(i8).new();
 p:push_array("hello");
 p:push_array(" ");
 p:push_array("world");
@@ -211,3 +211,8 @@ cputc("\n"[0]);
   |> map  { cputc(_); _; }
   |> iterate()
   ;
+
+self ~? slice(i8)="hello world";
+closure [self] () void {
+  b~=self:orelse("fallback").len;
+}|> _();

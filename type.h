@@ -17,6 +17,7 @@ typedef enum : u8 {
   builtin_continue,   // continue()
                       //
   builtin__id,        // @id(str) an id which corresponds to this string, **evaluates it**
+  builtin_gensym,     // @gensym(prefix) an id with a fresh unique name, for macro hygiene
                       //
   builtin_ast,        // @ast() type of ast
   builtin_inlineast,  // @inlineast() AST result expanded at the call site
@@ -463,6 +464,7 @@ typePrinter(builtin_id) {
       (builtin_at, /*        */ PUTS("at")),
       (builtin_if, /*        */ PUTS("if")),
       (builtin__id, /*       */ PUTS("id")),
+      (builtin_gensym, /*    */ PUTS("gensym")),
       (builtin_qot, /*       */ PUTS("qot")),
       (builtin_ref, /*       */ PUTS("ref")),
       (builtin_any, /*       */ PUTS("any")),

@@ -1,0 +1,4 @@
+@using @import "module.cshl";
+@cinclude "<stdio.h>";
+cputc ~~ fn  (char~i8) void @cout "putchar((char)arg0);";
+

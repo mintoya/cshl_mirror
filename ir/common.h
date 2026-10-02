@@ -70,6 +70,7 @@ struct superscope {
   TypesTree *types;
   msList(typeidx) thisstack;
   moxmap(fptr, type_metadata) type_info;
+  u32 gensym_counter;
   msList(function) functions;
   msList(fptr) coutput;
   msList(fptr) cprologue;
