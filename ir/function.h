@@ -280,8 +280,8 @@ u32 lower_function_call_with errs(superscope *ss, scope *s, u32 fn, astidx args,
     if (TypeTree_is_ast(want0.t) && !TypeTree_is_ast(have.t)) {
       scope_push_named(ss, s);
       receiver_named = true;
-      try_err(scope_bind, (ss, s, lead, fp("#_")), 0);
-      regs.ptr[idx++] = scope_add_value(ss, s, TV_ast(ss, ast_make_id(ss, fp("#_"))));
+      try_err(scope_bind_builtin, (ss, s, lead, colon_reserved), 0);
+      regs.ptr[idx++] = scope_add_value(ss, s, TV_ast(ss, ast_make_id(ss, colon_reserved)));
     } else regs.ptr[idx++] = lead;
   }
   foreach (let a, span(alist.start, alist.len)) {

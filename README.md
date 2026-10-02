@@ -7,15 +7,10 @@ cc nob.c -o nob
 
 # TODO
 ---
-- [x] first class types
-- [x] first class functions
-- [x] first class ast
-- [x] operator overloading
-- [ ] raii-ish stuff? prolly just defer
-- [ ] @compiles, like zig
-- [ ] add `@id("@cmp")` returning less/equal/greater, promising a total ordering; derive `==`, `<`, `<=`, `>`, and `>=` when their explicit overloads are absent. Equality-only types may define `==` without `@cmp`. Always derive `!=` as `not (a == b)`; disallow independent `!=` overloads.
-- [ ] structured error class for reporting and a rudimentary LSP built on it
-- [x] better type tree
+-  first class types
+-  first class functions
+-  first class ast
+-  operator overloading
 
 
 ## grammer

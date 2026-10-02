@@ -1,11 +1,12 @@
 #pragma once
-#include "common.h"
 #include "../owned_allocator.h"
+#include "common.h"
 #include "wheels/macros.h"
 #include "wheels/print/print_pre.h"
 #include <wheels/allocators/arenaAllocator.h>
 #include <wheels/smap.h>
-
+let const static colon_reserved = ((fptr){2, (u8 *)"_\0"});
+let const static pipe_reserved = ((fptr){1, (u8 *)"_"});
 sliceDef(u32);
 const scope *scope_owner(const scope *s, u32 idx) {
   while (!(idx > s->start && idx <= s->start + msList_len(s->values)))
@@ -130,11 +131,18 @@ static inline void scope_add_inst errs(superscope *env, scope *s, ir i) {
   else if (tu_is(ir_blocke, i)) scope_pop_named(s);
   try_err(scope_add_inst_typecheck, (env, s, i));
 }
-static inline void scope_bind errs(superscope *env, scope *s, u32 idx, fptr name) {
+static inline void scope_bind_builtin errs(superscope *env, scope *s, u32 idx, fptr name) {
   if (moxmap_get(s->named->bindings, name)) return_err("SHADOWING_SAME_SCOPE");
   assertMessage(!moxmap_get(s->named->bindings, name));
-  assertMessage(idx <= msList_len(s->values) + s->start, "%zu <= %zu + %zu", idx, msList_len(s->values), s->start);
+  assertMessage(idx <= msList_len(s->values) + s->start);
   moxmap_set(s->named->bindings, name, idx);
+}
+static inline void scope_bind errs(superscope *env, scope *s, u32 idx, fptr name) {
+  if (
+      fptr_eq(name, pipe_reserved) ||
+      fptr_eq(name, colon_reserved)
+  ) return_err("BOUND_RESERVED_NAME");
+  try_err(scope_bind_builtin, (env, s, idx, name));
 }
 static inline void scope_unbind errs(scope *s, fptr name) {
   if (!moxmap_get(s->named->bindings, name)) return_err("UNBOUND_ID");

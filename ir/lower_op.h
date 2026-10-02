@@ -56,7 +56,7 @@ u32 lower_op errs(superscope *ss, scope *s, u32 left, astidx right, u32 opNumber
           bound = scope_add_value(ss, s, (typed_value){.t = lv.t});
           try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_getref, {.l = left, .d = bound})), 0);
         }
-        try_err(scope_bind, (ss, s, bound, fp("_")), 0);
+        try_err(scope_bind_builtin, (ss, s, bound, pipe_reserved), 0);
         let value = try_err(lower, (ss, s, right), 0);
         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_set, {.d = result, .l = value})), 0);
         try_err(scope_add_inst, (ss, s, (ir)tu_of(ir_blocke, {})), 0);
