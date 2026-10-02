@@ -4,6 +4,7 @@
 #include "interpret.h"
 #include "scope.h"
 #include "wheels/macros.h"
+#include "wheels/print/print_pre.h"
 
 sliceDef(typed_value);
 sliceDef(Type);
@@ -74,15 +75,14 @@ cmpres slice_typed_value_cmp_hash(void *env, const void *a, const void *b) {
 
 static inline Type function_item_type errs(superscope *ss, scope *s, astidx item) {
   let placeholder = scope_find(ss, s, try_err(lower, (ss, s, item), T()));
-  Type t = {};
-  tu_match_void(
+  Type t = tu_match_exp(
       ast_at(ss, item),
-      (default, {
-        let tempT = ss_type(ss, placeholder->t);
-        if (!tu_is(c_type, tempT.t)) return_err("NON_TYPE_FUNCTION_ARG", T());
-        t = ss_type(ss, placeholder->v.c_type);
-      }),
-      (astDecl, dcl, t = ss_type(ss, placeholder->t))
+      (default, ({
+         let tempT = ss_type(ss, placeholder->t);
+         if (!tu_is(c_type, tempT.t)) return_err("NON_TYPE_FUNCTION_ARG", T());
+         ss_type(ss, placeholder->v.c_type);
+       })),
+      (astDecl, dcl, ss_type(ss, placeholder->t))
   );
   if (tu_is(c_type, t.t)) *placeholder = Type_asValue(ss, T(tu_of(c_any, {})));
   return t;
@@ -98,7 +98,8 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
         try_err(function_item_type, (ss, arg_scope, p), 0);
   sglist_get(*env.tlist, signature.start + params.len - 1) =
       try_err(lower_asType, (ss, arg_scope, retT), 0);
-
+  let cf = ss_type_intern(ss, T(tu_of(c_fun, signature)));
+  println("created function type {Type_full}", ss_typeF(ss, T(tu_of(c_fun, signature))));
   // clang-format off
   msList_push(ss->alloc, ss->functions, {
       .params = params,
@@ -106,7 +107,7 @@ u32 lower_function errs(superscope *ss, scope *s, astidx args, astidx retT, asti
       .body = body,
       .defscope = s,
       .defnames = s->named,
-      .signature = ss_type_intern(ss, T(tu_of(c_fun, signature))),
+      .signature = cf,
       .instances = msList_init(ss->alloc, function_instance),
       .mp = moxmap_init(ss->alloc, slice(typed_value), u32, (oxmap_cmp){slice_typed_value_cmp_hash, ss}),
   });

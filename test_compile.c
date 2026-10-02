@@ -32,7 +32,7 @@ static interp interpret_source(allocfn arena, fptr src, astidx_full *ctx_out) {
   return interpret_source_named(arena, src, nullptr, ctx_out);
 }
 static Type tv_type(interp x) { return Type_at(x.env, x.t); }
-// #define HAS_TCC 1
+#define HAS_TCC 1
 #if defined HAS_TCC && HAS_TCC == 1
   #define test_file_2(filename)                                                             \
     test_fn(filename##_compile) {                                                           \

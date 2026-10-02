@@ -1,9 +1,8 @@
 asize ~= 1;
 type ~~ @type();
-increasing_array~~@fn((t~type),type,
-   return @arr { asize = asize + 1;},t );
+increasing_array~~@fn((t~type , t2~@comptime(@sint(32))),type,
+   return @arr (asize = asize + 1),t);
 
-a ~increasing_array @sint 8; // 2 i8's
-b ~increasing_array @uint 8; // 3 u8's
-c ~increasing_array @arr 2,@uint(8); // 4 arrays of 2 u8's
-d ~increasing_array increasing_array @arr 2,@uint(8); // 4 arrays of 2 u8's
+a ~increasing_array (@sint 8),0; // 2 i8's
+b ~increasing_array (@uint 8),0; // 3 u8's
+e ~increasing_array (@uint 8),0; // 3 u8's // caches
